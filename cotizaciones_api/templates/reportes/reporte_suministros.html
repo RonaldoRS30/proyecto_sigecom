@@ -1,0 +1,412 @@
+{% load static %}
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Reporte Suministros</title>
+
+<style>
+body{
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    font-size: 12px;
+    color:#2b2b2b;
+    margin:20px;
+    background:#ffffff;
+}
+
+
+/* ====== TITULOS ====== */
+h2{
+    text-align:center;
+    margin:8px 0 0;
+    font-size:20px;
+    letter-spacing:.5px;
+    color:#0f766e;
+    font-weight:700;
+}
+
+    /* SUBTÍTULO DE GRUPO */
+    .grupo-titulo {
+        font-weight: bold;
+        font-size: 13px;
+        margin-top: 28px;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        color: #111827;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 10px;
+    }
+
+    th, td {
+        border: 1px solid #cbd5e1;
+        padding: 6px;
+    }
+
+    /* CABECERA PRINCIPAL */
+    th {
+        background-color: #008080;
+        color: white;
+        text-align: center;
+        font-weight: bold;
+    }
+
+/* ====== HEADER ====== */
+.header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    border-bottom:3px solid #0f766e;
+    padding-bottom:12px;
+    margin-bottom:18px;
+}
+
+ 
+
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+
+
+        /* ---------- HEADER ---------- */
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 25px;
+    }
+
+    .header img.logo-img {
+        width: 140px;
+        height: auto;
+    }
+
+    .excel-btn {
+        text-align: center;
+        font-size: 10px;
+    }
+
+    .excel-btn img {
+        width: 38px;
+        display: block;
+        margin: auto;
+    }
+
+    .excel-btn a {
+        text-decoration: none;
+        color: #1D6F42;
+        font-weight: bold;
+    }
+  /* ===== TABLA PROFESIONAL ===== */
+.tabla-suministros{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-bottom: 18px;
+
+    /* BORDE EXTERNO GRUESO */
+    border: 2px solid #2f2f2f;
+}
+
+
+
+/* bordes internos */
+.tabla-suministros th,
+.tabla-suministros td{
+    border: 1px solid #000000;
+    padding: 6px 8px;
+}
+
+/* cabecera principal */
+.tabla-suministros thead tr:first-child th{
+    background: #008080;
+    color: #ffffff;
+    font-weight: bold;
+    text-align: center;
+    border-bottom: 2px solid #2f2f2f;
+}
+
+/* sub cabecera */
+.tabla-suministros .sub-header th{
+    background: #06adad;
+    color: #000;
+    font-weight: bold;
+}
+
+
+
+/* hover (solo visual navegador) */
+.tabla-suministros tbody tr:hover{
+    background: #eef6ff;
+}
+
+
+.text-center{
+    text-align: center;
+}
+
+/* primera columna resaltada */
+.tabla-suministros td:first-child{
+    font-weight: bold;
+}
+
+/* separador inferior total grupo */
+.grupo-titulo {
+    background: #0f4c5c;
+    color: white;
+    padding: 6px;
+    font-weight: bold;
+    border: 2px solid #2f2f2f;
+    border-bottom: none;
+}
+
+/* ====== BOTON EXCEL ====== */
+.excel-btn button{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 14px;
+    background:#1D6F42;
+    border:none;
+    border-radius:6px;
+    color:white;
+    font-weight:600;
+    cursor:pointer;
+    box-shadow:0 2px 5px rgba(0,0,0,.15);
+    transition:.2s ease;
+}
+
+.excel-btn button:hover{
+    background:#155c36;
+    transform:translateY(-1px);
+}
+
+.excel-btn img{
+    width:18px;
+}
+
+</style>
+</head>
+
+<body>
+<div class="header">
+    <div>
+        <img class="logo-img" src="{% static 'logo.png' %}" alt="Logo Empresa">
+    </div>
+
+ <div class="excel-btn">
+    <button type="button" id="btnExcel">
+        <img src="{% static 'importar-xls.png' %}" alt="excel">
+        Exportar Excel
+    </button>
+</div>
+</div>
+<h2>REPORTE SUMINISTROS</h2>
+
+<!-- CONTENEDOR GENERAL PARA EXPORTAR A EXCEL -->
+<div id="tabla_suministros">
+
+{% for grupo in grupos.values %}
+
+    <div class="grupo-titulo">
+       <tr colspan="10">
+            {{ grupo.tipo }} - {{ grupo.titulo }}
+       </tr>
+
+    </div>
+
+    <table class="tabla-suministros">
+        <thead>
+            <tr>
+                <th rowspan="2">Ítems</th>
+                <th rowspan="2">Código</th>
+                <th rowspan="2">Descripción</th>
+                <th rowspan="2">Proveedor</th>
+                <th rowspan="2">Cant</th>
+                <th colspan="2">Cliente Final</th>
+                <th colspan="2">Precio Final</th>
+                <th rowspan="2">Utilidad</th>
+            </tr>
+            <tr class="sub-header">
+                <th>Prec. Unit.</th>
+                <th>Total</th>
+                <th>Prec. Unit.</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+
+        <tbody>
+        {% for it in grupo.items %}
+            <tr>
+                <td class="text-center">{{ it.item }}</td>
+                <td>{{ it.cod }}</td>
+                <td>{{ it.des }}</td>
+                <td>{{ it.pro }}</td>
+                <td class="text-center">{{ it.can|floatformat:2 }}</td>
+                <td class="text-right">{{ it.val|floatformat:2 }}</td>
+                <td class="text-right">{{ it.tot|floatformat:2 }}</td>
+                <td class="text-right">{{ it.puc|floatformat:2 }}</td>
+                <td class="text-right">{{ it.toc|floatformat:2 }}</td>
+                <td class="text-right">{{ it.utilidad|floatformat:2 }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+{% endfor %}
+
+</div>
+
+<!-- EXPORTAR A EXCEL -->
+<script>
+
+document.getElementById("btnExcel").addEventListener("click", function(e){
+    e.preventDefault(); // evita que recargue la página
+
+    tableToExcel(
+        "tabla_suministros",   // id del contenedor
+        "{{ num_reg }}",       // nombre de la hoja
+        "REPORTE_SUMINISTROS.xls"  // nombre del archivo
+    );
+});
+
+var tableToExcel = (function () {
+    var uri = "data:application/vnd.ms-excel;base64,";
+  var template = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:x="urn:schemas-microsoft-com:office:excel"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="UTF-8">
+
+<style>
+
+/* ====== TABLA PROFESIONAL EXCEL ====== */
+   th {
+        background-color: #008080;
+        color: white;
+        text-align: center;
+        font-weight: bold;
+    }
+        td {
+            font-size: 12px;
+        }
+.tabla-suministros{
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12px;
+    border: 2px solid #2f2f2f;
+}
+
+/* bordes internos */
+.tabla-suministros th,
+.tabla-suministros td{
+    border: 1px solid #9a9a9a;
+    padding: 6px 8px;
+}
+
+/* cabecera principal */
+.tabla-suministros thead tr:first-child th{
+    background: #008080;
+    color: #ffffff;
+    font-weight: bold;
+    text-align: center;
+    border-bottom: 2px solid #2f2f2f;
+}
+
+/* subcabecera */
+.sub-header th{
+    background: #06adad;
+    color: #000;
+    font-weight: bold;
+}
+
+/* filas alternadas */
+.tabla-suministros tbody tr:nth-child(even){
+    background: #f2f2f2;
+}
+
+
+/* separador inferior total grupo */
+.grupo-titulo {
+    background: #0f4c5c;
+    color: #000;
+    padding: 6px;
+    font-weight: bold;
+    border: 2px solid #2f2f2f;
+    border-bottom: none;
+}
+
+/* alineaciones */
+.text-right{
+    mso-number-format:"#,##0.00";
+    text-align:right;
+}
+.text-center{
+    text-align:center;
+}
+
+.grupo-titulo tr{
+    background:#0f4c5c;
+    color:#ffffff;
+    font-weight:bold;
+    text-align:left;
+    padding:7px 8px;
+    border:2px solid #2f2f2f;
+    letter-spacing:.5px;
+    font-size:13px;
+}
+
+</style>
+</head>
+
+<body>
+<table>{table}</table>
+</body>
+</html>`;
+
+
+
+
+    function base64(s) {
+        return window.btoa(unescape(encodeURIComponent(s)));
+    }
+
+    function format(s, c) {
+        return s.replace(/{(\w+)}/g, (m, p) => c[p]);
+    }
+
+    return function (tableId, sheetName, filename) {
+        var table = document.getElementById(tableId);
+        var ctx = { worksheet: sheetName, table: table.innerHTML };
+
+        var link = document.createElement("a");
+        link.href = uri + base64(format(template, ctx));
+        link.download = filename;
+        link.click();
+    };
+})();
+</script>
+
+<!-- AUTO EXPORT SI ES XLS -->
+<script>
+    const autoXls = new URLSearchParams(window.location.search).get("xls");
+
+    if (autoXls === "1") {
+        window.onload = function () {
+            tableToExcel(
+                "tabla_suministros",
+                "{{ num_reg }}",
+                "{{ num_reg }}.xls"
+            );
+
+            setTimeout(() => window.close(), 700);
+        };
+    }
+</script>
+
+</body>
+</html>

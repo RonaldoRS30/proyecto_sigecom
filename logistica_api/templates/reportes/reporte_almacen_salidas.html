@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+{% load static %}
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Reporte Almacen</title>
+
+  <style>
+    body {
+      font-family: Arial;
+      padding: 20px;
+    }
+
+    h2 {
+      text-align: center;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+
+    th {
+      background: #1e293b;
+      color: white;
+      padding: 8px;
+      font-size: 12px;
+    }
+
+    td {
+      border: 1px solid #ddd;
+      padding: 6px;
+      font-size: 11px;
+      text-align: center;
+    }
+
+    tr:nth-child(even) {
+      background: #f9fafb;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      gap: 12px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo {
+      height: 34px;
+    }
+
+    .excel-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 8px;
+      background: #15803d;
+      color: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    .excel-btn:hover {
+      background: #166534;
+    }
+    .logo {
+  max-height: 80px;
+    }
+ 
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+  <img src="{% static 'img/logo.png' %}" id=logo class="logo" style="height:50px;">    </div>
+    <button class=  "excel-btn" onclick="descargarExcel()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7l-5-5Z" stroke="white" stroke-width="1.6"/>
+        <path d="M14 2v5h5" stroke="white" stroke-width="1.6"/>
+        <path d="m9 11 2 3m0 0 2 3m-2-3 2-3m-2 3-2 3" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Excel
+    </button>
+  </div>
+
+  <h2>Reporte de Salidas a Almacén</h2>
+
+<table border="1">
+    <thead>
+        <tr>
+            <th>N°</th>
+            <th>Fecha</th>
+            <th>OC</th>
+            <th>Factura</th>
+            <th>Guía</th>
+            <th>Proveedor</th>
+            <th>Tipo</th>
+            <th>Almacén</th>
+            <th>Moneda</th>
+            <th>Soles</th>
+            <th>Dólares</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in data %}
+        <tr>
+            <td>{{ r.num_reg }}</td>
+            <td>{{ r.fec }}</td>
+            <td>{{ r.oco }}</td>
+            <td>{{ r.nfa }}</td>
+            <td>{{ r.ngu }}</td>
+            <td>{{ r.dor }}</td>
+            <td>{{ r.tip }}</td>
+            <td>{{ r.alm }}</td>
+            <td>{{ r.tmo }}</td>
+            <td>{{ r.sol }}</td>
+            <td>{{ r.dol }}</td>
+        </tr>
+        {% endfor %}
+        <tr style="font-weight: bold; background: #e2e8f0;">
+            <td colspan="9">TOTAL</td>
+            <td>{{ total_soles }}</td>
+            <td>{{ total_dolares }}</td>
+        </tr>
+    </tbody>
+</table>
+
+<script>
+  function descargarExcel() {
+    const params = new URLSearchParams({
+      anno: "{{ anno|default:'%' }}",
+      mes: "{{ mes|default:'%' }}",
+      referencia: "{{ referencia|default:'%' }}",
+      almacen: "{{ almacen|default:'%' }}",
+      operacion: "{{ operacion|default:'S' }}"
+    });
+
+    window.open(`/api/exportar_excel_almacen/?${params.toString()}`, "_blank");
+  }
+</script>
+
+</body>
+</html>

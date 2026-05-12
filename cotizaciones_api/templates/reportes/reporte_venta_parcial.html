@@ -1,0 +1,201 @@
+{% load static %}
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ titulo }} - {{ num_reg }}</title>
+    <style>
+        /* ====== BASE ====== */
+        body {
+            font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+            font-size: 11px;
+            color: #2b2b2b;
+            margin: 20px;
+            background: #ffffff;
+        }
+
+        /* ====== HEADER ====== */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 3px solid #0f766e;
+            padding-bottom: 12px;
+            margin-bottom: 15px;
+        }
+
+        .logo-img { width: 140px; }
+
+        .excel-btn button {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 12px;
+            background: #1D6F42;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 11px;
+            transition: .2s ease;
+        }
+
+        .excel-btn button:hover { background: #155c36; transform: translateY(-1px); }
+        .excel-btn img { width: 16px; }
+
+        /* ====== TITULOS ====== */
+        h2 {
+            text-align: center;
+            margin: 5px 0;
+            font-size: 18px;
+            color: #0f766e;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .info-proyecto {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 12px;
+            color: #4b5563;
+        }
+
+        /* ====== TABLA ====== */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+        }
+
+        thead th {
+            background: #008080;
+            color: white;
+            padding: 8px 4px;
+            text-align: center;
+            font-weight: 700;
+            border: 1px solid #0c5f58;
+            text-transform: uppercase;
+            font-size: 10px;
+        }
+
+        .row-grupo {
+            background: #e2e8f0 !important;
+            font-weight: 800;
+            color: #0f766e;
+        }
+
+        tbody td {
+            padding: 5px 6px;
+            border: 1px solid #d1d5db;
+        }
+
+        tbody tr:nth-child(even) { background: #f9fafb; }
+
+        /* Alineaciones y Formatos */
+        .text-right { text-align: right; font-variant-numeric: tabular-nums; }
+        .text-center { text-align: center; }
+        .font-bold { font-weight: 700; }
+        .bg-envio { background: #f0fdfa; } /* Un toque verde suave para columnas de envío */
+
+        /* ====== MODO IMPRESION ====== */
+        @media print {
+            .excel-btn { display: none; }
+            body { margin: 10px; }
+            table { font-size: 9px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div>
+        <img class="logo-img" src="{% static 'logo.png' %}" alt="Logo Empresa">
+    </div>
+    <div class="excel-btn">
+        <button type="button" id="btnExportarExcel">
+            <img src="{% static 'importar-xls.png' %}" alt="excel">
+            Exportar Suministros
+        </button>
+    </div>
+</div>
+
+<h2>REPORTE VENTA PARCIAL</h2>
+<div class="info-proyecto">
+    <strong>PROYECTO:</strong> {{ num_reg }} | <strong>FECHA:</strong> {{ fecha|date:"d/m/Y H:i" }}
+</div>
+
+<table id="tabla_suministros_parcial">
+    <thead>
+        <tr>
+            <th rowspan="2">ITEM</th>
+            <th rowspan="2">DESCRIPCIÓN</th>
+            <th rowspan="2">CANT.</th>
+            <th colspan="3">COSTO </th>
+            <th rowspan="2">COSTO CON ENVIO</th>
+            <th colspan="2">UTILIDAD</th>
+            <th colspan="2">VENTA</th>
+        </tr>
+        <tr class="sub-header">
+            <th>UNITARIO</th>
+            <th>TOTAL</th>
+            <th>ENVIO</th>
+            <th>PORCENTAJE</th>
+            <th>VALOR</th>
+            <th>PRECIO</th>
+            <th>TOTAL</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for cog, grupo in grupos.items %}
+            <tr class="row-grupo-titulo">
+                <td colspan="12" style="padding: 10px; font-size: 12px; background: #f8fafc; font-weight: bold; color: #0f766e;">
+                    {{ grupo.titulo_grupo }}
+                </td>
+            </tr>
+
+            {% for item in grupo.items %}
+            <tr>
+                <td class="text-center">{{ forloop.counter }}</td>
+                <td style="width: 300px;">{{ item.des }}</td>
+                <td class="text-center">{{ item.can|floatformat:0 }}</td>
+                <td class="text-center">{{ item.puc|floatformat:2|intcomma }}</td>
+                <td class="text-center">{{ item.toc|floatformat:2|intcomma }}</td>
+                <td class="text-center">{{ item.env_u|floatformat:2|intcomma }}</td>
+                <td class="text-center font-bold">{{ item.cce|floatformat:2|intcomma }}</td>
+                <td class="text-center">{{ item.util_porc|floatformat:0 }}%</td>
+                <td class="text-center">{{ item.util_money|floatformat:2|intcomma }}</td>
+                <td class="text-center">{{ item.val|floatformat:2|intcomma }}</td>
+                <td class="text-center font-bold" style="color: #0f766e;">{{ item.tot|floatformat:2|intcomma }}</td>
+            </tr>
+            {% endfor %}
+        {% endfor %}
+    </tbody>
+</table>
+
+<script>
+document.getElementById("btnExportarExcel").addEventListener("click", function() {
+    const tabla = document.getElementById("tabla_suministros");
+    let excel = `
+    <table border="1">
+        <tr><td colspan="10" style="font-weight:bold; font-size:16px; text-align:center;">REPORTE DE SUMINISTROS - {{ num_reg }}</td></tr>
+        ${tabla.innerHTML}
+    </table>`;
+
+    const template = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+    <head><meta charset="UTF-8"></head>
+    <body>${excel}</body>
+    </html>`;
+
+    const blob = new Blob(['\ufeff', template], { type: "application/vnd.ms-excel" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "REPORTE_SUMINISTROS_{{ num_reg }}.xls";
+    link.click();
+});
+</script>
+
+</body>
+</html>

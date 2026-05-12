@@ -1,0 +1,165 @@
+/* ==========================================================
+   🌐 THEME.CSS — Estilo Corporativo PMInsight (Versión Pro)
+   ========================================================== */
+
+/* 1️⃣  Directivas esenciales */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================
+   2️⃣  VARIABLES CORPORATIVAS
+   ========================================================== */
+
+@layer base {
+  :root {
+    /* 🎨 PALETA CORPORATIVA */
+    --brand: #1E40AF;          /* Azul principal */
+    --brand-light: #2563EB;    /* Hover/acento */
+    --brand-dark: #1E3A8A;     /* Activo/títulos */
+    --brand-muted: #E0E7FF;    /* Fondo suave relacionado */
+
+    --neutral-25: #FCFCFD;
+    --neutral-50: #F9FAFB;
+    --neutral-100: #F3F4F6;
+    --neutral-200: #E5E7EB;
+    --neutral-300: #D1D5DB;
+    --neutral-700: #374151;
+    --neutral-800: #1F2937;
+    --neutral-900: #111827;
+
+    /* 🧱 LAYOUT TOKENS */
+    --radius: 0.75rem;
+    --radius-lg: 1rem;
+
+    /* 🕶️ SOMBRAS PROFESIONALES */
+    --shadow-card: 0 2px 4px rgba(0,0,0,0.04);
+    --shadow-subtle: 0 1px 2px rgba(0,0,0,0.08);
+    --shadow-hover: 0 6px 18px rgba(0,0,0,0.12);
+
+    /* ⏳ TRANSICIONES */
+    --transition-base: all 0.22s ease-in-out;
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-neutral-100 text-neutral-800 font-sans text-[15px] antialiased;
+    transition: var(--transition-base);
+  }
+
+  /* ==========================================================
+      3️⃣ TIPOGRAFÍA PROFESIONAL
+     ========================================================== */
+
+  h1 {
+    @apply text-[26px] leading-tight font-semibold text-neutral-900 tracking-tight;
+  }
+
+  h2 {
+    @apply text-[22px] font-semibold text-neutral-900;
+  }
+
+  h3 {
+    @apply text-[18px] font-medium text-neutral-800;
+  }
+
+  p, span, a, li {
+    @apply text-[15px] leading-relaxed text-neutral-700;
+  }
+
+  a {
+    @apply text-brand hover:text-brand-light transition-colors;
+  }
+
+  /* ==========================================================
+     4️⃣ FORMULARIOS — ESTILO LIMPIO Y UNIFORME
+     ========================================================== */
+
+  input, textarea, select {
+    @apply border border-neutral-300 rounded-md px-3 py-2 bg-white text-neutral-800
+           focus:ring-2 focus:ring-brand-light focus:outline-none transition-all;
+  }
+
+  /* Placeholder profesional */
+  input::placeholder,
+  textarea::placeholder {
+    @apply text-neutral-400;
+  }
+
+  /* ==========================================================
+     5️⃣ TARJETAS CORPORATIVAS
+     ========================================================== */
+
+  .card {
+    @apply bg-white rounded-2xl border border-neutral-200 shadow-[var(--shadow-card)]
+           transition-transform duration-200;
+  }
+
+  .card:hover {
+    box-shadow: var(--shadow-hover);
+    transform: translateY(-2px);
+  }
+
+  /* ==========================================================
+     6️⃣ TABLAS PROFESIONALES
+     ========================================================== */
+
+  .table-header {
+    @apply bg-neutral-50 text-neutral-600 uppercase text-[12px] tracking-wide font-semibold;
+  }
+
+  .table-row {
+    @apply hover:bg-neutral-50 transition-colors;
+  }
+
+  /* ==========================================================
+     7️⃣ BOTONES — MODERNO, CORPORATIVO
+     ========================================================== */
+
+  .btn-primary {
+    @apply bg-brand text-white font-medium rounded-lg px-4 py-2
+           shadow-[var(--shadow-subtle)]
+           hover:bg-brand-light active:bg-brand-dark transition-all;
+  }
+
+  .btn-ghost {
+    @apply bg-white border border-neutral-300 text-neutral-700 rounded-lg px-3 py-1.5
+           hover:bg-neutral-50 active:bg-neutral-100 transition-colors;
+  }
+
+  .btn-danger {
+    @apply bg-red-600 text-white rounded-lg px-4 py-2 hover:bg-red-700;
+  }
+
+  /* ==========================================================
+     8️⃣ ANIMACIONES SUAVES
+     ========================================================== */
+
+  .fade-in {
+    @apply animate-fade-slide;
+  }
+
+  .card-hover {
+    @apply transition-transform duration-200 hover:-translate-y-1 hover:shadow-md;
+  }
+
+  /* ==========================================================
+     9️⃣ SCROLLBAR MINIMALISTA
+     ========================================================== */
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}

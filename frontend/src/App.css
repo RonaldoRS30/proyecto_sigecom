@@ -1,0 +1,105 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+.quill-modern-container .ql-toolbar {
+  border: none !important;
+  border-bottom: 1px solid #f1f5f9 !important; /* slate-100 */
+  background: #f8fafc; /* slate-50 */
+}
+.quill-modern-container .ql-container {
+  border: none !important;
+  font-family: inherit;
+}
+
+.quill-modern-container::after {
+  content: "";
+  position: sticky;
+  bottom: 0;
+  height: 20px;
+  display: block;
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,1));
+  pointer-events: none;
+}
+
+.quill-modern-container .ql-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.quill-modern-container .ql-container {
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.quill-modern-container .ql-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ql-toolbar button:hover {
+  color: #0ea5e9 !important; /* Color sky-500 al pasar el mouse */
+}
+
+/* Estilo visual para indicar que hay una función */
+.ql-toolbar button[title]:hover::after {
+  /* Nota: El tooltip nativo 'title' no se puede estilar con CSS, 
+     pero esto asegura que el usuario sienta el feedback */
+  cursor: pointer;
+}
+
+/* Estilo para que el botón de Notas se vea igual a los otros */
+            .ql-notes::before {
+              content: "📝" !important; /* Usamos un icono de nota estándar */
+              font-size: 14px;
+              cursor: pointer;
+            }
+
+            .ql-notes:hover::before {
+              color: #0ea5e9 !important; /* Cambia a azul al pasar el mouse */
+            }

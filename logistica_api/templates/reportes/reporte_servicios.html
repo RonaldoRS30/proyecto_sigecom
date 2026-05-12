@@ -1,0 +1,448 @@
+
+{% load static %}
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Reporte Servicios</title>
+
+<style>
+/* ====== TITULOS ====== */
+h2{
+    text-align:center;
+    margin:8px 0 0;
+    font-size:20px;
+    letter-spacing:.5px;
+    color:#008080;
+    font-weight:700;
+}
+body{
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    font-size: 12px;
+    color:#2b2b2b;
+    margin:20px;
+    background:#ffffff;
+}
+
+/* ================================
+   GRUPO PRINCIPAL
+================================ */
+.grupo-titulo{
+    margin-top:18px;
+    background:#0b5353;
+    color:#ffffff;
+    font-weight:700;
+    font-size:14px;
+    padding:9px 10px;
+    border-radius:6px 6px 0 0;
+    letter-spacing:.4px;
+    box-shadow:0 1px 3px rgba(0,0,0,.12);
+}
+
+/* evita td flotando */
+.grupo-titulo td{
+    border:none !important;
+    padding:0 !important;
+}
+
+/* ================================
+   TABLA SERVICIOS
+================================ */
+#tabla_servicios table{
+    width:100%;
+    border-collapse:collapse;
+    margin-bottom:18px;
+    border:2px solid #000103;
+}
+
+/* encabezado principal */
+#tabla_servicios thead th{
+    background:#008080;
+    color:white;
+    padding:8px 6px;
+    border:1px solid #0a0c00;
+    font-weight:700;
+    text-align:center;
+}
+
+/* sub encabezado */
+#tabla_servicios .sub-header th{
+    background:#14b8a6;
+    color:#0e1100;
+    font-weight:700;
+}
+
+/* filas */
+#tabla_servicios tbody td{
+    border:1px solid #000205;
+    padding:6px 7px;
+    font-size:12px;
+}
+
+/* zebra */
+#tabla_servicios tbody tr:nth-child(even){
+    background:#f4f6f7;
+}
+
+#tabla_servicios tbody tr:hover{
+    background:#e6f4f1;
+}
+
+/* ================================
+   SUBGRUPO
+================================ */
+.subgrupo-titulo{
+    background:#17b1a4 !important;
+    font-weight:700;
+    color:#ffffff;
+    padding:10px !important;
+    border-top:2px solid #000000 !important;
+}
+
+/* ================================
+   TOTALES
+================================ */
+.total-row td{
+    background:#ecfdf5 !important;
+    font-weight:700;
+    border-top:2px solid #0f766e !important;
+}
+
+.total-row:last-child td{
+    background:#0f766e !important;
+    color:white;
+    font-size:13px;
+    border-top:3px solid #0c5f58 !important;
+}
+
+/* ================================
+   ALINEACIONES NUMERICAS
+================================ */
+.text-right{
+    text-align:right;
+    font-variant-numeric: tabular-nums;
+}
+
+.text-center{
+    text-align:center;
+}
+
+/* ================================
+   IMPRESION
+================================ */
+@media print{
+    #tabla_servicios table{
+        page-break-inside:avoid;
+    }
+
+    .grupo-titulo{
+        page-break-after:avoid;
+    }
+}
+
+/* ====== HEADER ====== */
+.header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    border-bottom:3px solid #0f766e;
+    padding-bottom:12px;
+    margin-bottom:18px;
+}
+
+.logo-img{
+    width:150px;
+}
+
+/* ====== BOTON EXCEL ====== */
+.excel-btn button{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 14px;
+    background:#1D6F42;
+    border:none;
+    border-radius:6px;
+    color:white;
+    font-weight:600;
+    cursor:pointer;
+    box-shadow:0 2px 5px rgba(0,0,0,.15);
+    transition:.2s ease;
+}
+
+.excel-btn button:hover{
+    background:#155c36;
+    transform:translateY(-1px);
+}
+
+.excel-btn img{
+    width:18px;
+}
+
+
+</style>
+</head>
+
+<body>
+
+    <div class="header">
+    <div>
+        <img class="logo-img" src="{% static 'logo.png' %}" alt="Logo Empresa">
+    </div>
+
+ <div class="excel-btn">
+    <button type="button" id="btnExcel_servicios">
+        <img src="{% static 'importar-xls.png' %}" alt="excel">
+        Exportar Excel
+    </button>
+</div>
+</div>
+
+
+
+<h2>REPORTE SERVICIOS</h2>
+
+<div id="tabla_servicios">
+{% for grupo in grupos.values %}
+ 
+       <div class="grupo-titulo">
+        <td colspan="11" style="
+                background:#0f595c;
+                color:#ffffff;
+                font-weight:bold;
+                font-size:14px;
+                text-align:left;
+                padding:8px;
+                border:2px solid #2f2f2f;
+            ">
+            {{ grupo.titulo }}
+        </td>
+    </div>
+    <table>
+             <thead>
+            <tr>
+                <th rowspan="2">Ítem</th>
+                <th rowspan="2">Código</th>
+                <th rowspan="2">Descripción</th>
+                <th rowspan="2">Área</th>
+                <th rowspan="2">Cant.</th>
+                <th rowspan="2">Días</th>
+                <th colspan="2">Cliente Final</th>
+                <th colspan="2">Precio Costo</th>
+                <th rowspan="2">Utilidad</th>
+            </tr>
+            <tr class="sub-header">
+                <th>Prec.Unit.</th>
+                <th>Total</th>
+                <th>Prec.Unit.</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for sub in grupo.subgrupos.values %}
+            <tr>
+                <td class="subgrupo-titulo" colspan="11">{{ sub.tipo }}</td>
+            </tr>
+
+            {% for it in sub.items %}
+                <tr>
+                    <td class="text-center">{{ it.item }}</td>
+                    <td>{{ it.cod }}</td>
+                    <td>{{ it.des }}</td>
+                    <td class="text-center">{{ it.pro }}</td>
+                    <td class="text-center">{{ it.can|floatformat:2 }}</td>
+                    <td class="text-center">{{ it.dias|floatformat:0 }}</td>
+                    <td class="text-right">{{ it.val|floatformat:2 }}</td>
+                    <td class="text-right">{{ it.tot|floatformat:2 }}</td>
+                    <td class="text-right">{{ it.puc|floatformat:2 }}</td>
+                    <td class="text-right">{{ it.toc|floatformat:2 }}</td>
+                    <td class="text-right">{{ it.utilidad|floatformat:2 }}</td>
+                </tr>
+            {% endfor %}
+
+            <tr class="total-row">
+                <td colspan="7" class="text-right">Total {{ sub.tipo }}:</td>
+                <td class="text-right">{{ sub.sub_total_tot|floatformat:2 }}</td>
+                <td class="text-right"> </td>
+                <td class="text-right">{{ sub.sub_total_toc|floatformat:2 }}</td>
+                <td class="text-right">{{ sub.sub_total_utilidad|floatformat:2 }}</td>
+            </tr>
+        {% endfor %}
+
+        <tr class="total-row">
+            <td colspan="7" class="text-right">Total Servicio:</td>
+            <td class="text-right">{{ grupo.total_tot|floatformat:2 }}</td>
+            <td class="text-right"> </td>
+            <td class="text-right">{{ grupo.total_toc|floatformat:2 }}</td>
+            <td class="text-right">{{ grupo.total_utilidad|floatformat:2 }}</td>
+        </tr>
+        </tbody>
+    </table>
+{% endfor %}
+</div>
+
+
+<!-- EXPORTAR A EXCEL -->
+<script>
+
+document.getElementById("btnExcel_servicios").addEventListener("click", function(e){
+    e.preventDefault(); // evita que recargue la página
+
+    tableToExcel(
+        "tabla_servicios",   // id del contenedor
+        "{{ num_reg }}",       // nombre de la hoja
+        "REPORTE_SERVICIOS.xls"  // nombre del archivo
+    );
+});
+
+function prepararTablaParaExcel(containerId){
+
+    const contenedor = document.getElementById(containerId).cloneNode(true);
+
+    /* ===== GRUPO TITULO ===== */
+ /* ===== GRUPO TITULO ===== */
+contenedor.querySelectorAll("tr.grupo-titulo td").forEach(td=>{
+    td.style.background = "#0f4c5c";
+    td.style.color = "#ffffff";
+    td.style.fontWeight = "bold";
+    td.style.fontSize = "14px";
+    td.style.textAlign = "center";
+    td.style.border = "2px solid #2f2f2f";
+    td.style.padding = "8px";
+});
+
+
+  
+
+    /* ===== SUBGRUPO ===== */
+    contenedor.querySelectorAll(".subgrupo-titulo").forEach(td=>{
+        td.style.background="#e0d7f5";
+        td.style.fontWeight="bold";
+    });
+
+    /* ===== HEADERS ===== */
+    contenedor.querySelectorAll("thead th").forEach(th=>{
+        th.style.background="#008080";
+        th.style.color="white";
+        th.style.fontWeight="bold";
+        th.style.border="2px solid #2f2f2f";
+    });
+
+    /* ===== SUB HEADER ===== */
+    contenedor.querySelectorAll(".sub-header th").forEach(th=>{
+        th.style.background="#06adad";
+        th.style.color="#000";
+    });
+
+    /* ===== BORDES ===== */
+    contenedor.querySelectorAll("td, th").forEach(cell=>{
+        cell.style.border="1px solid #9a9a9a";
+        cell.style.padding="6px 8px";
+    });
+
+    /* ===== ZEBRA ROWS (Excel no soporta nth-child) ===== */
+    contenedor.querySelectorAll("tbody").forEach(tbody=>{
+        Array.from(tbody.rows).forEach((row,i)=>{
+            if(i%2===1){
+                row.querySelectorAll("td").forEach(td=>{
+                    td.style.background="#f7f7f7";
+                });
+            }
+        });
+    });
+
+    /* ===== TOTALES ===== */
+    contenedor.querySelectorAll(".total-row").forEach(row=>{
+        row.querySelectorAll("td").forEach(td=>{
+            td.style.background="#f0f0f0";
+            td.style.fontWeight="bold";
+        });
+    });
+
+    return contenedor.innerHTML;
+}
+
+
+var tableToExcel = (function () {
+    var uri = "data:application/vnd.ms-excel;base64,";
+ var template = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:x="urn:schemas-microsoft-com:office:excel"
+xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="UTF-8">
+<style>
+.text-right{ mso-number-format:"#,##0.00"; text-align:right; }
+.text-center{ text-align:center; }
+
+.grupo-titulo {
+    background: #0f4c5c;
+    color: #000;
+    padding: 6px;
+    font-weight: bold;
+    border: 2px solid #2f2f2f;
+    border-bottom: none;
+}
+
+.grupo-titulo tr{
+    background:#0f4c5c;
+    color:#ffffff;
+    font-weight:bold;
+    text-align:left;
+    padding:7px 8px;
+    border:2px solid #2f2f2f;
+    letter-spacing:.5px;
+    font-size:13px;
+}
+</style>
+</head>
+<body>
+{table}
+</body>
+</html>`;
+
+
+
+
+
+
+    function base64(s) {
+        return window.btoa(unescape(encodeURIComponent(s)));
+    }
+
+    function format(s, c) {
+        return s.replace(/{(\w+)}/g, (m, p) => c[p]);
+    }
+
+    return function (tableId, sheetName, filename) {
+        var table = document.getElementById(tableId);
+var ctx = { worksheet: sheetName, table: prepararTablaParaExcel(tableId) };
+
+        var link = document.createElement("a");
+        link.href = uri + base64(format(template, ctx));
+        link.download = filename;
+        link.click();
+    };
+})();
+</script>
+
+
+<!-- AUTO EXPORT SI ES XLS -->
+<script>
+    const autoXls = new URLSearchParams(window.location.search).get("xls");
+
+    if (autoXls === "1") {
+        window.onload = function () {
+            tableToExcel(
+                "tabla_servicios",
+                "{{ num_reg }}",
+                "{{ num_reg }}.xls"
+            );
+
+            setTimeout(() => window.close(), 700);
+        };
+    }
+</script>
+</body>
+</html>
