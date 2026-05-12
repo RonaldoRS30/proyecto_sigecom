@@ -123,7 +123,7 @@ export default function AprobacionCotizacion() {
       {/* Header Section */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-xl md:text-2xl font-black text-gray-900 tracking-tight">Módulo Comercial</h1>
+          <h1 className="text-xl md:text-2xl font-black text-gray-900 tracking-tight">Módulo Comercialzxzx</h1>
           <p className="text-xs md:text-sm text-gray-500 font-medium">{stats.total} Cotizaciones encontradas</p>
         </div>
         <div className="flex items-center gap-2">
