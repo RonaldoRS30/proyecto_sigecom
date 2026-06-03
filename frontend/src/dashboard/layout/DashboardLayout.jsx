@@ -11,14 +11,14 @@ const Icon = ({ name, className }) => {
 };
 
 const NAV_ITEMS = [
-  { path: "/dashboard/cotizaciones-home", label: "Dashboard", icon: "LayoutDashboard" },
-  { path: "/dashboard/aprobacion-cotizacion", label: "Comercial", icon: "FileText" },
-  { path: "/dashboard/proyectos", label: "Proyectos", icon: "Briefcase" },
-  { path: "/dashboard/compras", label: "Compras", icon: "ShoppingCart" },
-  { path: "/dashboard/almacen", label: "Almacén", icon: "Package" },
-  { path: "/dashboard/finanzas", label: "Finanzas", icon: "DollarSign" },
-  { path: "/dashboard/tablas/catalogo", label: "Maestro", icon: "Database" },
-  { path: "/dashboard/audit", label: "Auditoría", icon: "ShieldCheck" },
+  { path: "/sigecom/home", label: "Dashboard", icon: "LayoutDashboard" },
+  { path: "/sigecom/comercial", label: "Comercial", icon: "FileText" },
+  { path: "/sigecom/proyectos", label: "Proyectos", icon: "Briefcase" },
+  { path: "/sigecom/compras", label: "Compras", icon: "ShoppingCart" },
+  { path: "/sigecom/almacen", label: "Almacén", icon: "Package" },
+  { path: "/sigecom/finanzas", label: "Finanzas", icon: "DollarSign" },
+  { path: "/sigecom/maestro/catalogo", label: "Maestro", icon: "Database" },
+  { path: "/sigecom/audit", label: "Auditoría", icon: "ShieldCheck" },
 ];
 
 export default function DashboardLayout() {
@@ -49,16 +49,15 @@ export default function DashboardLayout() {
     <div className="flex h-screen w-screen bg-gray-50 font-sans overflow-hidden">
       {/* Sidebar */}
       <aside
-        className={`${
-          isExpanded ? "w-60" : "w-20"
-        } flex flex-col h-full bg-white border-r border-gray-200 shrink-0 transition-all duration-300 z-40`}
+        className={`${isExpanded ? "w-60" : "w-20"
+          } flex flex-col h-full bg-white border-r border-gray-200 shrink-0 transition-all duration-300 z-40`}
       >
         <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
           <div className="flex items-center overflow-hidden">
-            <img src={logo} alt="Logo" className="h-8 w-8 object-contain shrink-0" />
+            <img src={logo} alt="Logo" className="h-12 w-12 object-contain shrink-0" />
             {isExpanded && (
-              <span className="text-xl font-bold text-gray-900 ml-2 whitespace-nowrap">
-                SIGECOM
+              <span className="text-lg font-bold text-gray-900 ml-2 whitespace-nowrap">
+                SIGECOM 5.0
               </span>
             )}
           </div>
@@ -82,17 +81,15 @@ export default function DashboardLayout() {
                 key={item.path}
                 to={item.path}
                 title={item.label}
-                className={`flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all ${
-                  isActive
+                className={`flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all ${isActive
                     ? "bg-indigo-50 text-indigo-600 shadow-sm"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                } ${isExpanded ? "" : "justify-center"}`}
+                  } ${isExpanded ? "" : "justify-center"}`}
               >
                 <Icon
                   name={item.icon}
-                  className={`h-5 w-5 ${isExpanded ? "mr-3" : ""} ${
-                    isActive ? "text-indigo-600" : "text-gray-400"
-                  }`}
+                  className={`h-5 w-5 ${isExpanded ? "mr-3" : ""} ${isActive ? "text-indigo-600" : "text-gray-400"
+                    }`}
                 />
                 {isExpanded && <span className="truncate">{item.label}</span>}
               </NavLink>
@@ -110,7 +107,7 @@ export default function DashboardLayout() {
                 <p className="text-sm font-semibold text-gray-700 truncate">
                   {user?.usuario || "Usuario"}
                 </p>
-                <button 
+                <button
                   onClick={handleLogout}
                   className="text-xs font-medium text-gray-500 hover:text-red-600 transition-colors"
                 >
@@ -128,7 +125,7 @@ export default function DashboardLayout() {
           <nav className="flex items-center overflow-hidden">
             <ol className="flex items-center space-x-2 text-sm text-gray-500 min-w-0">
               <li>
-                <NavLink to="/dashboard/cotizaciones-home" className="hover:text-indigo-600 transition-colors">
+                <NavLink to="/sigecom/home" className="hover:text-indigo-600 transition-colors">
                   <LucideIcons.Home className="h-4 w-4" />
                 </NavLink>
               </li>
@@ -140,8 +137,8 @@ export default function DashboardLayout() {
                       {crumb.label}
                     </span>
                   ) : (
-                    <NavLink 
-                      to={crumb.path} 
+                    <NavLink
+                      to={crumb.path}
                       className="hover:text-gray-900 transition-colors truncate"
                     >
                       {crumb.label}
@@ -151,16 +148,16 @@ export default function DashboardLayout() {
               ))}
             </ol>
           </nav>
-          
+
           <div className="flex items-center space-x-4">
-             {/* Dynamic icons or actions could go here */}
-             <div className="h-8 w-px bg-gray-200" />
-             <button className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all">
-                <LucideIcons.Bell className="h-5 w-5" />
-             </button>
-             <button className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all">
-                <LucideIcons.Settings className="h-5 w-5" />
-             </button>
+            {/* Dynamic icons or actions could go here */}
+            <div className="h-8 w-px bg-gray-200" />
+            <button className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all">
+              <LucideIcons.Bell className="h-5 w-5" />
+            </button>
+            <button className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all">
+              <LucideIcons.Settings className="h-5 w-5" />
+            </button>
           </div>
         </header>
 

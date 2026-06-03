@@ -49,84 +49,52 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
 
-            {/* Protected */}
+            {/* Base Protected Path */}
             <Route
-              path="/dashboard/*"
+              path="/sigecom/*"
               element={
                 <ProtectedRoute>
                   <DashboardLayout />
                 </ProtectedRoute>
               }
             >
-              {/* Home */}
-              <Route path="cotizaciones-home" element={<CotizacionesHome />} />
+              {/* Inicio */}
+              <Route path="home" element={<CotizacionesHome />} />
 
-              {/* Aprobación */}
-              <Route
-                path="aprobacion-cotizacion"
-                element={<AprobacionCotizacion />}
-              />
+              {/* Módulo Comercial (Agrupado) */}
+              <Route path="comercial">
+                {/* Listado principal: /sigecom/comercial */}
+                <Route index element={<AprobacionCotizacion />} /> 
+                
+                {/* Detalle: /sigecom/comercial/2026000246 */}
+                <Route path=":numReg" element={<CotizacionDetallePage />} />
+                
+                {/* Nueva: /sigecom/comercial/nueva */}
+                <Route path="nueva" element={<CotizacionNuevaModal />} />
+                
+                {/* Oportunidad: /sigecom/comercial/oportunidad/:numReg */}
+                <Route path="oportunidad/:numReg" element={<CotizacionDetallePage esOportunidad />} />
+              </Route>
 
-              <Route
-                path="cotizacion-detalle/:numReg"
-                element={<CotizacionDetallePage />}
-              />
+              {/* Módulo Maestro / Tablas */}
+              <Route path="maestro">
+                <Route path="catalogo" element={<CatalogoMarcas />} />
+                <Route path="estructura" element={<EstructuraComercial />} />
+                <Route path="parametros" element={<ParametrosVentas />} />
+                <Route path="gastos" element={<GastosAnalisis />} />
+              </Route>
 
-              <Route
-                path="oportunidad-detalle/:numReg"
-                element={<CotizacionDetallePage esOportunidad />}
-              />
-
-              {/* Logística */}
-              <Route
-                path="logistica/dashboard"
-                element={<LogisticaDashboard />}
-              />
-
-              {/* Nueva Cotización */}
-              <Route
-                path="cotizaciones/nueva"
-                element={<CotizacionNuevaModal />}
-              />
-
-              {/* Estructura y Comercial */}
-              <Route
-                path="tablas/estructura"
-                element={<EstructuraComercial />}
-              />
-
-              {/* Parámetros de Ventas */}
-              <Route
-                path="tablas/parametros"
-                element={<ParametrosVentas />}
-              />
-              {/* Catálogo de Productos */}
-              <Route
-                path="tablas/catalogo"
-                element={<CatalogoMarcas />}
-              />
-              {/* Clasificación de Gastos y Análisis */}
-              <Route
-                path="tablas/gastos"
-                element={<GastosAnalisis />}
-              />
               {/* Otros Módulos */}
-              <Route path="compras" element={<MockModulePage title="Compras" icon={Icons.ShoppingCart} />} />
-              <Route path="almacen" element={<MockModulePage title="Almacén" icon={Icons.Package} />} />
-              <Route path="finanzas" element={<MockModulePage title="Finanzas" icon={Icons.DollarSign} />} />
-              <Route path="proyectos" element={<MockModulePage title="Proyectos" icon={Icons.Briefcase} />} />
-              <Route path="audit" element={<MockModulePage title="Auditoría" icon={Icons.ShieldCheck} />} />
+              <Route path="proyectos" element={<MockModulePage title="Proyectos" />} />
+              <Route path="compras" element={<MockModulePage title="Compras" />} />
+              <Route path="almacen" element={<MockModulePage title="Almacén" />} />
+              <Route path="finanzas" element={<MockModulePage title="Finanzas" />} />
+              <Route path="audit" element={<MockModulePage title="Auditoría" />} />
             </Route>
 
-            {/* Redirect */}
-            <Route
-              path="/"
-              element={<Navigate to="/dashboard/aprobacion-cotizacion" replace />}
-            />
-            <Route
-              path="*"
-              element={<Navigate to="/dashboard/aprobacion-cotizacion" replace />}
-            />
+            {/* Redirects actualizados */}
+            <Route path="/" element={<Navigate to="/sigecom/comercial" replace />} />
+            <Route path="*" element={<Navigate to="/sigecom/comercial" replace />} />
           </Routes>
 
         </KeyboardProvider>

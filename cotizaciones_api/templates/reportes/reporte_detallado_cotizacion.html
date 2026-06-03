@@ -142,52 +142,65 @@ tbody tr:hover{
 </style>
 </head>
 <body>
-<!-- ENCABEZADO -->
 <div class="header">
     <div>
         <img class="logo-img" src="{% static 'logo.png' %}" alt="Logo Empresa">
     </div>
 
-   <div class="excel-btn">
-    <button type="button" id="btnExcel_detallecot">
-        <img src="{% static 'importar-xls.png' %}" alt="excel">
-        Exportar Excel
-    </button>
+    <div class="excel-btn">
+        <button type="button" id="btnExcel_detallecot">
+            <img src="{% static 'importar-xls.png' %}" alt="excel">
+            Exportar Excel
+        </button>
+    </div>
 </div>
 
-</div>
-
-    
 <h2>{{ titulo }}</h2>
 <div id="contenedor_tabla">
 
-<h3 style="text-align:center;">PROYECTO: {{ proyecto }}</h3>
+    <h3 style="text-align:center; text-transform: uppercase; font-size: 13px; color: #475569; letter-spacing: 0.5px;">
+        COTIZACIÓN: {{ codigo_cotizacion }}
+    </h3>
 
-<table id="tabla_detalle_cotizacion">
-    <thead>
-        <tr>
-            <th>CONCEPTO</th>
-            <th>COSTO</th>
-            <th>GANANCIA</th>
-            <th>TOTAL</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for fila in datos %}
-        <tr>
-            <td>{{ fila.concepto }}</td>
-         <td class="text-right" data-num="{{ fila.costo }}">{{ fila.costo|floatformat:2|intcomma }}</td>
-         <td class="text-right" data-num="{{ fila.ganancia }}">{{ fila.ganancia|floatformat:2|intcomma }}</td>
-         <td class="text-right" data-num="{{ fila.total }}">{{ fila.total|floatformat:2|intcomma }}</td>
-
-        </tr>
-        {% endfor %}
-        <tr class="total-final">
-            <td colspan="3" style="text-align:right;">TOTAL FINAL</td>
-<td class="text-right" data-num="{{ total_final }}">{{ total_final|floatformat:2|intcomma }}</td>
-        </tr>
-    </tbody>
-</table>
+    <table id="tabla_detalle_cotizacion">
+        <thead>
+            <tr>
+                <th>CONCEPTO</th>
+                <th>COSTO</th>
+                <th>GANANCIA</th>
+                <th>TOTAL VENTA</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for fila in datos %}
+            <tr {% if fila.concepto == "DESCUENTO" %}style="color: #dc2626; font-style: italic; background-color: #fef2f2;"{% endif %}>
+                <td style="font-weight: 600;">{{ fila.concepto }}</td>
+                <td class="text-right" data-num="{{ fila.costo }}">
+                    {{ moneda }} {{ fila.costo|floatformat:2|intcomma }}
+                </td>
+                <td class="text-right" data-num="{{ fila.ganancia }}">
+                    {{ moneda }} {{ fila.ganancia|floatformat:2|intcomma }}
+                </td>
+                <td class="text-right" data-num="{{ fila.total }}" style="font-weight: 700;">
+                    {{ moneda }} {{ fila.total|floatformat:2|intcomma }}
+                </td>
+            </tr>
+            {% endfor %}
+            
+            <tr class="total-final">
+                <td style="text-align:left; font-weight: bold;">TOTAL GENERAL</td>
+                <td class="text-right" data-num="{{ total_costo }}">
+                    {{ moneda }} {{ total_costo|floatformat:2|intcomma }}
+                </td>
+                <td class="text-right" data-num="{{ total_ganancia }}">
+                    {{ moneda }} {{ total_ganancia|floatformat:2|intcomma }}
+                </td>
+                <td class="text-right" data-num="{{ total_final }}" style="background: #111827;">
+                    {{ moneda }} {{ total_final|floatformat:2|intcomma }}
+                </td>
+            </tr>
+        </tbody>
+    </table>
 </div>
 
 <script>
@@ -298,5 +311,22 @@ function descargarExcel(tablaHTML){
 </script>
 
 
+
+<!-- Script to notify parent of height changes for responsive iframe modals -->
+<script>
+  function notifyParentHeight() {
+    if (window.parent && window.parent !== window) {
+      const height = document.documentElement.scrollHeight || document.body.scrollHeight || document.documentElement.offsetHeight;
+      window.parent.postMessage({ 
+        type: 'set-iframe-height', 
+        height: height
+      }, '*');
+    }
+  }
+  notifyParentHeight();
+  window.addEventListener('DOMContentLoaded', notifyParentHeight);
+  window.addEventListener('load', notifyParentHeight);
+  window.addEventListener('resize', notifyParentHeight);
+</script>
 </body>
 </html>

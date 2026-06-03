@@ -2599,8 +2599,8 @@ export default function InfoTabs({
                         inline
                         size="sm"
                         label="Forma Pago"
-                        value={data.fpago || ""}
-                        onChange={(e) => handleFieldChange("fpago", e.target.value)}
+                        value={data.forma_pago || ""}
+                        onChange={(e) => handleFieldChange("forma_pago", e.target.value)}
                         disabled={isReadOnly}
                         options={formasPagoOptions}
                       />

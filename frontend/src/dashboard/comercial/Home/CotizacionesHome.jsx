@@ -76,7 +76,7 @@ export default function CotizacionesHome() {
     setLoading(true);
     try {
       const token = localStorage.getItem("access_token");
-      const { data } = await api.get("cotizaciones/aprobacion_cotizacion", {
+      const { data } = await api.get("cotizaciones/lista_cotizaciones/", {
         headers: { Authorization: `Bearer ${token}` },
         params,
       });
@@ -108,18 +108,6 @@ export default function CotizacionesHome() {
       setLoading(false);
     }
   }, [annoActual, logout]);
-
-  // Obtener año actual desde la API cont_cias
-  const fetchAnnoActual = async () => {
-    try {
-      const res = await api.get("cont_cias/001/"); // endpoint que devuelve cont_cias.cod=001
-      if (res.data?.anno) setAnnoActual(res.data.anno);
-      fetchCotizaciones(res.data?.anno);
-    } catch (err) {
-      console.warn("No se pudo obtener año actual, se usa el año del sistema", err);
-      fetchCotizaciones(annoActual);
-    }
-  };
 
   // ==========================
   // CARGAR AREAS

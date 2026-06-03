@@ -93,18 +93,7 @@ from .models import (
     LogisticaDashboardDetalle,
     VcMovOrdenSoli,
     AlmTabUmed,
-    DashboardCotizacion,
-    vc_tab_estado,
-    vc_mov_cotizaciones,
     cont_cias,
-    CotiSuministros,
-    CotiServicios,
-    CotiMensajes,
-    CotiSeguimiento,
-    vc_tab_tproveedor,
-    vc_tab_categorias,
-    vc_tab_tgastos,
-    vc_tab_tgastos_d,
     vc_tab_rittal,
     vc_tab_rockwell,
     vc_tab_ceyesa,
@@ -124,21 +113,8 @@ from users.models import (
 from core.models import Cliente, Representante
 
 from .serializers import (
-    DashboardCotizacionTablaSerializer,
     OrdenOCSerializer,
-    EstadoSerializer,
-    CotizacionesSerializer,
     ContCiasSerializer,
-    DashboardCotizacionModalSerializer,
-    CotiSuministrosSerializer,
-    CotiServiciosSerializer,
-    CotiMensajesSerializer,
-    CotiSeguimientoSerializer,
-    DashboardCotizacionSerializer,
-    ProveedoresSerializer,
-    CategoriasSerializer,
-    TGastosSerializer,
-    TGastosDSerializer,
     RittalSerializer,
     RockwellSerializer,
     CeyesaSerializer,
@@ -738,8 +714,6 @@ def logistica_modal_view(request, num_reg):
         print("Error en logistica_modal_view:", traceback.format_exc())
         return Response({"error": str(e)}, status=500)
     
-
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def logistica_modal_view_sal(request, num_reg):
@@ -1552,82 +1526,6 @@ from django.http import HttpResponse
 from django.template.loader import render_to_string
 from weasyprint import HTML
 
-
-@csrf_exempt
-@api_view(["PATCH"])
-@permission_classes([IsAuthenticated])
-def asignar_regus(request, num_reg):
-    """
-    Actualiza los campos 'regus' y 'referencia' de una cotizaciÃ³n segÃºn num_reg.
-    """
-    try:
-        cotizacion = DashboardCotizacion.objects.get(num_reg=num_reg)
-    except DashboardCotizacion.DoesNotExist:
-        return Response(
-            {"detail": "CotizaciÃ³n no encontrada"},
-            status=404
-        )
-
-    # Obtener datos del request
-    regus = request.data.get("regus")
-    referencia = request.data.get("referencia")
-
-    if not regus and not referencia:
-        return Response(
-            {"detail": "Debe enviar al menos 'regus' o 'referencia' para actualizar"},
-            status=400
-        )
-
-    campos_a_actualizar = []
-
-    if regus:
-        cotizacion.regus = regus
-        campos_a_actualizar.append("regus")
-
-    if referencia:
-        cotizacion.referencia = referencia
-        campos_a_actualizar.append("referencia")
-
-    cotizacion.save(update_fields=campos_a_actualizar)
-
-    return Response(
-        {
-            "message": "CotizaciÃ³n actualizada correctamente",
-            "num_reg": cotizacion.num_reg,
-            "regus": cotizacion.regus,
-            "referencia": cotizacion.referencia,
-        },
-        status=200
-    )
-
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def generar_codigo_view(request, numero):
-    """
-    Retorna el cÃ³digo (cotin) asociado a la cotizaciÃ³n.
-    Si la cotizaciÃ³n no existe â†’ 404
-    """
-    try:
-        cot = DashboardCotizacion.objects.filter(numero=numero).first()
-        if not cot:
-            return Response(
-                {"error": f"No se encontrÃ³ la cotizaciÃ³n #{numero}"},
-                status=404
-            )
-
-        return Response({
-            "numero": cot.numero,
-            "codigo": cot.numero  # Es lo mismo que cotin
-        })
-
-    except Exception as e:
-        import traceback
-        print("Error en generar_codigo_view:", traceback.format_exc())
-        return Response({"error": str(e)}, status=500)
-
-
 ##================##
 ## DATOS DE BD_VC ##
 ##================##
@@ -1773,34 +1671,6 @@ def exportar_excel_proveedores(request):
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
-# vc_tab_estado
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_estados(request):
-    estados = vc_tab_estado.objects.filter(activo=True, cot=1).order_by("nombre")
-    serializer = EstadoSerializer(estados, many=True)
-    return Response(serializer.data)
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_categorias(request):
-    categorias = vc_tab_categorias.objects.filter(activo="1").order_by("nombre")
-    serializer = CategoriasSerializer(categorias, many=True)
-    return Response(serializer.data)
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_tgasto(request):
-    tgasto = vc_tab_tgastos.objects.filter(activo="1").order_by("codigo")
-    serializer = TGastosSerializer(tgasto, many=True)
-    return Response(serializer.data)
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_tgasto_d(request):
-    tgasto_d = vc_tab_tgastos_d.objects.filter(activo="1").order_by("nombre")
-    serializer = TGastosDSerializer(tgasto_d, many=True)
-    return Response(serializer.data)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1906,13 +1776,6 @@ def lista_alm_articulos(request):
     queryset = queryset.order_by("nombre")[:limit]
 
     serializer = AlmArticulosSerializer(queryset, many=True)
-    return Response(serializer.data)
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_proveedores(request):
-    proveedores = vc_tab_tproveedor.objects.filter(activo="1").order_by("nombre")
-    serializer = ProveedoresSerializer(proveedores, many=True)
     return Response(serializer.data)
 
 # Usuario

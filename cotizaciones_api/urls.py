@@ -15,33 +15,44 @@ urlpatterns = [
     # CSRF
     path('csrf/', views.get_csrf_token, name='get_csrf_token'),
 
-    # DASHBOARD PRINCIPAL
-    path('cotizaciones/aprobacion_cotizacion', views.cotizaciones_dashboard_view, name="cotizaciones_dashboard_view"),
-    path('cotizaciones/modal/<str:num_reg>/', views.cotizacion_modal_view, name='cotizacion_modal_view'),
-    path("cotizacion/<int:num_reg>/suministros/", views.listar_suministros, name="listar_suministros"),
-    path("cotizacion/<int:num_reg>/servicios/", views.listar_servicios, name="listar_servicios"),
-    path('cotizaciones/adjuntos/gestion/<int:num_reg>/', views.gestionar_adjuntos, name='gestionar_adjuntos'),
-    path('cotizaciones/mensajes/gestion/<int:num_reg>/', views.gestionar_mensajes, name='gestionar_mensajes'),
-    path("cotizacion/<int:num_reg>/seguimientos/", views.listar_seguimientos, name="listar_seguimiento"),
+    # COTIZACIONES
+    path('lista_cotizaciones/', views.lista_cotizaciones, name="lista_cotizaciones"),
+    path('lista_aperturas/', views.lista_aperturas, name='lista_aperturas'),
+    path('cotizacion_detalle/<int:id_registro>/', views.cotizacion_detalle, name='cotizacion_detalle'),
+    path('ultima_cotizacion_cliente/<int:id_cliente>/', views.ultima_cotizacion_cliente, name='ultima_cotizacion_cliente'),
+    path('lista_suministros/<int:id_registro>/', views.listar_suministros, name='listar_suministros'),
+    path("lista_servicios/<int:id_registro>/", views.listar_servicios, name="listar_servicios"),
+    path('adjuntos/<int:id_registro>/', views.gestionar_adjuntos, name='gestionar_adjuntos'),
+    path('mensajes/<int:id_registro>/', views.gestionar_mensajes, name='gestionar_mensajes'),
+    path("seguimientos/<int:id_registro>/", views.listar_seguimientos, name="listar_seguimiento"),
+
+
     path("cotizaciones/<int:num_reg>/totales-descuento/", views.totales_descuento_view, name="totales_descuento"),
     path("cotizaciones/<int:num_reg>/recalcular-totales/", views.recalcular_totales_cotizacion, name="recalcular_totales_cotizacion"),
 
     # OPORTUNIDADES
-    path('cotizaciones/oportunidades', views.oportunidades_dashboard_view, name="oportunidades_dashboard_view"),
-    path('oportunidades/modal/<str:num_reg>/', views.oportunidad_detalle_view, name='oportunidad_detalle_view'),
+    path('lista_oportunidades/', views.lista_oportunidades, name='lista_oportunidades'),
+    path('siguiente_num_reg_oportunidad/', views.siguiente_num_reg_oportunidad_view, name='siguiente_num_reg_oportunidad'),
+    #path('cotizaciones/oportunidades', views.oportunidades_dashboard_view, name="oportunidades_dashboard_view"),
+    #path('oportunidades/modal/<str:num_reg>/', views.oportunidad_detalle_view, name='oportunidad_detalle_view'),
+    
+    
+
     # BUSQUEDA
     path('core/clientes/<str:empresa>/encargados/', views.buscar_encargados_por_empresa, name='buscar_encargados_por_empresa'),
 
     # GESTION
-    path("cotizaciones/<str:num_reg>/condiciones-generales/", views.condiciones_generales, name="condiciones_generales"),
-    path("cotizaciones/<str:numero>/generar-codigo/", views.generar_codigo_view, name="generar_codigo"),
-    path("cotizaciones/generar_codigo/<str:num_reg>/", views.generar_codigo_cotizacion, name="generar_codigo_cotizacion"),
-    path("cotizaciones/<str:num_reg>/nueva-version/", views.crear_nueva_version_cotizacion, name="nueva-version"),
+    #path("cotizaciones/<str:num_reg>/condiciones-generales/", views.condiciones_generales, name="condiciones_generales"),
+    path("condiciones-generales/<int:id_registro>/", views.condiciones_generales, name="condiciones_generales"),
+    #path("cotizaciones/<str:numero>/generar-codigo/", views.generar_codigo_view, name="generar_codigo"),
+    #path("cotizaciones/generar_codigo/<str:num_reg>/", views.generar_codigo_cotizacion, name="generar_codigo_cotizacion"),
+    path("generar-codigo/<int:id_registro>/", views.generar_codigo_cotizacion, name="generar_codigo_cotizacion"),
+    path("nueva-version/<int:id_registro>/", views.crear_nueva_version_cotizacion, name="nueva-version"),
     path("cotizaciones/<str:num_reg>/asignar-regus/", views.asignar_regus, name="asignar_regus"),
-    path("cotizaciones/<str:num_reg>/generar-copia/", views.generar_copiar_cotizacion, name="generar_copiar_cotizacion"),
-    path("cotizaciones/<int:num_reg>/", views.eliminar_cotizacion, name="eliminar_cotizacion"),
-    path("cotizaciones/<int:num_reg>/enviar-aprobacion/", views.enviar_cotizacion_aprobacion, name="enviar_cotizacion_aprobacion"),
-    path("cotizaciones/<str:num_reg>/cerrar/", views.cerrar_cotizacion, name="cerrar_cotizacion"),
+    path("cotizaciones/<int:id_registro>/generar-copia/", views.generar_copiar_cotizacion, name="generar_copiar_cotizacion"),
+    path("eliminar/<int:id_registro>/", views.eliminar_cotizacion, name="eliminar_cotizacion"),
+    #path("cotizaciones/<int:num_reg>/enviar-aprobacion/", views.enviar_cotizacion_aprobacion, name="enviar_cotizacion_aprobacion"),
+    path("enviar-aprobacion/<int:id_registro>/", views.enviar_cotizacion_aprobacion, name="enviar_cotizacion_aprobacion"),
     path("cotizaciones/<int:num_reg>/cambiar-estado/", views.cambiar_estado_cotizacion, name="cambiar_estado_cotizacion"),
     path("cotizaciones/<int:num_reg>/retornar/", views.retornar_cotizacion, name="retornar_cotizacion"),
     path("cotizaciones/<str:num_reg>/pdf-context/", views.cotizacion_pdf_context, name="cotizacion_pdf_context"),
@@ -68,32 +79,21 @@ urlpatterns = [
     path("alertas/generar/", views.generar_alertas, name="generar_alertas"),
 
     # DB_VC
-    path("cotizaciones/estados/", views.lista_estados, name="lista_estados"),
-    path("cotizaciones/proveedores/", views.lista_proveedores, name="lista_proveedores"),
-    path("cotizaciones/categorias/", views.lista_categorias, name="lista_categorias"),
-    path("cotizaciones/tgasto/", views.lista_tgasto, name="lista_tgasto"),
-    path("cotizaciones/tgasto_d/", views.lista_tgasto_d, name="lista_tgasto_d"),
     path("cotizaciones/rittal/", views.lista_rittal, name="lista_rittal"),
     path("cotizaciones/rockwell/", views.lista_rockwell, name="lista_rockwell"),
     path("cotizaciones/ceyesa/", views.lista_ceyesa, name="lista_ceyesa"),
     path("cotizaciones/hoffman/", views.lista_hoffman, name="lista_hoffman"),
     path("cotizaciones/alm-articulos/", views.lista_alm_articulos, name="lista_alm_articulos"),
-    path("cotizaciones/notas/", views.lista_notas, name="lista_notas"),
 
     # GUARDAR COTIZACIÓN
     path("cotizaciones/guardar/", views.guardar_cotizacion, name="guardar_cotizacion"),
 
-    # SIGUIENTE NUM_REG OPORTUNIDAD
-    path("siguiente_num_reg_oportunidad/", views.obtener_siguiente_num_reg_oportunidad, name="obtener_siguiente_num_reg_oportunidad"),
-
     # REPORTES
     path("cotizaciones/reportes/reporte_cotizaciones_dashboard_html/", views.reporte_cotizaciones_dashboard_html, name="reporte_cotizaciones_dashboard_html"),
-    path("cotizaciones/reportes/reporte_servicios_html/<int:num_reg>/", views.reporte_servicios_html, name="reporte_servicios_html"),
-    path("cotizaciones/reportes/reporte_suministros_html/<str:num_reg>/", views.reporte_suministros_html, name="reporte_suministros_html"),
-    path("cotizaciones/reportes/reporte_suministros_excel/<str:num_reg>/", views.reporte_suministros_excel, name="reporte_suministros_excel"),
-    path("cotizaciones/reportes/reporte_detallado_cotizacion/<str:num_reg>/", views.reporte_detallado_cotizacion, name="reporte_detallado_cotizacion"),
-    path("cotizaciones/reportes/reporte_detallado_excel/<str:num_reg>/", views.reporte_detallado_excel, name="reporte_detallado_excel"),
-    path("cotizaciones/reportes/reporte_resumen_cotizacion/<str:num_reg>/", views.reporte_resumen_cotizacion, name="reporte_resumen_cotizacion"),
+    path('reporte-suministros-html/<int:id_registro>/', views.reporte_suministros_html, name='reporte_suministros_html'),
+    path('reporte-servicios-html/<int:id_registro>/', views.reporte_servicios_html, name='reporte_servicios_html'),
+    path("reporte-detallado/<int:id_registro>/", views.reporte_detallado_cotizacion, name="reporte_detallado_cotizacion"),
+    path("reporte-resumen/<int:id_registro>/", views.reporte_resumen_cotizacion, name="reporte_resumen_cotizacion"),
     path("cotizaciones/reportes/reporte_venta_total/<str:num_reg>/", views.reporte_venta_total_html, name="reporte_venta_total_html"),
     path("cotizaciones/reportes/reporte_venta_parcial/<str:num_reg>/", views.reporte_venta_parcial_html, name="reporte_venta_parcial_html"),
 

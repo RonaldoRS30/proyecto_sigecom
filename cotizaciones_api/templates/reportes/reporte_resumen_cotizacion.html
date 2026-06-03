@@ -142,47 +142,50 @@ tbody tr:hover{
 </style>
 </head>
 <body>
-<!-- ENCABEZADO -->
 <div class="header">
     <div>
         <img class="logo-img" src="{% static 'logo.png' %}" alt="Logo Empresa">
     </div>
 
-   <div class="excel-btn">
-    <button type="button" id="btnExcel_detallecot">
-        <img src="{% static 'importar-xls.png' %}" alt="excel">
-        Exportar Excel
-    </button>
+    <div class="excel-btn">
+        <button type="button" id="btnExcel_detallecot" onclick="exportarExcelResumen()">
+            <img src="{% static 'importar-xls.png' %}" alt="excel">
+            Exportar Excel
+        </button>
+    </div>
 </div>
 
-</div>
-
-    
 <h2>{{ titulo }}</h2>
 <div id="contenedor_tabla">
 
-<h3 style="text-align:center;">PROYECTO: {{ proyecto }}</h3>
+    <h3 style="text-align:center; color: #64748b; font-size: 13px; margin-bottom: 20px;">
+        COTIZACIÓN: {{ codigo_cotizacion }}
+    </h3>
 
-<table>
-    <thead>
-        <tr>
-            <th>CONCEPTO</th>
-            <th>IMPORTE</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for fila in resumen %}
-        <tr>
-            <td>{{ fila.concepto }}</td>
-            <td class="text-right">{{ fila.importe|floatformat:2 }}</td>
-        </tr>
-        {% endfor %}
-        <tr class="total-final">
-            <td style="text-align:right;">TOTAL FINAL</td>
-            <td class="text-right">{{ total_final|floatformat:2 }}</td>
-        </tr>
-    </tbody>
-</table>
+    <table id="tabla_resumen_cotizacion">
+        <thead>
+            <tr>
+                <th>CONCEPTO</th>
+                <th class="text-right" style="width: 180px;">IMPORTE</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for fila in resumen %}
+            <tr>
+                <td class="font-bold" style="color: #475569;">{{ fila.concepto }}</td>
+                <td class="text-right font-bold" style="color: #1e293b;">
+                    {{ moneda }} {{ fila.importe|floatformat:2|intcomma }}
+                </td>
+            </tr>
+            {% endfor %}
+            <tr class="total-final">
+                <td class="font-bold" style="text-align:right;">TOTAL FINAL CONSOLIDADO</td>
+                <td class="text-right font-bold" style="font-size: 13px;">
+                    {{ moneda }} {{ total_final|floatformat:2|intcomma }}
+                </td>
+            </tr>
+        </tbody>
+    </table>
 </div>
 
 <script>
@@ -293,5 +296,22 @@ function descargarExcel(tablaHTML){
 </script>
 
 
+
+<!-- Script to notify parent of height changes for responsive iframe modals -->
+<script>
+  function notifyParentHeight() {
+    if (window.parent && window.parent !== window) {
+      const height = document.documentElement.scrollHeight || document.body.scrollHeight || document.documentElement.offsetHeight;
+      window.parent.postMessage({ 
+        type: 'set-iframe-height', 
+        height: height
+      }, '*');
+    }
+  }
+  notifyParentHeight();
+  window.addEventListener('DOMContentLoaded', notifyParentHeight);
+  window.addEventListener('load', notifyParentHeight);
+  window.addEventListener('resize', notifyParentHeight);
+</script>
 </body>
 </html>

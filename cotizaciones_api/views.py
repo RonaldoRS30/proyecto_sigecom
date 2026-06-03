@@ -38,10 +38,11 @@ from django.db.models import Sum, Count, Q, F, Max, DecimalField, ExpressionWrap
 from django.db.models.functions import TruncDate, Coalesce, ExtractMonth, Lower
 from django.core.exceptions import ValidationError
 from django.core.cache import cache
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.views.decorators.http import require_GET
 from django.utils.dateparse import parse_date
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from django.views.decorators.clickjacking import xframe_options_exempt
 
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
@@ -64,6 +65,7 @@ from django.shortcuts import render
 from collections import OrderedDict
 from string import ascii_uppercase
 from copy import deepcopy
+import calendar
 
 CACHE_LIST_KEY = "liquidacion_list"
 CACHE_DETAIL_PREFIX = "liquidacion_detail_"
@@ -73,20 +75,14 @@ from django.conf import settings
 from datetime import date, datetime, timedelta
 from django.utils.timezone import now
 from .models import (
-    DashboardCotizacion,
-    DashboardOportunidad,
+    Cotizacion,
+    CotizacionSuministro,
+    CotizacionServicio,
     CotizacionAdjunto,
-    vc_tab_estado,
-    vc_mov_cotizaciones,
-    cont_cias,
-    CotiSuministros,
-    CotiServicios,
-    CotiMensajes,
-    CotiSeguimiento,
-    vc_tab_tproveedor,
-    vc_tab_categorias,
-    vc_tab_tgastos,
-    vc_tab_tgastos_d,
+    CotizacionMensaje,
+    CotizacionCondicionGeneral,
+    CotizacionSeguimiento,
+    CotizacionApertura,
     vc_tab_rittal,
     vc_tab_rockwell,
     vc_tab_ceyesa,
@@ -105,25 +101,19 @@ from users.models import (
     Cargo,
     )
 
-from core.models import Cliente, Representante
+from core.models import Cliente, Representante, Estado
 
 from .serializers import (
-    DashboardCotizacionTablaSerializer,
-    DashboardOportunidadTablaSerializer,
-    DashboardOportunidadSerializer,
-    EstadoSerializer,
-    CotizacionesSerializer,
-    ContCiasSerializer,
-    DashboardCotizacionModalSerializer,
-    CotiSuministrosSerializer,
-    CotiServiciosSerializer,
-    CotiMensajesSerializer,
-    CotiSeguimientoSerializer,
-    DashboardCotizacionSerializer,
-    ProveedoresSerializer,
-    CategoriasSerializer,
-    TGastosSerializer,
-    TGastosDSerializer,
+    CotizacionTablaSerializer,
+    CotizacionSuministroSerializer,
+    CotizacionServicioSerializer,
+    CotizacionMensajeSerializer,
+    CotizacionSeguimientoSerializer,
+    CotizacionModalSerializer,
+    OportunidadTablaSerializer,
+    CotizacionSerializer,
+    CotizacionAperturaSerializer,
+    CotizacionAperturaTablaSerializer,
     RittalSerializer,
     RockwellSerializer,
     CeyesaSerializer,
@@ -169,268 +159,318 @@ def get_csrf_token(request):
 #==============#
 # COTIZACIONES #
 #==============#
-# ─── Dashboard Cotizaciones (versión moderna) ─────────────────────
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def cotizaciones_dashboard_view(request):
-    """
-    Dashboard + Tabla para cotizaciones con filtros flexibles.
-    Estilo moderno equivalente al dashboard de CAJA CHICA.
-    """
+def lista_cotizaciones(request):
     try:
-        from datetime import date
-        from unidecode import unidecode
-        from django.db.models import Func, F, Value, TextField
-        from django.db.models.functions import Lower
-        import re
-
         # ============================================================
-        # 1) Parámetros principales
+        # Parameters and Search Mapping
         # ============================================================
         anno = request.GET.get("anno", date.today().year)
         mes = request.GET.get("mes", "%")
-
-        cliente = request.GET.get("cliente", "%")
-        estado = request.GET.get("estado", "%")
-        area = request.GET.get("area", "%")
+        id_probabilidad = request.GET.get("probabilidad", "%")
+        id_cliente = request.GET.get("cliente", "%")
+        comercial_search = request.GET.get("comercial_search", "%")
+        tecnico_search = request.GET.get("tecnico_search", "%")
+        id_estado = request.GET.get("estado", "%")
+        id_area = request.GET.get("area", "%")
         envio = request.GET.get("envio", "%")
+        id_representante = request.GET.get("id_representante")
 
         CAMPOS_BUSQUEDA = {
-            "num_reg": "num_reg",
-            "cotin": "numero",
-            "cotif": "fecha",
-            "cliente_nombre": "cliente_nombre",
-            "refef": "referencia",
-            "nombr": "nombr",
-            "nombc": "nombc",
-            "nombt": "nombt",
-            "tot_c": "tot_c",
-            "tot_d": "tot_d",
-            "prob": "prob",
-            "regus": "regus",
+            "id_registro": "id_registro",
+            "codigo": "codigo",
+            "fecha": "fecha",
+            "cliente_nombre": "id_cliente__nombre",
+            "referencia": "referencia",
+            "representante": "representante_nombre",
+            "total": "total_cotizacion",
+            "probabilidad": "probabilidad",
         }
 
-        # Búsqueda flexible
         campo = request.GET.get("campo")
         valor = request.GET.get("valor")
-
         fecha_inicio = request.GET.get("fechaInicio")
         fecha_fin = request.GET.get("fechaFin")
 
         # ============================================================
-        # 2) Query base
+        # Query base (Excluyendo ID_ESTADO = 11: Oportunidad)
         # ============================================================
-        qs = DashboardCotizacion.objects.all()
+        qs = Cotizacion.objects.select_related(
+            'id_cliente', 'id_estado', 'id_comercial', 'id_tecnico', 'id_tipo'
+        ).exclude(id_estado=11)
 
+        # Filtros de Segmentación Estándar
         if anno != "%":
-            qs = qs.filter(anno_a=anno)
-
+            qs = qs.filter(año_apertura=int(anno))
         if mes != "%":
-            qs = qs.filter(fecha__month=mes)
-
-        if cliente != "%":
-            qs = qs.filter(cliente_codigo=cliente)
-
-        if estado != "%":
-            estados = [e for e in estado.split(",") if e]
-
-            if len(estados) == 1:
-                qs = qs.filter(estado_codigo=estados[0])
-            else:
-                qs = qs.filter(estado_codigo__in=estados)
-
-        if area != "%":
-            qs = qs.filter(area_codigo=area)
-
+            qs = qs.filter(mes=int(mes))
+        if id_probabilidad != "%":
+            qs = qs.filter(probabilidad=int(id_probabilidad))
+        if id_cliente != "%":
+            qs = qs.filter(id_cliente=id_cliente)
+        if id_representante:
+            qs = qs.filter(id_representante=id_representante)
+        if id_area != "%":
+            qs = qs.filter(id_area=id_area)
         if envio != "%":
-            qs = qs.filter(envio=envio)
+            qs = qs.filter(estado_envio=envio)
 
-        # Rango de fechas
+        # Filtro de Estado múltiple/único (respetando la exclusión implícita)
+        if id_estado != "%":
+            estados = [e for e in id_estado.split(",") if e]
+            qs = qs.filter(id_estado__in=estados) if len(estados) > 1 else qs.filter(id_estado=estados[0])
+
+        # Filtros de Responsables
+        if comercial_search != "%":
+            qs = qs.filter(id_comercial__nombre_completo__icontains=comercial_search)
+        if tecnico_search != "%":
+            qs = qs.filter(id_tecnico__nombre_completo__icontains=tecnico_search)
+
         if fecha_inicio:
             qs = qs.filter(fecha__gte=fecha_inicio)
         if fecha_fin:
             qs = qs.filter(fecha__lte=fecha_fin)
 
         # ============================================================
-        # 3) Normalización de búsqueda flexible
+        # Filtros complejos de Tiempos y Validez
         # ============================================================
-        def normalizar(texto):
-            if not texto:
+        suministros_val = request.GET.get("suministros_val", "")
+        suministros_uni = request.GET.get("suministros_uni", "D")
+        servicios_val = request.GET.get("servicios_val", "")
+        servicios_uni = request.GET.get("servicios_uni", "D")
+        oferta_val = request.GET.get("oferta_val", "")
+        oferta_uni = request.GET.get("oferta_uni", "D")
+
+        import calendar
+        hoy_date = date.today()
+
+        def calculate_target_date(start_date, val, code):
+            if not start_date or val is None or not code:
                 return None
-            t = unidecode(texto.lower().strip())
-            return re.sub(r"\s+", " ", t)
+            f_date = start_date.date() if hasattr(start_date, "date") else start_date
+            if not isinstance(f_date, date):
+                return None
+            code_upper = code.upper()
+            try:
+                if code_upper == 'D': return f_date + timedelta(days=val)
+                elif code_upper == 'S': return f_date + timedelta(weeks=val)
+                elif code_upper == 'Q': return f_date + timedelta(days=val * 15)
+                elif code_upper == 'M':
+                    month = f_date.month - 1 + val
+                    year = f_date.year + month // 12
+                    month = month % 12 + 1
+                    day = min(f_date.day, calendar.monthrange(year, month)[1])
+                    return date(year, month, day)
+                elif code_upper == 'T':
+                    month = f_date.month - 1 + (val * 3)
+                    year = f_date.year + month // 12
+                    month = month % 12 + 1
+                    day = min(f_date.day, calendar.monthrange(year, month)[1])
+                    return date(year, month, day)
+                elif code_upper == 'A':
+                    year = f_date.year + val
+                    month = f_date.month
+                    day = min(f_date.day, calendar.monthrange(year, month)[1])
+                    return date(year, month, day)
+            except Exception:
+                pass
+            return None
 
-        class Replace(Func):
-            function = "REPLACE"
-            arity = 3
+        if suministros_val and suministros_val.strip().isdigit():
+            try:
+                user_val = int(suministros_val.strip())
+                limit_date = calculate_target_date(hoy_date, user_val, suministros_uni)
+                if limit_date:
+                    records_data = qs.values_list("id_registro", "fecha", "entrega_suministros", "id_unidad_tiempo_entrega_suministros__codigo")
+                    matching_ids = [id_reg for id_reg, f_dt, val, code in records_data if (c_dt := calculate_target_date(f_dt, val, code)) and hoy_date <= c_dt <= limit_date]
+                    qs = qs.filter(id_registro__in=matching_ids)
+            except Exception as ex: logger.error(f"Error suministros: {str(ex)}")
 
+        if servicios_val and servicios_val.strip().isdigit():
+            try:
+                user_val = int(servicios_val.strip())
+                limit_date = calculate_target_date(hoy_date, user_val, servicios_uni)
+                if limit_date:
+                    records_data = qs.values_list("id_registro", "fecha", "entrega_servicios", "id_unidad_tiempo_entrega_servicios__codigo")
+                    matching_ids = [id_reg for id_reg, f_dt, val, code in records_data if (c_dt := calculate_target_date(f_dt, val, code)) and hoy_date <= c_dt <= limit_date]
+                    qs = qs.filter(id_registro__in=matching_ids)
+            except Exception as ex: logger.error(f"Error servicios: {str(ex)}")
+
+        if oferta_val and oferta_val.strip().isdigit():
+            try:
+                user_val = int(oferta_val.strip())
+                limit_date = calculate_target_date(hoy_date, user_val, oferta_uni)
+                if limit_date:
+                    records_data = qs.values_list("id_registro", "fecha", "validez_oferta", "id_unidad_tiempo_validez__codigo")
+                    matching_ids = [id_reg for id_reg, f_dt, val, code in records_data if (c_dt := calculate_target_date(f_dt, val, code)) and hoy_date <= c_dt <= limit_date]
+                    qs = qs.filter(id_registro__in=matching_ids)
+            except Exception as ex: logger.error(f"Error oferta: {str(ex)}")
+
+        # Búsqueda Flexible
         if campo and valor not in (None, "", " "):
             campo_real = CAMPOS_BUSQUEDA.get(campo)
-
             if campo_real:
-                valor_norm = normalizar(valor)
-
-                qs = qs.annotate(
-                    campo_clean=Replace(
-                        Replace(
-                            Lower(F(campo_real)),
-                            Value("  ", output_field=TextField()),
-                            Value(" ", output_field=TextField()),
-                            output_field=TextField()
-                        ),
-                        Value("  ", output_field=TextField()),
-                        Value(" ", output_field=TextField()),
-                        output_field=TextField()
-                    )
-                ).filter(campo_clean__icontains=valor_norm)
+                valor_norm = unidecode(valor.lower().strip())
+                qs = qs.filter(**{f"{campo_real}__icontains": valor_norm})
 
         # ============================================================
-        # 4) Dashboard Stats mejorado
+        # Metrics Processing (Dashboard)
         # ============================================================
-        total = qs.count()
-
-        estados_db = vc_tab_estado.objects.filter(activo=True).values_list("nombre", flat=True)
-        estado_map = {e: 0 for e in estados_db}
-
-        meses = [0] * 12
-        monto_total_soles = 0
-        monto_total_dolares = 0
-        este_mes = 0
-
-        hoy = date.today()
-
-        # Diccionario para stats por cliente
-        clientes_stats = {}
+        total_regs = qs.count()
+        monto_soles = monto_dolares = este_mes_conteo = 0
+        stats_estados = {"Pendiente": 0, "En Seguimiento": 0, "Adjudicado": 0, "Postergada": 0, "Perdida": 0, "Anulado": 0}
+        stats_clientes = {}
+        conteo_meses = [0] * 12
 
         for c in qs:
-            # ===== Estados =====
-            estado_nombre = c.estado_nombre or "Pendiente"
-            estado_map[estado_nombre] = estado_map.get(estado_nombre, 0) + 1
+            monto = float(c.total_cotizacion or 0)
+            if c.tipo_moneda == "D": monto_dolares += monto
+            else: monto_soles += monto
 
-            # ===== Monto por moneda =====
-            if hasattr(c, "tmone"):
-                if c.tmone == "S":
-                    monto_total_soles += float(c.tot_c or 0)
-                elif c.tmone == "D":
-                    monto_total_dolares += float(c.tot_c or 0)
-            else:
-                # si no hay tmone definido, asumimos S/ por defecto
-                monto_total_soles += float(c.tot_c or 0)
-
-            # ===== Conteo por mes =====
             if c.fecha:
-                idx = c.fecha.month - 1
-                meses[idx] += 1
-                if c.fecha.month == hoy.month:
-                    este_mes += 1
+                conteo_meses[c.fecha.month - 1] += 1
+                if c.fecha.month == hoy_date.month and c.fecha.year == hoy_date.year:
+                    este_mes_conteo += 1
 
-            # ===== Stats por cliente =====
-            codigo = c.cliente_codigo  # código del cliente
-            nombre = c.cliente_nombre or "-"
-            
-            if codigo not in clientes_stats:
-                clientes_stats[codigo] = {
-                    "cliente_codigo": codigo,
-                    "nombre": nombre,
-                    "cantidad": 0,
-                    "totalSoles": 0,
-                    "totalDolares": 0,
-                }
+            est_nom = c.id_estado.nombre if c.id_estado else "Sin Estado"
+            stats_estados[est_nom] = stats_estados.get(est_nom, 0) + 1
 
-            clientes_stats[codigo]["cantidad"] += 1
-            if hasattr(c, "tmone"):
-                if c.tmone == "S":
-                    clientes_stats[codigo]["totalSoles"] += float(c.tot_c or 0)
-                elif c.tmone == "D":
-                    clientes_stats[codigo]["totalDolares"] += float(c.tot_c or 0)
-            else:
-                clientes_stats[codigo]["totalSoles"] += float(c.tot_c or 0)
+            cli_id = c.id_cliente_id or "S/C"
+            cli_nom = c.id_cliente.nombre if c.id_cliente else (c.representante_nombre or "Desconocido")
+            if cli_id not in stats_clientes:
+                stats_clientes[cli_id] = {"nombre": cli_nom, "cantidad": 0, "total": 0}
+            stats_clientes[cli_id]["cantidad"] += 1
+            stats_clientes[cli_id]["total"] += monto
 
-        # Calcular porcentaje de uso por cliente
-        for cliente in clientes_stats.values():
-            cliente["porcentaje"] = round((cliente["cantidad"] / total) * 100, 2) if total else 0
+        clientes_lista = sorted([{"id": k, **v, "porcentaje": round((v["cantidad"]/total_regs)*100, 2) if total_regs else 0} for k, v in stats_clientes.items()], key=lambda x: x["cantidad"], reverse=True)[:10]
 
-        # Convertir a lista para enviar al frontend
-        clientes_list = list(clientes_stats.values())
-
-        # ===== Dashboard final =====
         dashboard_data = {
-            "total": total,
-            "esteMes": este_mes,
-            "montoTotalSoles": round(monto_total_soles, 2),
-            "montoTotalDolares": round(monto_total_dolares, 2),
-            "promedioSoles": round(monto_total_soles / total, 2) if total else 0,
-            "promedioDolares": round(monto_total_dolares / total, 2) if total else 0,
-            "estados": estado_map,
-            "porMes": meses,
-            "clientes": clientes_list,  # ✅ aquí agregamos los stats de clientes
+            "total": total_regs,
+            "esteMes": este_mes_conteo,
+            "montoTotalSoles": round(monto_soles, 2),
+            "montoTotalDolares": round(monto_dolares, 2),
+            "promedioSoles": round(monto_soles / total_regs, 2) if total_regs and monto_soles else 0,
+            "estados": stats_estados,
+            "porMes": conteo_meses,
+            "clientes": clientes_lista,
         }
 
-        # ============================================================
-        # 5) Tabla de registros
-        # ============================================================
-        tabla_data = DashboardCotizacionTablaSerializer(
-            qs.order_by(
-                F("envio").asc(nulls_last=True),
-                F("fecha").desc(),
-                F("num_reg").desc(),
-            ),
-            many=True
-        ).data
+        tabla_data = CotizacionTablaSerializer(qs.order_by('-fecha', '-id_registro'), many=True).data
 
-        # ============================================================
-        # 6) Respuesta final
-        # ============================================================
-        return Response({
-            "dashboard": dashboard_data,
-            "tabla": tabla_data,
-            "anno": anno
-        })
-
-    except Exception:
-        import traceback
-        print(traceback.format_exc())
-        return Response({"error": "Error interno en el servidor."}, status=500)
-
-# Detalle de cotización por num_reg
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def cotizacion_modal_view(request, num_reg):
-    """
-    Retorna los detalles completos de una cotización usando num_reg 
-    (clave principal real del registro).
-    """
-    try:
-        # Buscar la cotización por num_reg
-        cot = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
-        if not cot:
-            return Response(
-                {"error": f"No se encontró la cotización con num_reg {num_reg}"},
-                status=404
-            )
-
-        # Serializar
-        serializer = DashboardCotizacionModalSerializer(cot)
-        return Response(serializer.data)
-
+        return Response({"dashboard": dashboard_data, "tabla": tabla_data, "anno": anno})
     except Exception as e:
-        import traceback
-        print("Error en cotizacion_modal_view:", traceback.format_exc())
+        return Response({"error": f"Error en Dashboard Cotizaciones: {str(e)}"}, status=500)
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def ultima_cotizacion_cliente(request, id_cliente):
+    try:
+        cot = Cotizacion.objects.select_related(
+            'id_cliente', 'id_estado', 'id_tipo',
+            'id_unidad_tiempo_entrega_suministros',
+            'id_unidad_tiempo_entrega_servicios',
+            'id_unidad_tiempo_validez'
+        ).filter(id_cliente=id_cliente).order_by('-id_registro').first()
+        
+        if not cot:
+            return Response({"detail": "No se encontraron cotizaciones para este cliente."}, status=404)
+        
+        serializer = CotizacionModalSerializer(cot)
+        return Response(serializer.data)
+    except Exception as e:
+        print(f"❌ Error en ultima_cotizacion_cliente: {str(e)}")
         return Response({"error": str(e)}, status=500)
 
-@api_view(["GET", "POST", "PUT"])
+@api_view(['GET', 'PUT'])
 @permission_classes([IsAuthenticated])
-def listar_suministros(request, num_reg):
+def cotizacion_detalle(request, id_registro):
     try:
+        cot = Cotizacion.objects.select_related(
+            'id_cliente', 'id_estado', 'id_tipo',
+            'id_unidad_tiempo_entrega_suministros',
+            'id_unidad_tiempo_entrega_servicios',
+            'id_unidad_tiempo_validez'
+        ).filter(id_registro=id_registro).first()
+
+        if not cot:
+            return Response({"error": "Cotización no encontrada"}, status=404)
+
+        if request.method == "GET":
+            serializer = CotizacionModalSerializer(cot)
+            return Response(serializer.data)
+
+        elif request.method == "PUT":
+            if cot.estado_envio == 2:
+                return Response(
+                    {"error": "La cotización está congelada (ya fue enviada al cliente). No se admiten modificaciones."}, 
+                    status=400
+                )
+            
+            old_area = cot.id_area
+            old_tipo = cot.id_tipo_id
+            old_cliente = cot.id_cliente_id
+            old_codigo = cot.codigo
+
+            serializer = CotizacionSerializer(cot, data=request.data, partial=True)
+            if serializer.is_valid():
+                with transaction.atomic():
+                    serializer.save()
+                    
+                    # Si ya tenía código comercial, y cambiaron campos clave, recalculamos y guardamos el nuevo código
+                    if old_codigo:
+                        cot.refresh_from_db(fields=['id_area', 'id_tipo', 'id_cliente'])
+                        nuevo_codigo = calcular_codigo_dinamico(cot, old_codigo)
+                        if nuevo_codigo != old_codigo:
+                            cot.codigo = nuevo_codigo
+                            cot.save(update_fields=['codigo'])
+                            
+                            # Registrar hito en seguimiento
+                            CotizacionSeguimiento.objects.create(
+                                id_registro=cot,
+                                detalle=f"Código actualizado por cambio en parámetros: {nuevo_codigo} (antes: {old_codigo})",
+                                id_usuario=request.user,
+                                activo='1'
+                            )
+
+                # Return updated detail
+                updated_cot = Cotizacion.objects.select_related(
+                    'id_cliente', 'id_estado', 'id_tipo',
+                    'id_unidad_tiempo_entrega_suministros',
+                    'id_unidad_tiempo_entrega_servicios',
+                    'id_unidad_tiempo_validez'
+                ).filter(id_registro=id_registro).first()
+                return Response(CotizacionModalSerializer(updated_cot).data)
+            return Response(serializer.errors, status=400)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+@api_view(["GET", "POST", "PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
+def listar_suministros(request, id_registro):
+
+    try:
+        # Validación de seguridad por estado congelado
+        cot = Cotizacion.objects.filter(id_registro=id_registro).first()
+        if not cot:
+            return Response({"error": "Cotización no encontrada"}, status=404)
+
+        if request.method in ["POST", "PUT", "DELETE"] and cot.estado_envio == 2:
+            return Response(
+                {"error": "La cotización está congelada (ya fue enviada al cliente). No se admiten modificaciones."}, 
+                status=400
+            )
         # ======================
         # 📄 LISTAR
         # ======================
         if request.method == "GET":
-            suministros = CotiSuministros.objects.filter(
-                num_reg=num_reg
-            ).order_by("num")
+            # Usamos select_related para traer los nombres de marca y gasto de una vez
+            suministros = CotizacionSuministro.objects.select_related(
+                'id_marca', 'id_tipo_gasto', 'id_unidad_tiempo_entrega'
+            ).filter(id_registro=id_registro).order_by("orden", "id_suministro")
 
-            serializer = CotiSuministrosSerializer(suministros, many=True)
+            serializer = CotizacionSuministroSerializer(suministros, many=True)
             return Response(serializer.data)
 
         # ======================
@@ -438,9 +478,16 @@ def listar_suministros(request, num_reg):
         # ======================
         if request.method == "POST":
             data = request.data.copy()
-            data["num_reg"] = num_reg
+            # Asignamos el ID del padre (la cotización)
+            data["id_registro"] = id_registro 
 
-            serializer = CotiSuministrosSerializer(data=data)
+            # Asignar automáticamente el orden si no viene o es nulo/cero
+            if "orden" not in data or data.get("orden") is None or data.get("orden") == "" or data.get("orden") == 0:
+                from django.db.models import Max
+                max_orden = CotizacionSuministro.objects.filter(id_registro=id_registro).aggregate(Max('orden'))['orden__max']
+                data["orden"] = (max_orden or 0) + 1
+
+            serializer = CotizacionSuministroSerializer(data=data)
             if serializer.is_valid():
                 serializer.save()
                 return Response(serializer.data, status=201)
@@ -452,23 +499,48 @@ def listar_suministros(request, num_reg):
         # ✏️ ACTUALIZAR
         # ======================
         if request.method == "PUT":
-            item_id = request.data.get("id")
+            # Si es un reordenamiento por lote
+            if isinstance(request.data, dict) and "reorder_items" in request.data:
+                items_data = request.data.get("reorder_items", [])
+                for item_info in items_data:
+                    item_id = item_info.get("id_suministro")
+                    new_orden = item_info.get("orden")
+                    new_codigo_grupo = item_info.get("codigo_grupo")
+                    
+                    try:
+                        suministro = CotizacionSuministro.objects.get(
+                            id_suministro=item_id,
+                            id_registro=id_registro
+                        )
+                        if new_orden is not None:
+                            suministro.orden = new_orden
+                        if new_codigo_grupo is not None:
+                            suministro.codigo_grupo = new_codigo_grupo
+                        suministro.save()
+                    except CotizacionSuministro.DoesNotExist:
+                        pass
+                return Response({"message": "Orden actualizado correctamente"})
+
+            # Buscamos por la nueva PK: id_suministro
+            item_id = request.data.get("id_suministro")
 
             try:
                 item_id = int(item_id)
             except (TypeError, ValueError):
-                return Response({"error": "ID inválido"}, status=400)
+                return Response({"error": "ID de suministro inválido"}, status=400)
 
-            suministro = CotiSuministros.objects.get(
-                id=item_id,
-                num_reg=num_reg
+            # Validamos que el suministro pertenezca a la cotización correcta
+            suministro = CotizacionSuministro.objects.get(
+                id_suministro=item_id,
+                id_registro=id_registro
             )
 
             data = request.data.copy()
-            data.pop("id", None)
-            data.pop("num_reg", None)
+            # Limpiamos data para evitar modificar las PKs por error
+            data.pop("id_suministro", None)
+            data.pop("id_registro", None)
 
-            serializer = CotiSuministrosSerializer(
+            serializer = CotizacionSuministroSerializer(
                 suministro,
                 data=data,
                 partial=True
@@ -480,8 +552,33 @@ def listar_suministros(request, num_reg):
 
             return Response(serializer.errors, status=400)
 
-    except CotiSuministros.DoesNotExist:
-        return Response({"error": "Suministro no encontrado"}, status=404)
+        # ======================
+        # 🗑️ ELIMINAR
+        # ======================
+        if request.method == "DELETE":
+            item_id = request.query_params.get("id_suministro")
+            try:
+                item_id = int(item_id)
+            except (TypeError, ValueError):
+                return Response({"error": "ID de suministro inválido"}, status=400)
+
+            suministro = CotizacionSuministro.objects.get(
+                id_suministro=item_id,
+                id_registro=id_registro
+            )
+
+            # Si es cabecera de grupo (nivel=0), también eliminamos los items del grupo
+            if suministro.nivel == 0:
+                CotizacionSuministro.objects.filter(
+                    id_registro=id_registro,
+                    codigo_grupo=suministro.codigo_grupo
+                ).exclude(id_suministro=item_id).delete()
+
+            suministro.delete()
+            return Response({"message": "Suministro eliminado correctamente"}, status=200)
+
+    except CotizacionSuministro.DoesNotExist:
+        return Response({"error": "Suministro no encontrado en esta cotización"}, status=404)
 
     except Exception as e:
         return Response({"error": str(e)}, status=500)
@@ -496,287 +593,499 @@ def clean_text(text):
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-@api_view(["GET"])
+@api_view(["GET", "POST", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
-def listar_servicios(request, num_reg):
+def listar_servicios(request, id_registro):
     try:
-        # 1) OBTENER TODOS LOS SERVICIOS (nig = 0)
-        servicios_qs = CotiServicios.objects.filter(
-            num_reg=num_reg,
-            nig=0
-        ).order_by("num")
+        # Validación de seguridad por estado congelado
+        cot = Cotizacion.objects.filter(id_registro=id_registro).first()
+        if not cot:
+            return Response({"error": "Cotización no encontrada"}, status=404)
 
-        resultado = []
+        if request.method in ["POST", "PUT", "DELETE"] and cot.estado_envio == 2:
+            return Response(
+                {"error": "La cotización está congelada (ya fue enviada al cliente). No se admiten modificaciones."}, 
+                status=400
+            )
+        # ======================
+        # 📄 LISTAR (Jerárquico)
+        # ======================
+        if request.method == "GET":
+            # Traemos todo de la cotización usando select_related para optimizar FKs
+            todos_los_servicios = CotizacionServicio.objects.select_related(
+                'id_tipo_gasto', 'id_area'
+            ).filter(id_registro=id_registro).order_by("orden", "id_servicio")
 
-        tipo_map = {
-            "4": "MANO DE OBRA",
-            "5": "GASTOS DE SERVICIOS",
-            "6": "OTROS",
-        }
+            # Mapeo de tipos de gasto (Nivel 1)
+            tipo_map = {
+                "4": "MANO DE OBRA",
+                "5": "GASTOS DE SERVICIOS",
+                "6": "OTROS",
+            }
 
-        for servicio in servicios_qs:
-            servicio_data = CotiServiciosSerializer(servicio).data
-            titulo_general = clean_text(servicio_data.get("nog"))
+            resultado = []
+            
+            # Filtramos las cabeceras de servicio (Nivel 0)
+            cabeceras = [s for s in todos_los_servicios if s.nivel == 0]
 
-            pref_servicio = servicio.cog[:2]
+            for cab in cabeceras:
+                # Extraemos los primeros 2 caracteres del código para identificar su familia
+                prefijo_familia = cab.codigo_servicio[:2] if cab.codigo_servicio else ""
+                
+                # Buscamos subgrupos (Nivel 1) e ítems (Nivel 2) que pertenecen a esta cabecera
+                subgrupos_qs = [s for s in todos_los_servicios if s.nivel == 1 and s.codigo_servicio.startswith(prefijo_familia)]
+                items_qs = [s for s in todos_los_servicios if s.nivel == 2 and s.codigo_servicio.startswith(prefijo_familia)]
 
-            # 2) FILAS DEL SERVICIO (subgrupos + items)
-            rows = CotiServicios.objects.filter(
-                num_reg=num_reg,
-                cog__startswith=pref_servicio,
-                nig__gt=0
-            ).order_by("num")
+                subgrupos_data = []
+                for sg in subgrupos_qs:
+                    # El cuarto dígito del código legacy define el tipo (4, 5, 6)
+                    tipo_digito = sg.codigo_servicio[3] if len(sg.codigo_servicio) > 3 else "6"
+                    
+                    # Filtramos los ítems que pertenecen a este subgrupo (coincidencia de 4 dígitos)
+                    prefijo_subgrupo = sg.codigo_servicio[:4]
+                    items_del_subgrupo = [
+                        CotizacionServicioSerializer(it).data 
+                        for it in items_qs if it.codigo_servicio.startswith(prefijo_subgrupo)
+                    ]
 
-            subgrupos = []
+                    subgrupos_data.append({
+                        "id": sg.id_servicio,
+                        "titulo": sg.nombre_servicio or "",
+                        "tipoCodigo": f"0{tipo_digito}",
+                        "tipoNombre": tipo_map.get(tipo_digito, "OTROS"),
+                        "items": items_del_subgrupo
+                    })
 
-            # 3) CREAR SUBGRUPOS (nig = 1)
-            for row in rows.filter(nig=1):
-                tipo_digito = row.cog[3]  # 4,5,6
-                subgrupo = {
-                    "titulo": clean_text(row.nog),       # 🔹 título real de DB
-                    "tipoCodigo": f"0{tipo_digito}",     # "04", "05", "06"
-                    "tipoNombre": tipo_map.get(tipo_digito, "DESCONOCIDO"),
-                    "items": []
-                }
-                subgrupos.append(subgrupo)
+                resultado.append({
+                    "id_servicio": cab.id_servicio,
+                    "tituloGeneral": cab.nombre_servicio or "",
+                    "cantidad": str(cab.cantidad_hombres or "1"),
+                    "detalle": cab.descripcion_servicio or "",
+                    "orden": cab.orden or 0,
+                    "subgrupos": subgrupos_data
+                })
 
-            # 4) ASIGNAR ITEMS (nig = 2)
-            for row in rows.filter(nig=2):
-                # Buscar el subgrupo correspondiente según los primeros 4 dígitos del cog
-                prefijo = row.cog[:4]
-                for sg in subgrupos:
-                    if sg["tipoCodigo"] == f"0{row.cog[3]}":
-                        item = CotiServiciosSerializer(row).data
-                        for f in ["des", "cod", "nog", "pro"]:
-                            item[f] = clean_text(item.get(f))
-                        sg["items"].append(item)
-                        break
+            return Response(resultado)
 
-            resultado.append({
-                "tituloGeneral": titulo_general,
-                "cantidad": str(servicio.can or "1"),   # 🔹 can (nig = 0)
-                "detalle": servicio.tog or "",           # 🔹 tog (HTML)
-                "subgrupos": subgrupos
-            })
+        # ======================
+        # ➕ CREAR (Individual)
+        # ======================
+        if request.method == "POST":
+            data = request.data.copy()
+            data["id_registro"] = id_registro 
 
-        return Response(resultado)
+            # Asignar automáticamente el orden si no viene o es nulo/cero/vacío
+            if "orden" not in data or data.get("orden") is None or data.get("orden") == "" or data.get("orden") == 0:
+                from django.db.models import Max
+                max_orden = CotizacionServicio.objects.filter(id_registro=id_registro).aggregate(Max('orden'))['orden__max']
+                data["orden"] = (max_orden or 0) + 1
 
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
+            serializer = CotizacionServicioSerializer(data=data)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data, status=201)
 
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def listar_seguimientos(request, num_reg):
-    """
-    Lista todos los seguimientos asociados a un num_reg.
-    """
-    try:
-        seguimientos = CotiSeguimiento.objects.filter(
-            num_reg=num_reg,
-            act="1"  # Solo activos
-        ).order_by("dat")  # Orden cronológico, más antiguos primero
+            return Response(serializer.errors, status=400)
 
-        serializer = CotiSeguimientoSerializer(seguimientos, many=True)
-        return Response(serializer.data)
+        # ======================
+        # ✏️ ACTUALIZAR (Individual)
+        # ======================
+        if request.method == "PUT":
+            # Si es un reordenamiento por lote
+            if isinstance(request.data, dict) and "reorder_items" in request.data:
+                items_data = request.data.get("reorder_items", [])
+                for item_info in items_data:
+                    item_id = item_info.get("id_servicio")
+                    new_orden = item_info.get("orden")
+                    new_codigo_servicio = item_info.get("codigo_servicio")
+                    
+                    try:
+                        servicio = CotizacionServicio.objects.get(
+                            id_servicio=item_id,
+                            id_registro=id_registro
+                        )
+                        if new_orden is not None:
+                            servicio.orden = new_orden
+                        if new_codigo_servicio is not None:
+                            servicio.codigo_servicio = new_codigo_servicio
+                        servicio.save()
+                    except CotizacionServicio.DoesNotExist:
+                        pass
+                return Response({"message": "Orden actualizado correctamente"})
 
+            item_id = request.data.get("id_servicio")
+            
+            # Validamos que el registro pertenezca a la cotización
+            servicio_instancia = CotizacionServicio.objects.get(
+                id_servicio=item_id,
+                id_registro=id_registro
+            )
+
+            data = request.data.copy()
+            # Limpiamos para evitar inyectar IDs por error
+            data.pop("id_servicio", None)
+            data.pop("id_registro", None)
+
+            serializer = CotizacionServicioSerializer(
+                servicio_instancia,
+                data=data,
+                partial=True
+            )
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+
+            return Response(serializer.errors, status=400)
+
+        # ======================
+        # 🗑️ ELIMINAR (Individual/Cascada)
+        # ======================
+        if request.method == "DELETE":
+            item_id = request.query_params.get("id_servicio")
+            try:
+                item_id = int(item_id)
+            except (TypeError, ValueError):
+                return Response({"error": "ID de servicio inválido"}, status=400)
+
+            servicio = CotizacionServicio.objects.get(
+                id_servicio=item_id,
+                id_registro=id_registro
+            )
+
+            # Si es cabecera (nivel=0), eliminamos todo el grupo de servicios
+            if servicio.nivel == 0:
+                prefijo_familia = servicio.codigo_servicio[:2] if servicio.codigo_servicio else ""
+                if prefijo_familia:
+                    CotizacionServicio.objects.filter(
+                        id_registro=id_registro,
+                        codigo_servicio__startswith=prefijo_familia
+                    ).exclude(id_servicio=item_id).delete()
+            
+            # Si es subgrupo (nivel=1), eliminamos todos sus items
+            elif servicio.nivel == 1:
+                prefijo_subgrupo = servicio.codigo_servicio[:4] if servicio.codigo_servicio else ""
+                if prefijo_subgrupo:
+                    CotizacionServicio.objects.filter(
+                        id_registro=id_registro,
+                        codigo_servicio__startswith=prefijo_subgrupo
+                    ).exclude(id_servicio=item_id).delete()
+
+            servicio.delete()
+            return Response({"message": "Servicio eliminado correctamente"}, status=200)
+
+    except CotizacionServicio.DoesNotExist:
+        return Response({"error": "Servicio no encontrado en esta cotización"}, status=404)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
 
 @api_view(['GET', 'POST', 'DELETE'])
 @permission_classes([IsAuthenticated])
-def gestionar_adjuntos(request, num_reg):
+def gestionar_adjuntos(request, id_registro): # Parámetro actualizado
+    # Mantenemos tu ruta física personalizada
     ruta_carpeta = r"C:\Users\VC-23031\PROYECTOS\Adj"
     
-    # Extraemos el usuario directamente del objeto user procesado por el JWT
-    user_code = request.user.usuario if hasattr(request.user, "usuario") else request.user.username
+    # Validación de seguridad por estado congelado
+    cot = Cotizacion.objects.filter(id_registro=id_registro).first()
+    if not cot:
+        return Response({"error": "Cotización no encontrada"}, status=404)
+
+    if request.method in ["POST", "DELETE"] and cot.estado_envio == 2:
+        return Response(
+            {"error": "La cotización está congelada (ya fue enviada al cliente). No se admiten modificaciones."}, 
+            status=400
+        )
 
     # --- MÉTODO POST: GUARDAR ---
     if request.method == "POST":
         archivo = request.FILES.get("archivo")
-        # Capturamos la descripción y la dejamos vacía si el usuario no escribió nada
         descripcion_personalizada = request.POST.get("descripcion", "").strip()
         
         if not archivo:
             return Response({"ok": False, "error": "No se recibió archivo"}, status=400)
 
         try:
+            # 1. Asegurar Carpeta
             if not os.path.exists(ruta_carpeta):
                 os.makedirs(ruta_carpeta)
                 
-            nombre_fisico = f"{num_reg}_{archivo.name}"
+            # Usamos id_registro para el nombre físico del archivo
+            nombre_fisico = f"{id_registro}_{archivo.name}"
             path_destino = os.path.join(ruta_carpeta, nombre_fisico)
             
+            # 2. Guardado Físico
             with open(path_destino, "wb+") as destino:
                 for chunk in archivo.chunks():
                     destino.write(chunk)
 
-            # Registro en tabla de Adjuntos
-            CotizacionAdjunto.objects.create(
-                id_registro=num_reg,
+            # 3. Registro en tabla de Adjuntos
+            cotizacion_instancia = Cotizacion.objects.get(id_registro=id_registro)
+            
+            nuevo_adjunto = CotizacionAdjunto.objects.create(
+                id_registro=cotizacion_instancia,
                 nombre=archivo.name,
-                descripcion=descripcion_personalizada, # Puede ser ""
+                descripcion=descripcion_personalizada,
                 ruta=path_destino,
-                usuario=user_code
+                id_usuario=request.user,
+                fecha=timezone.now(),
+                activo='1'
             )
 
-            # Registro en SEGUIMIENTOS
-            # Usamos la descripción si existe, si no, el nombre del archivo
+            # 4. Registro en SEGUIMIENTOS
             txt_historial = descripcion_personalizada if descripcion_personalizada else archivo.name
-            CotiSeguimiento.objects.create(
-                num_reg=num_reg,
-                num=0,
-                dat=timezone.now(),
-                fec=timezone.now().strftime("%Y-%m-%d %H:%M:%S"),
-                des=f"Se adjuntó archivo: {txt_historial}",
-                cod=user_code,
-                act="1",
+            CotizacionSeguimiento.objects.create(
+                id_registro=cotizacion_instancia,
+                detalle=f"Se adjuntó archivo: {txt_historial}",
+                id_usuario=request.user,
+                activo="1",
             )
 
-            return Response({"ok": True})
+            return Response({"ok": True, "id": nuevo_adjunto.id_adjuntos})
+            
+        except Cotizacion.DoesNotExist:
+            return Response({"ok": False, "error": "La cotización no existe"}, status=404)
         except Exception as e:
             return Response({"ok": False, "error": str(e)}, status=500)
 
     # --- MÉTODO GET: LISTAR ---
     elif request.method == "GET":
         try:
-            adjuntos_db = CotizacionAdjunto.objects.filter(id_registro=num_reg).order_by('-fecha')
-            archivos_lista = [{
-                "id": adj.id,
-                "nombre": adj.nombre,
-                "description": adj.descripcion,
-                "fecha": adj.fecha.strftime('%d/%m/%Y %H:%M'),
-                "usuario": adj.usuario,
-                "file_path": f"/api/cotizaciones/adjuntos/descargar/{num_reg}_{adj.nombre}/"
-            } for adj in adjuntos_db]
+            # Filtramos por id_registro
+            adjuntos_db = CotizacionAdjunto.objects.filter(
+                id_registro=id_registro, 
+                activo='1'
+            ).order_by('-fecha')
+            
+            archivos_lista = []
+            for adj in adjuntos_db:
+                nombre_usuario = adj.id_usuario.usuario if adj.id_usuario else "N/A"
+
+                archivos_lista.append({
+                    "id": adj.id_adjuntos,
+                    "nombre": adj.nombre,
+                    "description": adj.descripcion,
+                    "fecha": adj.fecha.strftime('%d/%m/%Y %H:%M'),
+                    "usuario": nombre_usuario,
+                    # El path de descarga ahora también usa id_registro
+                    "file_path": f"/api/cotizaciones/adjuntos/descargar/{id_registro}_{adj.nombre}/"
+                })
+            
             return Response({"ok": True, "archivos": archivos_lista})
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
+    # --- MÉTODO DELETE: ELIMINAR (Lógico) ---
+    elif request.method == "DELETE":
+        try:
+            id_adjunto = request.query_params.get("id")
+            # Buscamos asegurando que pertenezca a la cotización actual
+            adjunto = CotizacionAdjunto.objects.get(id_adjuntos=id_adjunto, id_registro=id_registro)
+            
+            # Borrado físico opcional (según tu lógica previa)
+            if os.path.exists(adjunto.ruta):
+                try:
+                    os.remove(adjunto.ruta)
+                except OSError:
+                    pass # Evita que el endpoint falle si el archivo no está físicamente
+            
+            # Borrado físico (Hard Delete) como pidió el usuario
+            adjunto.delete()
+
+            # REGISTRO EN TRAZABILIDAD
+            CotizacionSeguimiento.objects.create(
+                id_registro_id=id_registro,
+                detalle=f"Se eliminó adjunto: {adjunto.nombre}",
+                id_usuario=request.user,
+                activo="1"
+            )
+            
+            return Response({"ok": True, "mensaje": "Archivo y registro eliminados permanentemente"})
+        except CotizacionAdjunto.DoesNotExist:
+            return Response({"ok": False, "error": "Adjunto no encontrado"}, status=404)
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
+@api_view(["GET", "POST", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def gestionar_mensajes(request, id_registro):
+    
+    # --- MÉTODO POST: CREAR ---
+    if request.method == "POST":
+        msj_texto = request.data.get("msj", "").strip()
+        tipo_envio = request.data.get("tipo", "N")
+        es_alerta = request.data.get("alerta", "0") 
+        fecha_alerta = request.data.get("alerta_fecha") 
+
+        if not msj_texto:
+            return Response({"ok": False, "error": "El mensaje no puede estar vacío"}, status=400)
+
+        try:
+            # Buscamos la cotización usando el id_registro del path
+            cotizacion = Cotizacion.objects.get(id_registro=id_registro)
+            
+            estado_completo = "0" if es_alerta == "1" else "1"
+            
+            nuevo_msj = CotizacionMensaje.objects.create(
+                id_registro=cotizacion,
+                id_usuario=request.user,
+                mensaje=msj_texto,
+                alerta=es_alerta,
+                alerta_fecha=fecha_alerta if es_alerta == "1" else None,
+                alerta_completada=None,
+                completo=estado_completo,
+                activo="1",
+                fecha=timezone.now()
+            )
+            
+            # Registro en SEGUIMIENTOS
+            txt_historial = f"REGISTRO: {msj_texto}"
+            if es_alerta == "1" and fecha_alerta:
+                txt_historial += f" [ALERTA: {fecha_alerta}]"
+
+            CotizacionSeguimiento.objects.create(
+                id_registro=cotizacion,
+                detalle=txt_historial,
+                id_usuario=request.user,
+                activo="1",
+                # fecha se genera auto_now_add
+            )
+            
+            return Response({"ok": True, "id": nuevo_msj.id_mensaje})
+        except Cotizacion.DoesNotExist:
+            return Response({"ok": False, "error": "Cotización no encontrada"}, status=404)
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
+    # --- MÉTODO GET: LISTAR ---
+    elif request.method == "GET":
+        try:
+            # Filtramos mensajes usando el id_registro
+            mensajes = CotizacionMensaje.objects.filter(
+                id_registro=id_registro, 
+                activo="1"
+            ).order_by('fecha')
+            
+            serializer = CotizacionMensajeSerializer(mensajes, many=True)
+            return Response({"ok": True, "registros": serializer.data})
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
+    # --- MÉTODO PATCH: ACTUALIZAR ALERTA ---
+    elif request.method == "PATCH":
+        try:
+            id_mensaje = request.data.get("id")
+            # Filtramos el mensaje específico dentro de la cotización actual
+            msj_obj = CotizacionMensaje.objects.filter(
+                id_mensaje=id_mensaje, 
+                id_registro=id_registro
+            )
+
+            if not msj_obj.exists():
+                return Response({"ok": False, "error": "Mensaje no encontrado"}, status=404)
+
+            if "completar" in request.data:
+                msj_obj.update(
+                    alerta_completada=timezone.now(),
+                    completo="1"
+                )
+                # TRAZABILIDAD
+                msj = msj_obj.first()
+                CotizacionSeguimiento.objects.create(
+                    id_registro_id=id_registro,
+                    detalle=f"Alerta completada: {msj.mensaje}",
+                    id_usuario=request.user,
+                    activo="1"
+                )
+            
+            elif "nueva_fecha" in request.data:
+                nueva_f = request.data.get("nueva_fecha")
+                msj = msj_obj.first()
+                old_f = msj.alerta_fecha.strftime('%d/%m/%Y %H:%M') if msj.alerta_fecha else "N/A"
+                
+                msj_obj.update(
+                    alerta_fecha=nueva_f, 
+                    alerta_completada=None,
+                    completo="0" 
+                )
+                # TRAZABILIDAD
+                CotizacionSeguimiento.objects.create(
+                    id_registro_id=id_registro,
+                    detalle=f"Alerta reprogramada de {old_f} a {nueva_f}",
+                    id_usuario=request.user,
+                    activo="1"
+                )
+
+            return Response({"ok": True})
         except Exception as e:
             return Response({"ok": False, "error": str(e)}, status=500)
 
     # --- MÉTODO DELETE: ELIMINAR ---
     elif request.method == "DELETE":
         try:
-            id_adjunto = request.query_params.get("id") # DRF usa query_params en lugar de GET
-            adjunto = CotizacionAdjunto.objects.get(id=id_adjunto, id_registro=num_reg)
-            
-            if os.path.exists(adjunto.ruta):
-                os.remove(adjunto.ruta)
-            
-            adjunto.delete()
-            return Response({"ok": True, "mensaje": "Eliminado correctamente"})
-        except Exception as e:
-            return Response({"ok": False, "error": str(e)}, status=500)
+            id_mensaje = request.query_params.get("id")
+            msj_obj = CotizacionMensaje.objects.filter(
+                id_mensaje=id_mensaje, 
+                id_registro=id_registro
+            )
 
-@api_view(['GET', 'POST', 'PATCH'])
-@permission_classes([IsAuthenticated])
-def gestionar_mensajes(request, num_reg):
-    user_code = request.user.usuario if hasattr(request.user, "usuario") else request.user.username
+            if not msj_obj.exists():
+                return Response({"ok": False, "error": "Mensaje no encontrado"}, status=404)
 
-    if request.method == "POST":
-        msj_texto = request.data.get("msj", "").strip()
-        tipo_envio = request.data.get("tipo", "N")
-        es_alerta = request.data.get("alerta", "N")
-        fecha_alerta = request.data.get("alerta_fecha") 
+            # Capturamos el contenido antes de eliminar para el historial
+            msj_temp = msj_obj.first()
+            contenido_msj = msj_temp.mensaje or "Sin contenido"
 
-        if not msj_texto:
-            return Response({"ok": False, "error": "El mensaje vacío"}, status=400)
+            # Borrado físico (Hard Delete) como pidió el usuario
+            msj_obj.delete()
 
-        try:
-            # Si es alerta, act="0" (Pendiente), si es nota normal act="1"
-            estado_inicial = "0" if es_alerta == "S" else "1"
-            
-            CotiMensajes.objects.create(
-                num_reg=num_reg,
-                cod=user_code,
-                msj=msj_texto,
-                tipo=tipo_envio,
-                alerta=es_alerta,
-                alerta_fecha=fecha_alerta,
-                alerta_completada=None, # Iniciamos vacío
-                act=estado_inicial 
+            # TRAZABILIDAD
+            CotizacionSeguimiento.objects.create(
+                id_registro_id=id_registro,
+                detalle=f"Se eliminó registro: {contenido_msj}",
+                id_usuario=request.user,
+                activo="1"
             )
             
-            # Trazabilidad
-            CotiSeguimiento.objects.create(
-                num_reg=num_reg,
-                num=0,
-                dat=timezone.now(),
-                fec=timezone.now().strftime("%Y-%m-%d %H:%M:%S"),
-                des=f"REGISTRO ({tipo_envio}): {msj_texto}" + (f" [ALERTA: {fecha_alerta}]" if fecha_alerta else ""),
-                cod=user_code,
-                act="1",
-            )
-            return Response({"ok": True})
-        except Exception as e:
-            return Response({"ok": False, "error": str(e)}, status=500)
-
-    elif request.method == "GET":
-        try:
-            mensajes = CotiMensajes.objects.filter(
-                num_reg=num_reg, 
-                act__in=["0", "1"] 
-            ).exclude(cod="SISTEMA").order_by('dat')
-            
-            lista = []
-            for m in mensajes:
-                # Función auxiliar interna para formatear con seguridad
-                def safe_date(date_obj, format_str='%d/%m/%Y %H:%M'):
-                    try:
-                        # Si es un datetime, formateamos
-                        return date_obj.strftime(format_str)
-                    except AttributeError:
-                        # Si es un int, string u otro, devolvemos None o el valor como string
-                        return str(date_obj) if date_obj else None
-
-                lista.append({
-                    "id": m.dat.isoformat() if hasattr(m.dat, 'isoformat') else str(m.dat),
-                    "dat": safe_date(m.dat),
-                    "msj": m.msj,
-                    "cod": m.cod,
-                    "tipo": m.tipo,
-                    "alerta": m.alerta,
-                    "alerta_fecha": safe_date(m.alerta_fecha, '%Y-%m-%d %H:%M:%S'),
-                    "alerta_completada": safe_date(m.alerta_completada),
-                    "estado": m.act 
-                })
-                
-            return Response({"ok": True, "registros": lista})
-        except Exception as e:
-            return Response({"ok": False, "error": str(e)}, status=500)
-
-    elif request.method == "PATCH":
-        try:
-            fecha_id = request.data.get("id")
-            msj_obj = CotiMensajes.objects.filter(num_reg=num_reg, dat=fecha_id)
-
-            if "completar" in request.data:
-                # Guardamos la fecha y hora actual y pasamos act a "1"
-                ahora = timezone.now()
-                msj_obj.update(
-                    alerta_completada=ahora,
-                    act="1"
-                )
-            
-            elif "nueva_fecha" in request.data:
-                nueva_f = request.data.get("nueva_fecha")
-                msj_obj.update(
-                    alerta_fecha=nueva_f, 
-                    alerta_completada=None,
-                    act="0" # Se mantiene o vuelve a pendiente
-                )
-
-            return Response({"ok": True})
+            return Response({"ok": True, "mensaje": "Mensaje eliminado permanentemente"})
         except Exception as e:
             return Response({"ok": False, "error": str(e)}, status=500)
 
 @api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def listar_seguimientos(request, id_registro): # Nombre de parámetro consistente
+    
+    try:
+        # 1. Filtramos por el nuevo campo id_registro
+        # 2. Usamos activo='1' (nuevo estándar) en lugar de act='1'
+        # 3. Ordenamos por fecha (cronológico)
+        seguimientos = CotizacionSeguimiento.objects.filter(
+            id_registro=id_registro,
+            activo="1"
+        ).order_by("fecha")
+
+        # El serializer ahora incluirá el 'usuario_nombre' y 'fecha_formateada'
+        serializer = CotizacionSeguimientoSerializer(seguimientos, many=True)
+        
+        return Response({
+            "ok": True,
+            "seguimientos": serializer.data
+        })
+
+    except Exception as e:
+        return Response({
+            "ok": False,
+            "error": str(e)
+        }, status=500)
+
+@api_view(["GET"])
 def totales_descuento_view(request, num_reg):
-    cot = DashboardCotizacion.objects.get(num_reg=num_reg)
+    cot = Cotizacion.objects.get(num_reg=num_reg)
 
     total = cot.tot_c or 0
     descuento_monto = cot.des_m or 0  # <-- descuento guardado
 
     total_suministros = (
-        CotiSuministros.objects
+        CotizacionSuministro.objects
         .filter(num_reg=num_reg, nig=0)
         .aggregate(
             total=Sum(F("tot") * F("can"))
@@ -784,7 +1093,7 @@ def totales_descuento_view(request, num_reg):
     )
 
     total_servicios = (
-        CotiServicios.objects
+        CotizacionServicio.objects
         .filter(num_reg=num_reg, nig=0)
         .aggregate(
             total=Sum(F("tot") * F("can"))
@@ -807,18 +1116,18 @@ def recalcular_totales_cotizacion(request, num_reg):
     Retorna el total actualizado.
     """
     try:
-        cotizacion = DashboardCotizacion.objects.get(num_reg=num_reg)
+        cotizacion = Cotizacion.objects.get(num_reg=num_reg)
 
         # Totales suministros
         total_suministros = (
-            CotiSuministros.objects
+            CotizacionSuministro.objects
             .filter(num_reg=num_reg, nig=0)
             .aggregate(total=Sum(F("tot") * F("can")))["total"] or 0
         )
 
         # Totales servicios
         total_servicios = (
-            CotiServicios.objects
+            CotizacionServicio.objects
             .filter(num_reg=num_reg, nig=0)
             .aggregate(total=Sum(F("tot") * F("can")))["total"] or 0
         )
@@ -835,7 +1144,7 @@ def recalcular_totales_cotizacion(request, num_reg):
             "servicios": total_servicios,
         })
 
-    except DashboardCotizacion.DoesNotExist:
+    except Cotizacion.DoesNotExist:
         return Response({"error": "Cotización no encontrada"}, status=404)
 
 #========================================================================================
@@ -843,101 +1152,115 @@ def recalcular_totales_cotizacion(request, num_reg):
 ##===============##
 ## OPORTUNIDADES ##
 ##===============##
-# ─── Dashboard Oportunidades ──────────────────────────────────────────
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def oportunidades_dashboard_view(request):
+def lista_oportunidades(request):
     try:
-        # 1) Parámetros principales
+        # ============================================================
+        # 1) Parámetros y Mapeo de búsqueda de Oportunidades
+        # ============================================================
         anno = request.GET.get("anno", date.today().year)
         mes = request.GET.get("mes", "%")
-        cliente = request.GET.get("cliente", "%")
-        estado = request.GET.get("estado", "%")
-        area = request.GET.get("area", "%")
+        comercial_search = request.GET.get("comercial_search", "%")
+        estado_oportunidad = request.GET.get("estado_oportunidad", "%") # 1, 2, 3 o 4
 
-        # Mapeo de búsqueda usando los nombres reales del modelo
+        # Mapeo de campos flexibles enfocado en columnas de Oportunidades
         CAMPOS_BUSQUEDA = {
-            "num_reg": "num_reg",
-            "numero": "numero",    # Antes era 'numero'
-            "referencia": "referencia", # Antes era 'referencia'
-            "nombr": "nombr",
-            "nombc": "nombc",
-            "regus": "regus",
+            "id_registro": "id_registro",
+            "codigo": "codigo",
+            "cliente_nombre": "id_cliente__nombre",
+            "representante": "representante_nombre",
+            "referencia": "referencia",  # Descripción de la oportunidad
+            "comentario": "comentario",
         }
 
         campo = request.GET.get("campo")
         valor = request.GET.get("valor")
+        
+        # Filtros dinámicos por rango para recepcion_solicitud
         fecha_inicio = request.GET.get("fechaInicio")
         fecha_fin = request.GET.get("fechaFin")
 
-        # 2) Query base
-        qs = DashboardOportunidad.objects.all()
+        # ============================================================
+        # 2) Query base mejorado (Histórico total basado en recepcion_solicitud)
+        # ============================================================
+        # Cambiamos .filter(id_estado=11) por la validación de que NO sea NULL
+        qs = Cotizacion.objects.select_related(
+            'id_cliente', 'id_comercial'
+        ).filter(recepcion_solicitud__isnull=False)
 
-        if str(anno) != "%":
-            qs = qs.filter(anno_a=anno)
-        if str(mes) != "%":
-            qs = qs.filter(f_recp__month=mes)
-        if cliente != "%":
-            qs = qs.filter(empre=cliente) # Cambiado cliente_codigo -> empre
-        if area != "%":
-            qs = qs.filter(area=area)      # Cambiado area_codigo -> area
-        
-        if estado != "%":
-            estados = [e for e in estado.split(",") if e]
-            qs = qs.filter(estado_op__in=estados) # Cambiado estado_oportunidad -> estado_op
+        # Filtro de Periodo Operacional
+        if anno != "%":
+            qs = qs.filter(año_apertura=int(anno))
+        if mes != "%":
+            qs = qs.filter(mes=int(mes))
 
+        # Filtro de Estado de Oportunidad interna (1=Pendiente, 2=No Cotizado, etc.)
+        if estado_oportunidad != "%":
+            qs = qs.filter(estado_oportunidad=int(estado_oportunidad))
+
+        # Filtro Responsable Comercial asignado
+        if comercial_search != "%":
+            qs = qs.filter(id_comercial__nombre_completo__icontains=comercial_search)
+
+        # Rango de fechas basado en la recepción de la solicitud
         if fecha_inicio:
-            qs = qs.filter(f_recp__gte=fecha_inicio)
+            qs = qs.filter(recepcion_solicitud__gte=fecha_inicio)
         if fecha_fin:
-            qs = qs.filter(f_recp__lte=fecha_fin)
+            qs = qs.filter(recepcion_solicitud__lte=fecha_fin)
 
-        # 3) Búsqueda flexible
-        class Replace(Func):
-            function = "REPLACE"
-            arity = 3
-
+        # Búsqueda Flexible Normalizada
         if campo and valor not in (None, "", " "):
             campo_real = CAMPOS_BUSQUEDA.get(campo)
             if campo_real:
                 valor_norm = unidecode(valor.lower().strip())
-                qs = qs.annotate(
-                    campo_clean=Replace(
-                        Replace(Lower(F(campo_real)), Value("  "), Value(" ")),
-                        Value("  "), Value(" ")
-                    )
-                ).filter(campo_clean__icontains=valor_norm)
+                qs = qs.filter(**{f"{campo_real}__icontains": valor_norm})
 
-        # 4) Dashboard Stats
-        total = qs.count()
-        hoy = date.today()
+        # ============================================================
+        # 3) Dashboard Métricas Cortas para Oportunidades
+        # ============================================================
+        total_regs = qs.count()
+        hoy_date = date.today()
+        este_mes_conteo = 0
         
-        # Sincronizado con estado_nombre del modelo
-        estado_map = {"PENDIENTE": 0, "COTIZADO": 0, "RECHAZADO": 0}
-        meses_conteo = [0] * 12
-        este_mes_count = 0
+        # Estadísticas internas del pipeline (1 a 4)
+        stats_pipeline = {
+            "Pendiente": 0,    # 1
+            "No Cotizado": 0,  # 2
+            "Rechazado": 0,    # 3
+            "Cotizado": 0      # 4
+        }
+        
+        MAPPING_ESTADOS = {1: "Pendiente", 2: "No Cotizado", 3: "Rechazado", 4: "Cotizado"}
+        conteo_meses = [0] * 12
 
-        for obj in qs:
-            # Usamos el nuevo nombre de la property: estado_nombre
-            nom_est = obj.estado_nombre
-            if nom_est in estado_map:
-                estado_map[nom_est] += 1
+        for c in qs:
+            # Conteo mensual basado en recepción de la solicitud
+            if c.recepcion_solicitud:
+                # El campo puede ser un objeto datetime, extraemos solo el mes para el índice de la lista
+                mes_idx = c.recepcion_solicitud.month - 1
+                conteo_meses[mes_idx] += 1
+                
+                if c.recepcion_solicitud.month == hoy_date.month and c.recepcion_solicitud.year == hoy_date.year:
+                    este_mes_conteo += 1
 
-            if obj.f_recp:
-                idx = obj.f_recp.month - 1
-                meses_conteo[idx] += 1
-                if obj.f_recp.month == hoy.month and obj.f_recp.year == hoy.year:
-                    este_mes_count += 1
+            # Distribución por pipeline (Manejo del default 1 si viene vacío)
+            est_int = c.estado_oportunidad or 1
+            nom_est = MAPPING_ESTADOS.get(est_int, "Pendiente")
+            stats_pipeline[nom_est] = stats_pipeline.get(nom_est, 0) + 1
 
         dashboard_data = {
-            "total": total,
-            "esteMes": este_mes_count,
-            "estados": estado_map,
-            "porMes": meses_conteo,
+            "total": total_regs,
+            "esteMes": este_mes_conteo,
+            "pipeline": stats_pipeline,
+            "porMes": conteo_meses
         }
 
-        # 5) Tabla de registros
-        tabla_data = DashboardOportunidadTablaSerializer(
-            qs.order_by("-f_recp", "-num_reg"),
+        # ============================================================
+        # 4) Respuesta con Serializer especializado
+        # ============================================================
+        tabla_data = OportunidadTablaSerializer(
+            qs.order_by('-recepcion_solicitud', '-id_registro'), 
             many=True
         ).data
 
@@ -948,25 +1271,219 @@ def oportunidades_dashboard_view(request):
         })
 
     except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        return Response({"error": "Error interno en el servidor."}, status=500)
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def oportunidad_detalle_view(request, num_reg):
-    try:
-        oportunidad = DashboardOportunidad.objects.get(num_reg=num_reg)
-        serializer = DashboardOportunidadSerializer(oportunidad)
-        return Response(serializer.data)
-    except DashboardOportunidad.DoesNotExist:
-        return Response({"error": "No existe la oportunidad"}, status=404)
+        return Response({"error": f"Error en Dashboard Oportunidades: {str(e)}"}, status=500)
 
 #========================================================================================
 
-##===========================##
-## GUARDAR DESDE OPORTUNIDAD ##
-##===========================##
+##==========##
+## APETURAS ##
+##==========##
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def lista_aperturas(request):
+    try:
+        # ============================================================
+        # Parámetros y Mapeo de Búsqueda Flexible
+        # ============================================================
+        anno = request.GET.get("anno", date.today().year)
+        mes = request.GET.get("mes", "%")
+        id_cliente = request.GET.get("cliente", "%")
+        id_estado_orden = request.GET.get("estado_orden", "%")  # Filtro por estado de orden (1, 2, 3...)
+        prio = request.GET.get("prio", "%")
+        envio = request.GET.get("envio", "%")
+
+        CAMPOS_BUSQUEDA = {
+            "id_apertura": "id_apertura",
+            "numero_orden": "numero_orden",
+            "cotizacion_codigo": "id_registro__codigo",
+            "cliente_nombre": "id_registro__id_cliente__nombre",
+            "referencia": "id_registro__referencia",
+            "total_order": "total_order",
+            "totfa": "totfa",
+            "salfa": "salfa",
+        }
+
+        campo = request.GET.get("campo")
+        valor = request.GET.get("valor")
+        fecha_inicio = request.GET.get("fechaInicio")  # Filtra por fecha_orden
+        fecha_fin = request.GET.get("fechaFin")
+
+        # ============================================================
+        # Query Base Optimizada (Evita consultas N+1 en cascada)
+        # ============================================================
+        # Viajamos desde apertura -> cotización padre -> cliente de la cotización
+        qs = CotizacionApertura.objects.select_related(
+            'orden_plazo_unidad',
+            'id_registro',
+            'id_registro__id_cliente',
+            'id_registro__id_estado'
+        )
+
+        # Filtros de Segmentación Estándar
+        if anno != "%":
+            qs = qs.filter(anno=int(anno))
+        if mes != "%":
+            qs = qs.filter(mes=int(mes))
+        if id_cliente != "%":
+            qs = qs.filter(id_registro__id_cliente_id=id_cliente)
+        if id_estado_orden != "%":
+            qs = qs.filter(estado_orden=int(id_estado_orden))
+        if prio != "%":
+            qs = qs.filter(prio=str(prio))
+        if envio != "%":
+            qs = qs.filter(envio=int(envio))
+
+        if fecha_inicio:
+            qs = qs.filter(fecha_orden__gte=fecha_inicio)
+        if fecha_fin:
+            qs = qs.filter(fecha_orden__lte=fecha_fin)
+
+        # ============================================================
+        # Filtros Complejos de Plazos de la Orden
+        # ============================================================
+        plazo_val = request.GET.get("plazo_val", "")
+        plazo_uni = request.GET.get("plazo_uni", "D")  # D, S, M, etc.
+        hoy_date = date.today()
+
+        def calculate_target_date(start_date, val, code):
+            if not start_date or val is None or not code:
+                return None
+            f_date = start_date.date() if hasattr(start_date, "date") else start_date
+            if not isinstance(f_date, date):
+                return None
+            code_upper = code.upper()
+            try:
+                if code_upper == 'D': return f_date + timedelta(days=val)
+                elif code_upper == 'S': return f_date + timedelta(weeks=val)
+                elif code_upper == 'Q': return f_date + timedelta(days=val * 15)
+                elif code_upper == 'M':
+                    month = f_date.month - 1 + val
+                    year = f_date.year + month // 12
+                    month = month % 12 + 1
+                    day = min(f_date.day, calendar.monthrange(year, month)[1])
+                    return date(year, month, day)
+                elif code_upper == 'T':
+                    month = f_date.month - 1 + (val * 3)
+                    year = f_date.year + month // 12
+                    month = month % 12 + 1
+                    day = min(f_date.day, calendar.monthrange(year, month)[1])
+                    return date(year, month, day)
+                elif code_upper == 'A':
+                    year = f_date.year + val
+                    month = f_date.month
+                    day = min(f_date.day, calendar.monthrange(year, month)[1])
+                    return date(year, month, day)
+            except Exception:
+                pass
+            return None
+
+        if plazo_val and plazo_val.strip().isdigit():
+            try:
+                user_val = int(plazo_val.strip())
+                limit_date = calculate_target_date(hoy_date, user_val, plazo_uni)
+                if limit_date:
+                    records_data = qs.values_list(
+                        "id_apertura", "fecha_orden", "orden_plazo_valor", "orden_plazo_unidad__codigo"
+                    )
+                    matching_ids = [
+                        id_ap for id_ap, f_dt, val, code in records_data 
+                        if f_dt and val is not None and code and 
+                        (c_dt := calculate_target_date(f_dt, val, code)) and hoy_date <= c_dt <= limit_date
+                    ]
+                    qs = qs.filter(id_apertura__in=matching_ids)
+            except Exception as ex:
+                logger.error(f"Error en filtro de plazos apertura: {str(ex)}")
+
+        # Búsqueda Flexible por Campo Seleccionado
+        if campo and valor not in (None, "", " "):
+            campo_real = CAMPOS_BUSQUEDA.get(campo)
+            if campo_real:
+                valor_norm = unidecode(valor.lower().strip())
+                qs = qs.filter(**{f"{campo_real}__icontains": valor_norm})
+
+        # ============================================================
+        # Procesamiento de Métricas (Dashboard)
+        # ============================================================
+        total_regs = qs.count()
+        monto_soles = monto_dolares = este_mes_conteo = 0
+        
+        # Estructura de estados según las órdenes
+        stats_estados = {"Pendiente": 0, "Aprobada": 0, "Facturada": 0, "Anulada": 0, "Desconocido": 0}
+        MAPEO_ESTADOS = {1: "Pendiente", 2: "Aprobada", 3: "Facturada", 4: "Anulada"}
+        
+        stats_clientes = {}
+        conteo_meses = [0] * 12
+
+        for ap in qs:
+            # Procesamos montos financieros basados en la orden (Heredando la moneda del padre)
+            monto = float(ap.total_order or 0)
+            moneda_padre = ap.id_registro.tipo_moneda if ap.id_registro else "S"
+            
+            if moneda_padre == "D":
+                monto_dolares += monto
+            else:
+                monto_soles += monto
+
+            # Registro de tiempos
+            if ap.fecha_orden:
+                conteo_meses[ap.fecha_orden.month - 1] += 1
+                if ap.fecha_orden.month == hoy_date.month and ap.fecha_orden.year == hoy_date.year:
+                    este_mes_conteo += 1
+
+            # Clasificación de estados de orden
+            est_nom = MAPEO_ESTADOS.get(ap.estado_orden, "Desconocido")
+            stats_estados[est_nom] = stats_estados.get(est_nom, 0) + 1
+
+            # Segmentación de clientes top por órdenes de apertura consumidas
+            if ap.id_registro:
+                cli_id = ap.id_registro.id_cliente_id or "S/C"
+                cli_nom = ap.id_registro.id_cliente.nombre if ap.id_registro.id_cliente else (ap.id_registro.representante_nombre or "Desconocido")
+            else:
+                cli_id = "S/C"
+                cli_nom = "Sin Cotización Asociada"
+
+            if cli_id not in stats_clientes:
+                stats_clientes[cli_id] = {"nombre": cli_nom, "cantidad": 0, "total": 0}
+            stats_clientes[cli_id]["cantidad"] += 1
+            stats_clientes[cli_id]["total"] += monto
+
+        # Formatear y ordenar el Top 10 Clientes
+        clientes_lista = sorted(
+            [
+                {
+                    "id": k, 
+                    **v, 
+                    "porcentaje": round((v["cantidad"] / total_regs) * 100, 2) if total_regs else 0
+                } 
+                for k, v in stats_clientes.items()
+            ], 
+            key=lambda x: x["cantidad"], 
+            reverse=True
+        )[:10]
+
+        dashboard_data = {
+            "total": total_regs,
+            "esteMes": este_mes_conteo,
+            "montoTotalSoles": round(monto_soles, 2),
+            "montoTotalDolares": round(monto_dolares, 2),
+            "promedioSoles": round(monto_soles / total_regs, 2) if total_regs and monto_soles else 0,
+            "promedioDolares": round(monto_dolares / total_regs, 2) if total_regs and monto_dolares else 0,
+            "estados": stats_estados,
+            "porMes": conteo_meses,
+            "clientes": clientes_lista,
+        }
+
+        # Serialización limpia del listado de la tabla (Orden descendente por ID e ID_Apertura)
+        tabla_data = CotizacionAperturaTablaSerializer(
+            qs.order_by('-anno', '-mes', '-id_apertura'), 
+            many=True
+        ).data
+
+        return Response({"dashboard": dashboard_data, "tabla": tabla_data, "anno": anno})
+
+    except Exception as e:
+        logger.error(f"Error en Dashboard Aperturas: {str(e)}", exc_info=True)
+        return Response({"error": f"Error en Dashboard Aperturas: {str(e)}"}, status=500)
 
 #========================================================================================
 
@@ -994,7 +1511,7 @@ def guardar_cotizacion(request):
         # =========================
         if num_reg_frontend:
             # Intentamos buscar si ya existe para ACTUALIZAR
-            cotizacion = DashboardCotizacion.objects.filter(num_reg=num_reg_frontend).select_for_update().first()
+            cotizacion = Cotizacion.objects.filter(num_reg=num_reg_frontend).select_for_update().first()
 
         if not cotizacion:
             # SI NO EXISTE: Es una creación nueva.
@@ -1004,7 +1521,7 @@ def guardar_cotizacion(request):
             
             # 💡 IMPORTANTE: Pasamos anno_a y campos críticos directamente en el .create()
             # para evitar que MySQL rechace el registro por restricciones NOT NULL.
-            cotizacion = DashboardCotizacion.objects.create(
+            cotizacion = Cotizacion.objects.create(
                 num_reg=nuevo_num,
                 fecha=request.data.get("fecha", hoy.date()),
                 envio=0,
@@ -1029,7 +1546,7 @@ def guardar_cotizacion(request):
         if "acu_e" not in data:
             data.pop("acu_e", None)
 
-        serializer = DashboardCotizacionSerializer(
+        serializer = CotizacionSerializer(
             cotizacion,
             data=data,
             partial=True
@@ -1072,7 +1589,7 @@ def guardar_cotizacion(request):
         suministros = request.data.get("suministros", {})
         tipo_venta_general = cotizacion.tven 
 
-        CotiSuministros.objects.filter(num_reg=cotizacion.num_reg).delete()
+        CotizacionSuministro.objects.filter(num_reg=cotizacion.num_reg).delete()
 
         TIPO_MAP = {"01": "01", "02": "02"}
         num_contador = 1
@@ -1093,7 +1610,7 @@ def guardar_cotizacion(request):
             # =====================
             # CABECERA (nig = 0)
             # =====================
-            CotiSuministros.objects.create(
+            CotizacionSuministro.objects.create(
                 num_reg=cotizacion.num_reg,
                 cog=cog,
                 nog=grupo.get("titulo"),
@@ -1117,7 +1634,7 @@ def guardar_cotizacion(request):
             # ITEMS (nig = 1)
             # =====================
             for item in grupo.get("items", []):
-                CotiSuministros.objects.create(
+                CotizacionSuministro.objects.create(
                     num_reg=cotizacion.num_reg,
                     cog=cog,
                     nog="",
@@ -1160,7 +1677,7 @@ def guardar_cotizacion(request):
             servicios = {str(i): s for i, s in enumerate(servicios)}
 
         # Limpieza total (igual que suministros)
-        CotiServicios.objects.filter(
+        CotizacionServicio.objects.filter(
             num_reg=cotizacion.num_reg
         ).delete()
 
@@ -1179,7 +1696,7 @@ def guardar_cotizacion(request):
             total_servicio = Decimal("0.00")
             cantidad_servicio = Decimal(str(servicio.get("cantidad", 1)))
 
-            CotiServicios.objects.create(
+            CotizacionServicio.objects.create(
                 num_reg=cotizacion.num_reg,
                 cog=cog_servicio,
                 nog=servicio.get("tituloGeneral") or servicio.get("nombre", ""),
@@ -1204,7 +1721,7 @@ def guardar_cotizacion(request):
 
                 cog_sub = f"{grupo_index:02d}{tipo_code}1"
 
-                CotiServicios.objects.create(
+                CotizacionServicio.objects.create(
                     num_reg=cotizacion.num_reg,
                     cog=cog_sub,
                     nog=tipo,
@@ -1226,7 +1743,7 @@ def guardar_cotizacion(request):
                     total_item = Decimal(str(item.get("tot", 0)))
                     cog_item = f"{grupo_index:02d}{tipo_code}2"
 
-                    CotiServicios.objects.create(
+                    CotizacionServicio.objects.create(
                         num_reg=cotizacion.num_reg,
                         cog=cog_item,
                         nog="",
@@ -1256,14 +1773,14 @@ def guardar_cotizacion(request):
                     num_contador += 1
 
                 # actualizar subtotal
-                CotiServicios.objects.filter(
+                CotizacionServicio.objects.filter(
                     num_reg=cotizacion.num_reg,
                     num=num_sub,
                     nig=1
                 ).update(tot=total_sub)
 
             # actualizar total servicio
-            CotiServicios.objects.filter(
+            CotizacionServicio.objects.filter(
                 num_reg=cotizacion.num_reg,
                 num=num_servicio,
                 nig=0
@@ -1277,7 +1794,7 @@ def guardar_cotizacion(request):
         mensaje_data = request.data.get("mensaje")
 
         if mensaje_data:
-            CotiMensajes.objects.create(
+            CotizacionMensaje.objects.create(
                 num_reg=cotizacion.num_reg,
                 cod=request.user.usuario if hasattr(request.user, "usuario") else request.user.username,
                 msj=mensaje_data.get("msj"),
@@ -1290,8 +1807,8 @@ def guardar_cotizacion(request):
         seguimiento_data = request.data.get("seguimiento")  # 🔑 similar a "mensaje"
 
         if seguimiento_data:
-            # Crear nuevo registro en CotiSeguimiento
-            CotiSeguimiento.objects.create(
+            # Crear nuevo registro en CotizacionSeguimiento
+            CotizacionSeguimiento.objects.create(
                 num_reg=cotizacion.num_reg,
                 num=seguimiento_data.get("num", 0),  # opcional, si no lo envías
                 dat=timezone.now(),  # se usa la fecha actual como PK virtual
@@ -1376,7 +1893,7 @@ def obtener_siguiente_num_reg():
 
     with transaction.atomic():
         ultimo = (
-            DashboardCotizacion.objects
+            Cotizacion.objects
             .select_for_update()
             .filter(num_reg__range=(inicio, fin))
             .aggregate(max_reg=Max("num_reg"))
@@ -1388,27 +1905,16 @@ def obtener_siguiente_num_reg():
         # 🚀 Primer registro del año
         return int(f"{anio}000001")
 
-# NUM_REG OPORTUNIDAD 
+@csrf_exempt
 @api_view(["GET"])
-def obtener_siguiente_num_reg_oportunidad(request):
-    anio = timezone.now().year
-    inicio = int(f"{anio}000000")
-    fin = int(f"{anio}999999")
-
-    with transaction.atomic():
-        ultimo = (
-            DashboardOportunidad.objects
-            .select_for_update()
-            .filter(num_reg__range=(inicio, fin))
-            .aggregate(max_reg=Max("num_reg"))
-        )["max_reg"]
-
-        if ultimo is not None:
-            siguiente = ultimo + 1
-        else:
-            siguiente = int(f"{anio}000001")  # Primer registro del año
-
-    return Response({"num_reg": siguiente})
+@permission_classes([IsAuthenticated])
+def siguiente_num_reg_oportunidad_view(request):
+    try:
+        siguiente = obtener_siguiente_num_reg()
+        return Response({"num_reg": siguiente}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error al obtener siguiente num_reg: {e}")
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 #========================================================================================
 
@@ -1446,155 +1952,317 @@ def buscar_encargados_por_empresa(request, empresa):
 ##=========##
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
-def condiciones_generales(request, num_reg):
+def condiciones_generales(request, id_registro):
     """
-    GET:  retorna {"numero", "condiciones"}  (acu_e)
-    POST: recibe { "condiciones": "texto..." } y actualiza acu_e
+    GET:  Retorna la descripción de la tabla independiente cotizaciones_condiciones_generales.
+    POST: Crea o actualiza el registro en la tabla independiente.
     """
     try:
-        cot = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
+        # 1. Verificar que la cotización padre existe usando el nuevo id_registro
+        cot = Cotizacion.objects.filter(id_registro=id_registro).first()
         if not cot:
-            return Response({"error": f"No se encontró la cotización #{num_reg}"}, status=404)
+            return Response({"error": f"No se encontró la cotización ID #{id_registro}"}, status=404)
+
+        # 2. Obtener o preparar el registro de condiciones
+        # Usamos id_registro=cot porque en el modelo de condiciones es un OneToOneField a Cotizacion
+        condicion_obj, created = CotizacionCondicionGeneral.objects.get_or_create(
+            id_registro=cot
+        )
 
         if request.method == "GET":
             return Response({
-                "numero": cot.num_reg,
-                "condiciones": cot.acu_e or ""
+                "id_registro": cot.id_registro,
+                "codigo": cot.codigo, # Incluimos el código (antes cotin) para mayor utilidad
+                "condiciones": condicion_obj.descripcion or "",
+                "ultima_actualizacion": condicion_obj.fecha
             }, status=200)
 
-        # POST -> actualizar
-        contenido = request.data.get("condiciones", "")
-        # opcional: limpiar/trimming
-        if isinstance(contenido, str):
-            contenido = contenido.strip()
+        # 3. POST -> Actualizar la tabla independiente
+        if request.method == "POST":
+            contenido = request.data.get("condiciones", "")
+            if isinstance(contenido, str):
+                contenido = contenido.strip()
 
-        # usar transaction por seguridad
-        with transaction.atomic():
-            cot.acu_e = contenido
-            cot.save(update_fields=["acu_e"])
+            with transaction.atomic():
+                condicion_obj.descripcion = contenido
+                condicion_obj.save()
 
-        return Response({
-            "status": "ok",
-            "msg": "Condiciones guardadas correctamente.",
-            "numero": cot.numero,
-            "condiciones": cot.acu_e or ""
-        }, status=200)
+            return Response({
+                "status": "ok",
+                "msg": "Condiciones guardadas correctamente en la tabla independiente.",
+                "id_registro": cot.id_registro,
+                "condiciones": condicion_obj.descripcion or ""
+            }, status=200)
 
     except Exception as e:
         import traceback
-        print("Error en condiciones_generales:", traceback.format_exc())
+        print(f"Error en condiciones_generales (ID: {id_registro}):", traceback.format_exc())
         return Response({"error": str(e)}, status=500)
 
-@csrf_exempt
-@api_view(["GET", "POST"])
-def generar_codigo_cotizacion(request, num_reg):
+def calcular_codigo_dinamico(cot, codigo_actual=None):
+    """
+    Calcula el código dinámico de la cotización. Si ya existe un código previo
+    y el área no ha cambiado, conserva la base y actualiza iniciales y tipo.
+    Si no, genera uno totalmente nuevo.
+    """
+    if codigo_actual and '-' in codigo_actual:
+        parts = codigo_actual.split('-')
+        if len(parts) == 3:
+            base_version, iniciales, tipo_char = parts
+            
+            # El año es de 2 dígitos (pos 0, 1). El área es el carácter pos 2.
+            area_str = str(cot.id_area) if cot.id_area else ""
+            if len(base_version) >= 3 and base_version[2] == area_str:
+                # Cliente iniciales
+                nueva_iniciales = "SINC"
+                if cot.id_cliente:
+                    nueva_iniciales = cot.id_cliente.iniciales or "SINC"
+                
+                # Tipo char
+                nuevo_tipo = "S"
+                if cot.id_tipo:
+                    nuevo_tipo = cot.id_tipo_id
+                
+                return f"{base_version}-{nueva_iniciales}-{nuevo_tipo}"
+                
+    return _calcular_nuevo_codigo(cot)
 
-    try:
-        # =========================
-        # OBTENER COTIZACIÓN
-        # =========================
-        cot = DashboardCotizacion.objects.get(num_reg=num_reg)
+# FALTA
+def _calcular_nuevo_codigo(cot):
+    """
+    Calcula el código único (COTIN) para una cotización sin guardarlo.
+    Formato: YYAreaCorrVersion-INICIALES-TIPO (ej: 252185A-YURA-S)
+    """
+    # 1. AÑO (Últimos 2 dígitos)
+    year_full = cot.anno or timezone.now().year
+    year_str = str(year_full)[-2:]
 
-        # Si ya tiene código, no inventamos nada
-        if cot.numero:
-            return JsonResponse({
-                "success": True,
-                "codigo": cot.numero,
-                "exists": True
-            })
+    # 2. ÁREA
+    area_id = cot.id_area
+    area_str = str(area_id) if area_id else ""
 
-        # =========================
-        # AÑO
-        # =========================
-        year_full = cot.anno              # ej: 2025
-        year = year_full[-2:]             # ej: 25
+    # 3. CORRELATIVO (Basado en año + área)
+    qs_codigos = (
+        Cotizacion.objects
+        .filter(anno=year_full, id_area=area_id, codigo__isnull=False)
+        .exclude(codigo="")
+        .values_list("codigo", flat=True)
+    )
 
-        # =========================
-        # ÁREA
-        # =========================
-        area = str(cot.area_codigo)
+    max_corr = 0
+    prefix_len = len(year_str) + len(area_str)
 
-        # =========================
-        # ÚLTIMA SECUENCIA POR AÑO + ÁREA
-        # =========================
-        qs = (
-            DashboardCotizacion.objects
-            .filter(
-                anno=year_full,
-                area_codigo=area,
-                numero__isnull=False,
-            )
-            .exclude(numero="")
-            .values_list("numero", flat=True)
-        )
+    for cod in qs_codigos:
+        try:
+            # Extraemos los 3 dígitos después del prefijo (año+área)
+            # Formato esperado: [YY][Area][000]...
+            corr_part = cod[prefix_len : prefix_len + 3]
+            max_corr = max(max_corr, int(corr_part))
+        except (ValueError, IndexError):
+            continue
 
-        max_corr = 0
-        len_base = len(year) + len(area)  # 2 + 1 = 3
+    correlativo = max_corr + 1
+    correlativo_str = str(correlativo).zfill(3)
 
-        for num in qs:
-            try:
-                corr = int(num[len_base:len_base+3])   # los 3 dígitos del correlativo
-                max_corr = max(max_corr, corr)
-            except Exception:
-                continue
+    # 4. BASE DEL CÓDIGO (YY + Area + Corr)
+    base_codigo = f"{year_str}{area_str}{correlativo_str}"
 
-        correlativo = max_corr + 1
-        correlativo_str = str(correlativo).zfill(3)
+    # 5. VERSIÓN (A, B, C...)
+    existentes_mismo_base = (
+        Cotizacion.objects
+        .filter(codigo__startswith=base_codigo)
+        .values_list("codigo", flat=True)
+    )
 
-        # =========================
-        # BASE DEL CÓDIGO
-        # =========================
-        base_codigo = f"{year}{area}{correlativo_str}"
-
-        # =========================
-        # VERSIÓN (A, B, C...)
-        # =========================
-        existentes = (
-            DashboardCotizacion.objects
-            .filter(numero__startswith=base_codigo)
-            .values_list("numero", flat=True)
-        )
-
-        if not existentes:
+    if not existentes_mismo_base:
+        version = "A"
+    else:
+        # Buscamos la letra después de la base
+        letras = []
+        for c in existentes_mismo_base:
+            if len(c) > len(base_codigo):
+                letras.append(c[len(base_codigo)])
+        
+        if not letras:
             version = "A"
         else:
-            letras = [c[len(base_codigo)] for c in existentes]
-            version = ascii_uppercase[ascii_uppercase.index(max(letras)) + 1]
+            idx_max = ascii_uppercase.index(max(letras))
+            version = ascii_uppercase[idx_max + 1] if idx_max + 1 < len(ascii_uppercase) else "?"
 
-        # =========================
-        # CLIENTE
-        # =========================
-        cliente = Cliente.objects.get(codigo=cot.cliente_codigo)
-        iniciales = cliente.iniciales
+    # 6. CLIENTE (Iniciales)
+    iniciales = "SINC"
+    if cot.id_cliente:
+        iniciales = cot.id_cliente.iniciales or "SINC"
 
-        # =========================
-        # TIPO
-        # =========================
-        tipo = cot.cotit
+    # 7. TIPO (ID char de TipoCotizacion)
+    tipo_char = "S"
+    if cot.id_tipo:
+        tipo_char = cot.id_tipo_id # El ID es el char (ej: 'S', 'P')
 
-        # =========================
-        # CÓDIGO FINAL
-        # =========================
-        codigo_final = f"{base_codigo}{version}-{iniciales}-{tipo}"
+    # 8. CONSTRUCCIÓN FINAL
+    return f"{base_codigo}{version}-{iniciales}-{tipo_char}"
 
-        # =========================
-        # SOLO GUARDA EN POST
-        # =========================
-        if request.method == "POST":
-            cot.numero = codigo_final
-            cot.save(update_fields=["numero"])
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def generar_codigo_cotizacion(request, id_registro):
+    """
+    Genera o previsualiza el código único (COTIN) para una cotización.
+    Formato: YYAreaCorrVersion-INICIALES-TIPO (ej: 252185A-YURA-S)
+    GET:  Retorna una vista previa del código (con soporte para overrides en tiempo real).
+    POST: Genera, guarda y retorna el código.
+    """
+    try:
+        if id_registro == 0:
+            cot = Cotizacion()
+        else:
+            cot = Cotizacion.objects.select_related('id_cliente', 'id_tipo').get(id_registro=id_registro)
 
-        return JsonResponse({
-            "success": True,
+        # Capturar parámetros de override
+        override_area = request.GET.get("id_area") or request.data.get("id_area")
+        override_tipo = request.GET.get("id_tipo") or request.data.get("id_tipo")
+        override_cliente = request.GET.get("id_cliente") or request.data.get("id_cliente")
+
+        # Aplicar temporalmente los overrides
+        if override_area:
+            cot.id_area = int(override_area)
+        if override_tipo:
+            from core.models import TipoCotizacion
+            tipo_obj = TipoCotizacion.objects.filter(id_tipo=override_tipo).first()
+            if tipo_obj:
+                cot.id_tipo = tipo_obj
+        if override_cliente:
+            from core.models import Cliente
+            cliente_obj = Cliente.objects.filter(id_cliente=int(override_cliente)).first()
+            if cliente_obj:
+                cot.id_cliente = cliente_obj
+
+        # Si ya tiene un código guardado y no se ha especificado ningún override, devolvemos el guardado
+        if cot.codigo and not (override_area or override_tipo or override_cliente):
+            return Response({
+                "ok": True,
+                "codigo": cot.codigo,
+                "exists": True
+            }, status=status.HTTP_200_OK)
+
+        # Calculamos el código dinámico usando el helper
+        codigo_final = calcular_codigo_dinamico(cot, cot.codigo)
+
+        # 9. GUARDADO (Solo en POST y si no es un simple preview con overrides)
+        if request.method == "POST" and not (override_area or override_tipo or override_cliente):
+            with transaction.atomic():
+                cot.codigo = codigo_final
+                cot.save(update_fields=["codigo"])
+                
+                # Registrar hito en seguimiento
+                CotizacionSeguimiento.objects.create(
+                    id_registro=cot,
+                    detalle=f"Se generó el código comercial: {codigo_final}",
+                    id_usuario=request.user,
+                    activo='1'
+                )
+
+        return Response({
+            "ok": True,
             "codigo": codigo_final,
-            "preview": request.method == "GET"
-        })
+            "preview": request.method == "GET" or bool(override_area or override_tipo or override_cliente)
+        }, status=status.HTTP_200_OK)
 
-    except DashboardCotizacion.DoesNotExist:
-        return JsonResponse({
-            "success": False,
-            "error": "Cotización no encontrada"
-        }, status=404)
+    except Cotizacion.DoesNotExist:
+        return Response({
+            "ok": False,
+            "error": f"Cotización con ID {id_registro} no encontrada."
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        import traceback
+        print(f"Error en generar_codigo_cotizacion:", traceback.format_exc())
+        return Response({
+            "ok": False,
+            "error": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def eliminar_cotizacion(request, id_registro):
+    try:
+        with transaction.atomic():
+
+            # 1. Verificar existencia de la cotización
+            cotizacion = Cotizacion.objects.filter(
+                id_registro=id_registro
+            ).first()
+
+            if not cotizacion:
+                return Response(
+                    {"error": "La cotización no existe"},
+                    status=404
+                )
+
+            # 2. Eliminar dependencias
+            CotizacionSuministro.objects.filter(id_registro=id_registro).delete()
+            CotizacionServicio.objects.filter(id_registro=id_registro).delete()
+            CotizacionMensaje.objects.filter(id_registro=id_registro).delete()
+            CotizacionSeguimiento.objects.filter(id_registro=id_registro).delete()
+            CotizacionAdjunto.objects.filter(id_registro=id_registro).delete()
+
+            # 3. Eliminar cotización principal
+            cotizacion.delete()
+
+        return Response(
+            {"message": "Cotización eliminada correctamente"},
+            status=200
+        )
+
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=500
+        )
+
+@csrf_exempt
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def enviar_cotizacion_aprobacion(request, id_registro):
+
+    try:
+        with transaction.atomic():
+            # Buscamos por la nueva PK: id_registro
+            cotizacion = Cotizacion.objects.filter(id_registro=id_registro).first()
+
+            if not cotizacion:
+                return Response({"error": "La cotización no existe"}, status=404)
+
+            # Control estricto del nuevo flujo simplificado
+            if cotizacion.estado_envio == 1:
+                cotizacion.estado_envio = 2
+                # Opcional: Aquí puedes meter lógica de negocio extra al enviar (ej: fijar fecha de envío)
+            elif cotizacion.estado_envio == 2:
+                return Response(
+                    {"error": "La cotización ya fue enviada al cliente anteriormente"}, 
+                    status=400
+                )
+            else:
+                # Por si acaso quedó un registro huérfano con valor nulo o inconsistente en la migración
+                return Response(
+                    {"error": f"Estado de envío actual ({cotizacion.estado_envio}) inválido para avanzar"}, 
+                    status=400
+                )
+
+            # Guardamos explícitamente solo el campo afectado por rendimiento
+            cotizacion.save(update_fields=["estado_envio"])
+
+        return Response(
+            {
+                "message": "Cotización enviada al cliente exitosamente",
+                "nuevo_estado": cotizacion.estado_envio
+            }, 
+            status=200
+        )
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
@@ -1602,7 +2270,7 @@ def descuento_cotizacion(request, num_reg):
 
     num_reg = str(num_reg)
 
-    cot = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
+    cot = Cotizacion.objects.filter(num_reg=num_reg).first()
 
     if not cot:
         return Response({}, status=404)
@@ -1655,7 +2323,7 @@ def descuento_cotizacion(request, num_reg):
     # 🔁 RECALCULAR TOTALES
     # ----------------------------
 
-    total_suministros = CotiSuministros.objects.filter(
+    total_suministros = CotizacionSuministro.objects.filter(
         num_reg=num_reg,
         nig=0
     ).aggregate(
@@ -1670,7 +2338,7 @@ def descuento_cotizacion(request, num_reg):
         )
     )["total"]
 
-    total_servicios = CotiServicios.objects.filter(
+    total_servicios = CotizacionServicio.objects.filter(
         num_reg=num_reg,
         nig=0
     ).aggregate(
@@ -1724,14 +2392,14 @@ def build_cotizacion_pdf_context(num_reg):
     # CABECERA (solo campos usados)
     # =========================
     cotizacion = (
-        DashboardCotizacion.objects
+        Cotizacion.objects
         .only(
             "numero", "fecha", "referencia", "cliente_codigo",
             "nombr", "cargr", "teler", "movir", "mailr",
             "nombc", "telec", "mov1c", "mov2c", "mov3c", "mailc",
             "nombt", "telet", "mov1t", "mov2t", "mov3t", "mailt",
             "plazo", "tot_d", "por_c", "tot_s", "tcamb",
-            "fpago", "lugar",
+            "forma_pago", "lugar",
             "tmone", "igv",
             "valid", "acu_s",
             "tot_c", "acu_e", "des_m", "num_reg",
@@ -1770,14 +2438,14 @@ def build_cotizacion_pdf_context(num_reg):
     # DETALLES
     # =========================
     suministros_qs = (
-        CotiSuministros.objects
+        CotizacionSuministro.objects
         .filter(num_reg=num_reg)
         .order_by("cog", "nig", "num")
         .iterator()
     )
 
     servicios_qs = (
-        CotiServicios.objects
+        CotizacionServicio.objects
         .filter(num_reg=num_reg)
         .order_by("cog", "nig", "num")
         .iterator()
@@ -1839,7 +2507,7 @@ def build_cotizacion_pdf_context(num_reg):
                 "tipo": "Días" if cotizacion.tot_s == "D" else "Semanas" if cotizacion.tot_s == "S" else "Meses",
             },
         },
-        "forma_pago": cotizacion.fpago,
+        "forma_pago": cotizacion.forma_pago,
         "lugar_entrega": cotizacion.lugar,
         "moneda": "Dólares" if cotizacion.tmone == "D" else "Soles",
         "moneda_simbolo": "USD" if cotizacion.tmone == "D" else "PEN",
@@ -2289,116 +2957,6 @@ def cotizacion_pdf(request, num_reg):
     html.write_pdf(response)
     return response
 
-@api_view(["DELETE"])
-@permission_classes([IsAuthenticated])
-def eliminar_cotizacion(request, num_reg):
-    """
-    Elimina una cotización y todos sus registros relacionados.
-    """
-    try:
-        with transaction.atomic():
-
-            # 1. Verificar existencia de la cotización
-            cotizacion = DashboardCotizacion.objects.filter(
-                num_reg=num_reg
-            ).first()
-
-            if not cotizacion:
-                return Response(
-                    {"error": "La cotización no existe"},
-                    status=404
-                )
-
-            # 2. Eliminar dependencias
-            CotiSuministros.objects.filter(num_reg=num_reg).delete()
-            CotiServicios.objects.filter(num_reg=num_reg).delete()
-            CotiMensajes.objects.filter(num_reg=num_reg).delete()
-            CotiSeguimiento.objects.filter(num_reg=num_reg).delete()
-
-            # 3. Eliminar cotización principal
-            cotizacion.delete()
-
-        return Response(
-            {"message": "Cotización eliminada correctamente"},
-            status=200
-        )
-
-    except Exception as e:
-        return Response(
-            {"error": str(e)},
-            status=500
-        )
-
-@api_view(["PATCH"])
-@permission_classes([IsAuthenticated])
-def enviar_cotizacion_aprobacion(request, num_reg):
-    """
-    Cambia el estado de envio de la cotización:
-    0 -> 1
-    1 -> 2
-    """
-    try:
-        with transaction.atomic():
-            cotizacion = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
-
-            if not cotizacion:
-                return Response({"error": "La cotización no existe"}, status=404)
-
-            # Cambiar valor de envio según el caso
-            if cotizacion.envio == 0:
-                cotizacion.envio = 1
-            elif cotizacion.envio == 1:
-                cotizacion.envio = 2
-            else:
-                return Response({"error": f"Estado de envio inválido: {cotizacion.envio}"}, status=400)
-
-            cotizacion.save()
-
-        return Response({"message": "Cotización enviada a aprobación correctamente"}, status=200)
-
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
-
-@api_view(["PATCH"])
-@permission_classes([IsAuthenticated])
-def cerrar_cotizacion(request, num_reg):
-    """
-    Cierra la cotización:
-    envio: 2 -> 3
-    """
-    try:
-        with transaction.atomic():
-            cotizacion = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
-
-            if not cotizacion:
-                return Response(
-                    {"error": "La cotización no existe"},
-                    status=404
-                )
-
-            if cotizacion.envio != 2:
-                return Response(
-                    {
-                        "error": "La cotización no está lista para cerrarse",
-                        "estado_actual": cotizacion.envio
-                    },
-                    status=400
-                )
-
-            cotizacion.envio = 3
-            cotizacion.save(update_fields=["envio"])
-
-        return Response(
-            {"message": "Cotización cerrada correctamente"},
-            status=200
-        )
-
-    except Exception as e:
-        return Response(
-            {"error": str(e)},
-            status=500
-        )
-
 @csrf_exempt
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
@@ -2407,8 +2965,8 @@ def asignar_regus(request, num_reg):
     Actualiza los campos 'regus' y 'referencia' de una cotización según num_reg.
     """
     try:
-        cotizacion = DashboardCotizacion.objects.get(num_reg=num_reg)
-    except DashboardCotizacion.DoesNotExist:
+        cotizacion = Cotizacion.objects.get(num_reg=num_reg)
+    except Cotizacion.DoesNotExist:
         return Response(
             {"detail": "Cotización no encontrada"},
             status=404
@@ -2448,178 +3006,235 @@ def asignar_regus(request, num_reg):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def crear_nueva_version_cotizacion(request, num_reg):
+def crear_nueva_version_cotizacion(request, id_registro):
+
+    # Esta variable nos dirá exactamente en qué fase del proceso falló la base de datos
+    fase_actual = "INICIO"
+
     try:
         with transaction.atomic():
-
-            print("🔹 Buscando cotización base")
-            base = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
+            fase_actual = "BUSQUEDA_COTIZACION_BASE"
+            print(f"🔹 [{fase_actual}] Buscando cotización base ID: {id_registro}")
+            base = Cotizacion.objects.filter(id_registro=id_registro).first()
             if not base:
-                return Response({"error": "La cotización no existe"}, status=404)
+                return Response({
+                    "ok": False, 
+                    "error": f"La cotización con ID {id_registro} no existe"
+                }, status=status.HTTP_404_NOT_FOUND)
 
-            # 🔒 SOLO SI TIENE COTIN
-            if not base.numero:
-                return Response(
-                    {
-                        "error": "La cotización aún no tiene COTIN. No se puede generar una nueva versión."
-                    },
-                    status=400,
-                )
+            if not base.codigo:
+                return Response({
+                    "ok": False,
+                    "error": "La cotización aún no tiene código principal (COTIN). No se puede generar una nueva versión."
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-            print("🔹 Generando nuevo cotin")
-            nuevo_cotin = siguiente_version(base.numero)
+            fase_actual = "GENERACION_CORRELATIVO"
+            print(f"🔹 [{fase_actual}] Generando versión correlativa para: {base.codigo}")
+            nuevo_codigo_version = siguiente_version(base.codigo)
 
-            print("🔹 Creando nueva cotización")
-            
-            # Extraemos el código del usuario desde el token (tal como en tu endpoint)
-            from rest_framework_simplejwt.authentication import JWTAuthentication
+            fase_actual = "LECTURA_TOKEN"
+            print("🔹 Extrayendo usuario desde el Token JWT")
             jwt_auth = JWTAuthentication()
             header = jwt_auth.get_header(request)
             raw_token = jwt_auth.get_raw_token(header)
             validated_token = jwt_auth.get_validated_token(raw_token)
-            usuario_codigo = validated_token.get("user_id") # Este es tu usuario
+            usuario_codigo = validated_token.get("user_id")
 
-            nueva_cotizacion = deepcopy(base)
-            nueva_cotizacion.pk = None
-            nueva_cotizacion.num_reg = None
-            nueva_cotizacion.numero = nuevo_cotin
-            nueva_cotizacion.estado_codigo = 2
-            nueva_cotizacion.envio = 0
+            fase_actual = "INSERTAR_CABECERA_COTIZACION"
+            print(f"🔹 [{fase_actual}] Clonando cabecera principal")
             
-            # Asignamos el código del usuario que realiza la acción
-            nueva_cotizacion.regus = usuario_codigo 
+            # Para la cabecera limpiamos la PK explícitamente usando diccionarios limpios
+            datos_cabecera = {k: v for k, v in base.__dict__.items() if not k.startswith('_')}
+            datos_cabecera.pop('id_registro', None) # Forzar AutoIncrement nativo
             
-            nueva_cotizacion.save()
+            nueva_coti = Cotizacion(**datos_cabecera)
+            nueva_coti.codigo = nuevo_codigo_version
+            nueva_coti.id_estado_id = 2  # Estado inicial: Borrador
+            nueva_coti.envio = 0
+            nueva_coti.regus = usuario_codigo
+            nueva_coti.fecha = now()
+            
+            try:
+                nueva_coti.save()
+            except IntegrityError as e:
+                raise IntegrityError(f"Error de integridad en el modelo [Cotizacion]: {str(e)}")
 
             # =====================================================
-            # 🔹 SUMINISTROS (GRUPOS + ÍTEMS)
+            # 🔹 1. REPLICAR SUMINISTROS
             # =====================================================
-            print("🔹 Replicando SUMINISTROS")
-
-            suministros_origen = list(
-                CotiSuministros.objects.filter(num_reg=num_reg).order_by("num")
-            )
-
-            ultimo_num = (
-                CotiSuministros.objects.aggregate(max_num=Max("num"))["max_num"] or 0
-            )
-
-            nuevos = []
-            contador = ultimo_num + 1
+            fase_actual = "INSERTAR_SUMINISTROS"
+            print(f"🔹 [{fase_actual}] Procesando ítems...")
+            suministros_origen = CotizacionSuministro.objects.filter(id_registro=base.id_registro)
+            nuevos_suministros = []
 
             for s in suministros_origen:
-                nuevo = deepcopy(s)
-                nuevo.pk = None
-                nuevo.num = contador
-                nuevo.num_reg = nueva_cotizacion.num_reg
-                nuevos.append(nuevo)
-                contador += 1
+                datos = {k: v for k, v in s.__dict__.items() if not k.startswith('_')}
+                # Quitamos cualquier posible nombre de llave primaria
+                datos.pop('id_suministro', None)
+                datos.pop('id', None)
+                datos['id_registro_id'] = nueva_coti.id_registro  # Asociamos al nuevo ID parent
+                nuevos_suministros.append(CotizacionSuministro(**datos))
 
-            CotiSuministros.objects.bulk_create(nuevos)
+            if nuevos_suministros:
+                try:
+                    CotizacionSuministro.objects.bulk_create(nuevos_suministros)
+                except IntegrityError as e:
+                    raise IntegrityError(f"Error de duplicidad en lote del modelo [CotizacionSuministro]: {str(e)}")
 
             # =====================================================
-            # 🔹 SERVICIOS (GRUPOS + ÍTEMS)
+            # 🔹 2. REPLICAR SERVICIOS
             # =====================================================
-            print("🔹 Replicando SERVICIOS")
-
-            servicios_origen = list(
-                CotiServicios.objects.filter(num_reg=num_reg).order_by("num")
-            )
-
-            ultimo_num_serv = (
-                CotiServicios.objects.aggregate(max_num=Max("num"))["max_num"] or 0
-            )
-
-            nuevos_serv = []
-            contador = ultimo_num_serv + 1
+            fase_actual = "INSERTAR_SERVICIOS"
+            print(f"🔹 [{fase_actual}] Procesando mano de obra/servicios...")
+            servicios_origen = CotizacionServicio.objects.filter(id_registro=base.id_registro)
+            nuevos_servicios = []
 
             for s in servicios_origen:
-                nuevo = deepcopy(s)
-                nuevo.pk = None
-                nuevo.num = contador
-                nuevo.num_reg = nueva_cotizacion.num_reg
-                nuevos_serv.append(nuevo)
-                contador += 1
+                datos = {k: v for k, v in s.__dict__.items() if not k.startswith('_')}
+                datos.pop('id_servicio', None)
+                datos.pop('id', None)
+                datos['id_registro_id'] = nueva_coti.id_registro
+                nuevos_servicios.append(CotizacionServicio(**datos))
 
-            CotiServicios.objects.bulk_create(nuevos_serv)
+            if nuevos_servicios:
+                try:
+                    CotizacionServicio.objects.bulk_create(nuevos_servicios)
+                except IntegrityError as e:
+                    raise IntegrityError(f"Error de duplicidad en lote del modelo [CotizacionServicio]: {str(e)}")
 
             # =====================================================
-            # 🔹 MENSAJES
+            # 🔹 3. REPLICAR ADJUNTOS (Corregido con el campo id_adjuntos)
             # =====================================================
-            print("🔹 Replicando MENSAJES")
+            fase_actual = "INSERTAR_ADJUNTOS"
+            print(f"🔹 [{fase_actual}] Copiando referencias de archivos...")
+            adjuntos_origen = CotizacionAdjunto.objects.filter(id_registro=base.id_registro)
+            nuevos_adjuntos = []
 
-            mensajes_origen = list(
-                CotiMensajes.objects.filter(num_reg=num_reg).order_by("dat")
-            )
+            for a in adjuntos_origen:
+                datos = {k: v for k, v in a.__dict__.items() if not k.startswith('_')}
+                
+                # 🌟 AQUÍ ESTABA EL DETALLE: El campo real es en plural 'id_adjuntos'
+                datos.pop('id_adjuntos', None) 
+                
+                datos['id_registro_id'] = nueva_coti.id_registro
+                nuevos_adjuntos.append(CotizacionAdjunto(**datos))
 
-            offset = 0
+            if nuevos_adjuntos:
+                try:
+                    CotizacionAdjunto.objects.bulk_create(nuevos_adjuntos)
+                except IntegrityError as e:
+                    raise IntegrityError(f"Error de duplicidad en lote del modelo [CotizacionAdjunto]: {str(e)}")
+
+            # =====================================================
+            # 🔹 4. REPLICAR MENSAJES
+            # =====================================================
+            fase_actual = "INSERTAR_MENSAJES"
+            print(f"🔹 [{fase_actual}] Duplicando historial de bitácora...")
+            # Mensajes: usar el campo 'fecha' en vez de 'dat'
+            mensajes_origen = CotizacionMensaje.objects.filter(id_registro=base.id_registro).order_by("fecha")
             nuevos_mensajes = []
+            offset_ms = 0
 
             for m in mensajes_origen:
-                nuevo = deepcopy(m)
-                nuevo.pk = None
-                nuevo.dat = now() + timedelta(milliseconds=offset)
-                nuevo.num_reg = nueva_cotizacion.num_reg
-                nuevos_mensajes.append(nuevo)
-                offset += 1
+                datos = {k: v for k, v in m.__dict__.items() if not k.startswith('_')}
+                datos.pop('id_mensaje', None)
+                datos.pop('id', None)
+                datos['id_registro_id'] = nueva_coti.id_registro
+                datos['fecha'] = now() + timedelta(milliseconds=offset_ms)
+                nuevos_mensajes.append(CotizacionMensaje(**datos))
+                offset_ms += 1
 
-            CotiMensajes.objects.bulk_create(nuevos_mensajes)
+            if nuevos_mensajes:
+                try:
+                    CotizacionMensaje.objects.bulk_create(nuevos_mensajes)
+                except IntegrityError as e:
+                    raise IntegrityError(f"Error de duplicidad en lote del modelo [CotizacionMensaje]: {str(e)}")
 
             # =====================================================
-            # 🔹 SEGUIMIENTO
+            # 🔹 5. REPLICAR SEGUIMIENTO
             # =====================================================
-            print("🔹 Replicando SEGUIMIENTO")
-
-            seguimiento_origen = list(
-                CotiSeguimiento.objects.filter(num_reg=num_reg).order_by("dat")
-            )
-
-            offset = 0
-            nuevos_seg = []
+            fase_actual = "INSERTAR_SEGUIMIENTO"
+            print(f"🔹 [{fase_actual}] Replicando hitos...")
+            # Seguimiento: usar el campo 'fecha' en vez de 'dat'
+            seguimiento_origen = CotizacionSeguimiento.objects.filter(id_registro=base.id_registro).order_by("fecha")
+            nuevos_seguimientos = []
+            offset_ms = 0
 
             for seg in seguimiento_origen:
-                nuevo = deepcopy(seg)
-                nuevo.pk = None
-                nuevo.dat = now() + timedelta(milliseconds=offset)
-                nuevo.num_reg = nueva_cotizacion.num_reg
-                nuevo.num = seg.num
-                nuevos_seg.append(nuevo)
-                offset += 1
+                datos = {k: v for k, v in seg.__dict__.items() if not k.startswith('_')}
+                datos.pop('id_seguimiento', None)
+                datos.pop('id', None)
+                datos['id_registro_id'] = nueva_coti.id_registro
+                datos['fecha'] = now() + timedelta(milliseconds=offset_ms)
+                nuevos_seguimientos.append(CotizacionSeguimiento(**datos))
+                offset_ms += 1
 
-            CotiSeguimiento.objects.bulk_create(nuevos_seg)
+            # Añadimos un hito de auditoría indicando la creación de la nueva versión
+            nuevo_hito_auditoria = CotizacionSeguimiento(
+                id_registro_id=nueva_coti.id_registro,
+                detalle=f"Nueva versión generada correctamente a partir del registro base ID: {base.id_registro}",
+                id_usuario=request.user,
+                activo='1'
+            )
+            nuevos_seguimientos.append(nuevo_hito_auditoria)
 
-        return Response(
-            {
-                "message": "Nueva versión creada correctamente",
-                "num_reg": nueva_cotizacion.num_reg,
-                "cotin": nueva_cotizacion.numero,
-                "num_reg_origen": base.num_reg,  # 👈 útil para invalidaciones finas
-            },
-            status=201,
-        )
+            if nuevos_seguimientos:
+                try:
+                    CotizacionSeguimiento.objects.bulk_create(nuevos_seguimientos)
+                except IntegrityError as e:
+                    raise IntegrityError(f"Error de duplicidad en lote del modelo [CotizacionSeguimiento]: {str(e)}")
+
+        # Si todo corre perfecto en el bloque atómico:
+        return Response({
+            "ok": True,
+            "message": "Nueva versión comercial creada correctamente.",
+            "data": {
+                "id_registro_nuevo": nueva_coti.id_registro,
+                "codigo_nuevo": nueva_coti.codigo,
+                "id_registro_origen": base.id_registro
+            }
+        }, status=status.HTTP_201_CREATED)
+
+    except IntegrityError as ie:
+        print(f"❌ ERR [IntegrityError] en Fase: {fase_actual} -> {str(ie)}")
+        return Response({
+            "ok": False,
+            "error": "Error de restricción o duplicidad en la base de datos.",
+            "fase_error": fase_actual,
+            "detalle": str(ie)
+        }, status=status.HTTP_400_BAD_REQUEST)
 
     except Exception as e:
-        print("❌ ERROR REAL:", e)
-        raise e
+        print(f"❌ ERR [Exception] en Fase: {fase_actual} -> {str(e)}")
+        return Response({
+            "ok": False,
+            "error": "Error inesperado al procesar la clonación.",
+            "fase_error": fase_actual,
+            "detalle": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def generar_copiar_cotizacion(request, num_reg):
+def generar_copiar_cotizacion(request, id_registro):
     """
-    Crea una copia de la cotización indicada sin asignarle COTIN (numero).
-    La copia se genera con estado pendiente de envío (estado_codigo=2).
+    Crea una copia de la cotización indicada.
+    La copia se genera con estado inicial: Borrador (id_estado=2).
+    Acepta datos en el body para actualizar en la copia y genera el código COTIN.
     """
+    fase_actual = "INICIO"
     try:
         with transaction.atomic():
-
-            print("🔹 Buscando cotización base")
-            base = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
+            fase_actual = "BUSQUEDA_COTIZACION_BASE"
+            print(f"🔹 [{fase_actual}] Buscando cotización base ID: {id_registro}")
+            base = Cotizacion.objects.filter(id_registro=id_registro).first()
             if not base:
-                return Response({"error": "La cotización no existe"}, status=404)
+                return Response({
+                    "ok": False,
+                    "error": f"La cotización con ID {id_registro} no existe"
+                }, status=status.HTTP_404_NOT_FOUND)
 
-            print("🔹 Creando copia sin COTIN")
-            
-            # Extraemos el código del usuario desde el token
+            fase_actual = "LECTURA_TOKEN"
+            print("🔹 Extrayendo usuario desde el Token JWT")
             from rest_framework_simplejwt.authentication import JWTAuthentication
             jwt_auth = JWTAuthentication()
             header = jwt_auth.get_header(request)
@@ -2627,160 +3242,170 @@ def generar_copiar_cotizacion(request, num_reg):
             validated_token = jwt_auth.get_validated_token(raw_token)
             usuario_codigo = validated_token.get("user_id")
 
-            nueva_cotizacion = deepcopy(base)
-            nueva_cotizacion.pk = None
-            nueva_cotizacion.num_reg = None
-            nueva_cotizacion.numero = None
-            nueva_cotizacion.estado_codigo = 2
-            nueva_cotizacion.envio = 0
+            fase_actual = "INSERTAR_CABECERA_COTIZACION"
+            print(f"🔹 [{fase_actual}] Clonando cabecera principal")
             
-            # Marcamos quién registró la copia
-            nueva_cotizacion.regus = usuario_codigo
+            # Limpiamos PK y campos específicos
+            datos_cabecera = {k: v for k, v in base.__dict__.items() if not k.startswith('_')}
+            datos_cabecera.pop('id_registro', None)
+            
+            nueva_coti = Cotizacion(**datos_cabecera)
+            nueva_coti.codigo = None # Temporalmente None
+            nueva_coti.id_estado_id = 2  # Borrador
+            nueva_coti.envio = 0
+            nueva_coti.regus = usuario_codigo
+            nueva_coti.fecha = now()
 
-            # =========================
-            # 🔹 REFERENCIA (MARCAR COPIA)
-            # =========================
-            if base.referencia:
-                nueva_cotizacion.referencia = f"{base.referencia} - COPIA"
-            else:
-                nueva_cotizacion.referencia = f"COPIA DE COTIZACIÓN {num_reg}"
+            # Aplicar valores enviados desde el frontend si existen
+            nueva_coti.referencia = request.data.get('referencia', nueva_coti.referencia)
+            
+            # Para los FK, asignamos el ID directamente
+            if 'id_area' in request.data:
+                nueva_coti.id_area = request.data.get('id_area')
+            if 'id_cliente' in request.data:
+                nueva_coti.id_cliente_id = request.data.get('id_cliente')
+            if 'id_representante' in request.data:
+                nueva_coti.id_representante_id = request.data.get('id_representante')
+            if 'id_tipo' in request.data:
+                nueva_coti.id_tipo_id = request.data.get('id_tipo')
 
-            nueva_cotizacion.save()
+            # Si no se envió referencia, generamos una por defecto
+            if not request.data.get('referencia'):
+                if base.referencia:
+                    nueva_coti.referencia = f"{base.referencia} - COPIA"
+                else:
+                    nueva_coti.referencia = f"COPIA DE REGISTRO {id_registro}"
+            
+            nueva_coti.save()
 
             # =====================================================
-            # 🔹 SUMINISTROS (GRUPOS + ÍTEMS)
+            # 🔹 GENERAR CÓDIGO COMERCIAL AUTOMÁTICO
             # =====================================================
-            print("🔹 Replicando SUMINISTROS")
+            fase_actual = "GENERAR_CODIGO_AUTOMATICO"
+            try:
+                codigo_generado = _calcular_nuevo_codigo(nueva_coti)
+                nueva_coti.codigo = codigo_generado
+                nueva_coti.save(update_fields=["codigo"])
+                print(f"🔹 Código generado para la copia: {codigo_generado}")
+            except Exception as e:
+                print(f"⚠️ No se pudo generar el código automático: {str(e)}")
+                raise ValidationError(f"No se pudo generar el código automático. Verifique los datos: {str(e)}")
 
-            suministros_origen = list(
-                CotiSuministros.objects.filter(num_reg=num_reg).order_by("num")
-            )
-
-            ultimo_num = (
-                CotiSuministros.objects.aggregate(max_num=Max("num"))["max_num"] or 0
-            )
-
-            nuevos = []
-            contador = ultimo_num + 1
+            # =====================================================
+            # 🔹 1. REPLICAR SUMINISTROS
+            # =====================================================
+            fase_actual = "INSERTAR_SUMINISTROS"
+            suministros_origen = CotizacionSuministro.objects.filter(id_registro=base.id_registro)
+            nuevos_suministros = []
 
             for s in suministros_origen:
-                nuevo = deepcopy(s)
-                nuevo.pk = None
-                nuevo.num = contador
-                nuevo.num_reg = nueva_cotizacion.num_reg
-                nuevos.append(nuevo)
-                contador += 1
+                datos = {k: v for k, v in s.__dict__.items() if not k.startswith('_')}
+                datos.pop('id_suministro', None)
+                datos.pop('id', None)
+                datos['id_registro_id'] = nueva_coti.id_registro
+                nuevos_suministros.append(CotizacionSuministro(**datos))
 
-            CotiSuministros.objects.bulk_create(nuevos)
+            if nuevos_suministros:
+                CotizacionSuministro.objects.bulk_create(nuevos_suministros)
 
             # =====================================================
-            # 🔹 SERVICIOS (GRUPOS + ÍTEMS)
+            # 🔹 2. REPLICAR SERVICIOS
             # =====================================================
-            print("🔹 Replicando SERVICIOS")
-
-            servicios_origen = list(
-                CotiServicios.objects.filter(num_reg=num_reg).order_by("num")
-            )
-
-            ultimo_num_serv = (
-                CotiServicios.objects.aggregate(max_num=Max("num"))["max_num"] or 0
-            )
-
-            nuevos_serv = []
-            contador = ultimo_num_serv + 1
+            fase_actual = "INSERTAR_SERVICIOS"
+            servicios_origen = CotizacionServicio.objects.filter(id_registro=base.id_registro)
+            nuevos_servicios = []
 
             for s in servicios_origen:
-                nuevo = deepcopy(s)
-                nuevo.pk = None
-                nuevo.num = contador
-                nuevo.num_reg = nueva_cotizacion.num_reg
-                nuevos_serv.append(nuevo)
-                contador += 1
+                datos = {k: v for k, v in s.__dict__.items() if not k.startswith('_')}
+                datos.pop('id_servicio', None)
+                datos.pop('id', None)
+                datos['id_registro_id'] = nueva_coti.id_registro
+                nuevos_servicios.append(CotizacionServicio(**datos))
 
-            CotiServicios.objects.bulk_create(nuevos_serv)
+            if nuevos_servicios:
+                CotizacionServicio.objects.bulk_create(nuevos_servicios)
 
             # =====================================================
-            # 🔹 MENSAJES
+            # 🔹 3. REPLICAR ADJUNTOS
             # =====================================================
-            print("🔹 Replicando MENSAJES")
+            fase_actual = "INSERTAR_ADJUNTOS"
+            adjuntos_origen = CotizacionAdjunto.objects.filter(id_registro=base.id_registro)
+            nuevos_adjuntos = []
 
-            mensajes_origen = list(
-                CotiMensajes.objects.filter(num_reg=num_reg).order_by("dat")
-            )
+            for a in adjuntos_origen:
+                datos = {k: v for k, v in a.__dict__.items() if not k.startswith('_')}
+                datos.pop('id_adjuntos', None) 
+                datos['id_registro_id'] = nueva_coti.id_registro
+                nuevos_adjuntos.append(CotizacionAdjunto(**datos))
 
-            offset = 0
+            if nuevos_adjuntos:
+                CotizacionAdjunto.objects.bulk_create(nuevos_adjuntos)
+
+            # =====================================================
+            # 🔹 4. REPLICAR MENSAJES
+            # =====================================================
+            fase_actual = "INSERTAR_MENSAJES"
+            mensajes_origen = CotizacionMensaje.objects.filter(id_registro=base.id_registro).order_by("fecha")
             nuevos_mensajes = []
-
+            offset_ms = 0
             for m in mensajes_origen:
-                nuevo = deepcopy(m)
-                nuevo.pk = None
-                nuevo.dat = now() + timedelta(milliseconds=offset)
-                nuevo.num_reg = nueva_cotizacion.num_reg
-                nuevos_mensajes.append(nuevo)
-                offset += 1
+                datos = {k: v for k, v in m.__dict__.items() if not k.startswith('_')}
+                datos.pop('id_mensaje', None)
+                datos.pop('id', None)
+                datos['id_registro_id'] = nueva_coti.id_registro
+                datos['fecha'] = now() + timedelta(milliseconds=offset_ms)
+                nuevos_mensajes.append(CotizacionMensaje(**datos))
+                offset_ms += 1
 
-            CotiMensajes.objects.bulk_create(nuevos_mensajes)
+            if nuevos_mensajes:
+                CotizacionMensaje.objects.bulk_create(nuevos_mensajes)
 
             # =====================================================
-            # 🔹 SEGUIMIENTO
+            # 🔹 5. REPLICAR SEGUIMIENTO
             # =====================================================
-            print("🔹 Replicando SEGUIMIENTO")
-
-            seguimiento_origen = list(
-                CotiSeguimiento.objects.filter(num_reg=num_reg).order_by("dat")
-            )
-
-            offset = 0
-            nuevos_seg = []
-
+            fase_actual = "INSERTAR_SEGUIMIENTO"
+            seguimiento_origen = CotizacionSeguimiento.objects.filter(id_registro=base.id_registro).order_by("fecha")
+            nuevos_seguimientos = []
+            offset_ms = 0
             for seg in seguimiento_origen:
-                nuevo = deepcopy(seg)
-                nuevo.pk = None
-                nuevo.dat = now() + timedelta(milliseconds=offset)
-                nuevo.num_reg = nueva_cotizacion.num_reg
-                nuevo.num = seg.num
-                nuevos_seg.append(nuevo)
-                offset += 1
+                datos = {k: v for k, v in seg.__dict__.items() if not k.startswith('_')}
+                datos.pop('id_seguimiento', None)
+                datos.pop('id', None)
+                datos['id_registro_id'] = nueva_coti.id_registro
+                datos['fecha'] = now() + timedelta(milliseconds=offset_ms)
+                nuevos_seguimientos.append(CotizacionSeguimiento(**datos))
+                offset_ms += 1
 
-            CotiSeguimiento.objects.bulk_create(nuevos_seg)
-
-        return Response(
-            {
-                "message": "Copia de cotización creada correctamente sin COTIN",
-                "num_reg": nueva_cotizacion.num_reg,
-                "cotin": nueva_cotizacion.numero,  # será None
-            },
-            status=201,
-        )
-
-    except Exception as e:
-        print("❌ ERROR REAL:", e)
-        raise e
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def generar_codigo_view(request, numero):
-    """
-    Retorna el código (cotin) asociado a la cotización.
-    Si la cotización no existe → 404
-    """
-    try:
-        cot = DashboardCotizacion.objects.filter(numero=numero).first()
-        if not cot:
-            return Response(
-                {"error": f"No se encontró la cotización #{numero}"},
-                status=404
+            # Hito de auditoría
+            nuevo_hito_auditoria = CotizacionSeguimiento(
+                id_registro_id=nueva_coti.id_registro,
+                detalle=f"Copia generada correctamente a partir del registro ID: {base.id_registro}",
+                id_usuario=request.user,
+                activo='1'
             )
+            nuevos_seguimientos.append(nuevo_hito_auditoria)
+
+            if nuevos_seguimientos:
+                CotizacionSeguimiento.objects.bulk_create(nuevos_seguimientos)
 
         return Response({
-            "numero": cot.numero,
-            "codigo": cot.numero  # Es lo mismo que cotin
-        })
+            "ok": True,
+            "message": "Copia de cotización creada correctamente sin COTIN.",
+            "data": {
+                "id_registro_nuevo": nueva_coti.id_registro,
+                "codigo_nuevo": nueva_coti.codigo, # será None
+                "id_registro_origen": base.id_registro
+            }
+        }, status=status.HTTP_201_CREATED)
 
     except Exception as e:
-        import traceback
-        print("Error en generar_codigo_view:", traceback.format_exc())
-        return Response({"error": str(e)}, status=500)
+        print(f"❌ ERR [generar_copiar_cotizacion] Fase: {fase_actual} -> {str(e)}")
+        return Response({
+            "ok": False,
+            "error": "Error al procesar la copia.",
+            "fase_error": fase_actual,
+            "detalle": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
@@ -2790,7 +3415,7 @@ def cambiar_estado_cotizacion(request, num_reg):
     Ejemplo: 1 → 3, 3 → 2, etc.
     """
     try:
-        estado_codigo = request.data.get("estado_codigo")
+        estado_codigo = request.data.get("id_estado")
 
         if estado_codigo is None:
             return Response(
@@ -2799,7 +3424,7 @@ def cambiar_estado_cotizacion(request, num_reg):
             )
 
         with transaction.atomic():
-            cotizacion = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
+            cotizacion = Cotizacion.objects.filter(num_reg=num_reg).first()
 
             if not cotizacion:
                 return Response(
@@ -2808,7 +3433,7 @@ def cambiar_estado_cotizacion(request, num_reg):
                 )
 
             # Validar que el estado exista y esté activo
-            estado = vc_tab_estado.objects.filter(
+            estado = Estado.objects.filter(
                 codigo=estado_codigo,
                 activo=True
             ).first()
@@ -2843,7 +3468,7 @@ def retornar_cotizacion(request, num_reg):
 
     try:
         with transaction.atomic():
-            cotizacion = DashboardCotizacion.objects.filter(num_reg=num_reg).first()
+            cotizacion = Cotizacion.objects.filter(num_reg=num_reg).first()
 
             if not cotizacion:
                 return Response(
@@ -2977,7 +3602,7 @@ def resumen_dashboard(request):
     # ===============================
     # COTIZACIONES ANUALES
     # ===============================
-    base = DashboardCotizacion.objects.filter(
+    base = Cotizacion.objects.filter(
         nombc=nombre_corto
     )
 
@@ -2992,7 +3617,7 @@ def resumen_dashboard(request):
     # ===============================
     # COTIZACIONES MENSUALES
     # ===============================
-    cotizaciones_mes = DashboardCotizacion.objects.filter(
+    cotizaciones_mes = Cotizacion.objects.filter(
         nombc=nombre_corto,
         fecha__year=anno,
         fecha__month=mes
@@ -3009,13 +3634,13 @@ def resumen_dashboard(request):
     # ===============================
     # ANUAL
     # ===============================
-    hh_anual = CotiServicios.objects.filter(
+    hh_anual = CotizacionServicio.objects.filter(
         num_reg__in=cotizaciones_anuales,
         cog__regex=r"^\d{3}4",
         nig=2
     ).aggregate(total=Coalesce(Sum("toc"), Decimal("0")))["total"]
 
-    utilidad_anual = CotiServicios.objects.filter(
+    utilidad_anual = CotizacionServicio.objects.filter(
         num_reg__in=cotizaciones_anuales,
         cog__regex=r"^\d{3}[46]"
     ).aggregate(total=Coalesce(Sum(utilidad_expr), Decimal("0")))["total"]
@@ -3025,13 +3650,13 @@ def resumen_dashboard(request):
     # ===============================
     # MENSUAL
     # ===============================
-    hh_mes = CotiServicios.objects.filter(
+    hh_mes = CotizacionServicio.objects.filter(
         num_reg__in=cotizaciones_mes,
         cog__regex=r"^\d{3}4",
         nig=2
     ).aggregate(total=Coalesce(Sum("toc"), Decimal("0")))["total"]
 
-    utilidad_mes = CotiServicios.objects.filter(
+    utilidad_mes = CotizacionServicio.objects.filter(
         num_reg__in=cotizaciones_mes,
         cog__regex=r"^\d{3}[46]"
     ).aggregate(total=Coalesce(Sum(utilidad_expr), Decimal("0")))["total"]
@@ -3086,7 +3711,7 @@ def logrado_dashboard(request):
     print(f"DEBUG: Año = {anno}, Mes actual = {mes_actual}")
 
     # Cotizaciones aprobadas del año
-    cotizaciones_anuales = DashboardCotizacion.objects.filter(
+    cotizaciones_anuales = Cotizacion.objects.filter(
         anno=anno,
         envio="3",
     )
@@ -3112,7 +3737,7 @@ def logrado_dashboard(request):
             return Decimal("0.00")
 
         # HH PROPIOS
-        hh_agg = CotiServicios.objects.filter(
+        hh_agg = CotizacionServicio.objects.filter(
             num_reg__in=num_regs,
             cog__regex=r"^\d{3}4",
             nig=2,
@@ -3122,7 +3747,7 @@ def logrado_dashboard(request):
         total_hh = hh_agg["total"]
 
         # UTILIDAD
-        utilidad_agg = CotiServicios.objects.filter(
+        utilidad_agg = CotizacionServicio.objects.filter(
             num_reg__in=num_regs,
         ).aggregate(
             total=Coalesce(Sum(utilidad_expr), Decimal("0.00"))
@@ -3162,9 +3787,9 @@ def kpis_dashboard(request):
     # 1. QUERIES BASE (Cotizaciones y Ventas)
     # ==========================================
     # Cotizaciones (Ofertas)
-    qs_cot_anual = DashboardCotizacion.objects.filter(anno=anno)
+    qs_cot_anual = Cotizacion.objects.filter(anno=anno)
     qs_cot_mes = qs_cot_anual.filter(mes=mes_actual_str)
-    qs_cot_prev = DashboardCotizacion.objects.filter(anno=anno_para_mes_anterior, mes=mes_anterior_str)
+    qs_cot_prev = Cotizacion.objects.filter(anno=anno_para_mes_anterior, mes=mes_anterior_str)
 
     # Ventas Reales (Órdenes de Compra Adjudicadas oesta=1)
     qs_ventas_anual = vc_mov_orden.objects.filter(anno_a=str(anno), oesta=1)
@@ -3244,7 +3869,7 @@ def tendencias_dashboard(request):
     anno_buscado = str(request.GET.get("anno", datetime.now().year))
 
     # 2. DEFINIR LA BASE DE COTIZACIONES (Lo que se ofertó)
-    base = DashboardCotizacion.objects.filter(num_reg__startswith=anno_buscado)
+    base = Cotizacion.objects.filter(num_reg__startswith=anno_buscado)
     base = aplicar_filtros(base, request)
 
     # --- LÓGICA DE VENTAS REALES (OC) ---
@@ -3485,7 +4110,7 @@ def cotizaciones_analisis_view(request):
         metrica = request.data.get("metrica", "monto")
         filtros = request.data.get("filtros", {})
 
-        qs = DashboardCotizacion.objects.all()
+        qs = Cotizacion.objects.all()
 
         # ==========================
         # Filtros globales
@@ -3629,7 +4254,7 @@ def alertas_sin_respuesta():
     hoy = timezone.now().date()
     limite = hoy - timedelta(days=7)
 
-    cotis = DashboardCotizacion.objects.filter(
+    cotis = Cotizacion.objects.filter(
         fecha__lte=limite,
         envio__isnull=True
     )
@@ -3662,37 +4287,6 @@ def alertas_sin_respuesta():
 ##================##
 ## DATOS DE BD_VC ##
 ##================##
-# vc_tab_estado
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_estados(request):
-    estados = vc_tab_estado.objects.filter(activo=True, cot=1).order_by("nombre")
-    serializer = EstadoSerializer(estados, many=True)
-    return Response(serializer.data)
-
-#vc_tab_categorias
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_categorias(request):
-    categorias = vc_tab_categorias.objects.filter(activo="1").order_by("nombre")
-    serializer = CategoriasSerializer(categorias, many=True)
-    return Response(serializer.data)
-
-# vc_tab_tgastos
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_tgasto(request):
-    tgasto = vc_tab_tgastos.objects.filter(activo="1").order_by("codigo")
-    serializer = TGastosSerializer(tgasto, many=True)
-    return Response(serializer.data)
-
-# vc_tab_tgastos_d
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_tgasto_d(request):
-    tgasto_d = vc_tab_tgastos_d.objects.filter(activo="1").order_by("nombre")
-    serializer = TGastosDSerializer(tgasto_d, many=True)
-    return Response(serializer.data)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -3800,13 +4394,6 @@ def lista_alm_articulos(request):
     serializer = AlmArticulosSerializer(queryset, many=True)
     return Response(serializer.data)
 
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_proveedores(request):
-    proveedores = vc_tab_tproveedor.objects.filter(activo="1").order_by("nombre")
-    serializer = ProveedoresSerializer(proveedores, many=True)
-    return Response(serializer.data)
-
 # Usuario
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -3877,7 +4464,7 @@ def reporte_cotizaciones_dashboard_html(request):
     campo   = request.GET.get("campo")   # filtro general
     valor   = request.GET.get("valor")   # valor buscado
 
-    qs = DashboardCotizacion.objects.all()
+    qs = Cotizacion.objects.all()
 
     if anno:
         qs = qs.filter(anno=anno)
@@ -3944,12 +4531,13 @@ def reporte_cotizaciones_dashboard_html(request):
     return render(request, "reportes/reporte_cotizaciones_dashboard.html", context)
 
 @csrf_exempt
-def reporte_suministros_html(request, num_reg):
-
+@xframe_options_exempt
+def reporte_suministros_html(request, id_registro):
+    # Filtramos usando el campo id_registro
     suministros = (
-        CotiSuministros.objects
-        .filter(num_reg=num_reg)
-        .order_by("cog", "nig", "num")
+        CotizacionSuministro.objects
+        .filter(id_registro=id_registro)
+        .order_by("codigo_grupo", "nivel", "orden")
     )
 
     if not suministros.exists():
@@ -3960,165 +4548,81 @@ def reporte_suministros_html(request, num_reg):
 
     grupos = OrderedDict()
 
-    # =========================
-    # UTIL: PARSE COG
-    # =========================
-    def parse_cog(cog):
-        cog = str(cog).zfill(4)
-        tipo_code = cog[2:]  # 01, 02
+    # ==========================================
+    # ÚTIL: PARSE CODIGO GRUPO (Homologado)
+    # ==========================================
+    def parse_codigo_grupo(cod_grupo):
+        cod_str = str(cod_grupo).zfill(4)
+        tipo_code = cod_str[2:]  # 01 = EQUIPOS, 02 = MATERIALES
 
         return {
             "01": "EQUIPOS",
             "02": "MATERIALES",
         }.get(tipo_code, "OTROS")
 
-    # =========================
-    # AGRUPAR POR COG
-    # =========================
+    # ==========================================
+    # AGRUPAR POR NUEVO CAMPO: codigo_grupo
+    # ==========================================
     for row in suministros:
+        c_grupo = row.codigo_grupo
 
-        # Crear grupo si no existe
-        if row.cog not in grupos:
-            grupos[row.cog] = {
-                "tipo": parse_cog(row.cog),  # EQUIPOS / MATERIALES
-                "titulo": "",                # nog (ej: M1, M2)
-                "items": []
-            }
-
-        # CABECERA (nig = 0)
-        if row.nig == 0:
-            grupos[row.cog]["titulo"] = row.nog or ""
-
-        # ITEMS (nig > 0)
-        elif row.nig > 0:
-            utilidad = (row.tou or Decimal("0")) * (row.can or Decimal("0"))
-
-            grupos[row.cog]["items"].append({
-                "item": len(grupos[row.cog]["items"]) + 1,
-                "cod": row.cod,
-                "des": row.des,
-                "pro": row.pro,
-                "can": round(row.can or 0, 2),
-                "val": round(row.val or 0, 2),
-                "tot": round(row.tot or 0, 2),
-                "puc": round(row.puc or 0, 2),
-                "toc": round(row.toc or 0, 2),
-                "utilidad": round(utilidad, 2),
-            })
-
-    context = {
-        "num_reg": num_reg,
-        "grupos": grupos
-    }
-
-    return render(
-        request,
-        "reportes/reporte_suministros.html",
-        context
-    )
-
-@csrf_exempt
-def reporte_suministros_excel(request, num_reg):
-    suministros = CotiSuministros.objects.filter(num_reg=num_reg).order_by("cog", "nig", "num")
-    if not suministros.exists():
-        return HttpResponse("No existen suministros para esta cotización", status=404)
-
-    grupos = OrderedDict()
-
-    # Función para parsear cog
-    def parse_cog(cog):
-        cog = str(cog).zfill(4)
-        contador = cog[:2]
-        tipo_code = cog[2:]
-        tipo_map = {
-            "01": "EQUIPOS",
-            "02": "MATERIALES",
-        }
-        tipo = tipo_map.get(tipo_code, "OTROS")
-        subtitulo = f"M{int(contador)}"
-        return tipo, subtitulo
-
-    # Agrupar por COG
-    for row in suministros:
-        if row.cog not in grupos:
-            tipo, subtitulo = parse_cog(row.cog)
-            grupos[row.cog] = {
-                "tipo": tipo,
-                "subtitulo": subtitulo,
+        if c_grupo not in grupos:
+            grupos[c_grupo] = {
+                "tipo": parse_codigo_grupo(c_grupo),
                 "titulo": "",
                 "items": []
             }
 
-        # Cabecera (nig = 0)
-        if row.nig == 0:
-            grupos[row.cog]["titulo"] = row.nog or ""
+        # CABECERA DEL GRUPO (nivel == 0)
+        if row.nivel == 0:
+            grupos[c_grupo]["titulo"] = row.nombre_grupo or ""
 
-        # Items (nig > 0)
-        elif row.nig > 0:
-            utilidad = (row.tou or Decimal("0")) * (row.can or Decimal("0"))
-            grupos[row.cog]["items"].append({
-                "item": len(grupos[row.cog]["items"]) + 1,
-                "cod": row.cod,
-                "des": row.des,
-                "pro": row.pro,
-                "can": round(row.can or 0, 2),
-                "val": round(row.val or 0, 2),
-                "tot": round(row.tot or 0, 2),
-                "puc": round(row.puc or 0, 2),
-                "toc": round(row.toc or 0, 2),
-                "utilidad": round(utilidad, 2),
+        # ÍTEMS ASOCIADOS AL GRUPO (nivel > 0)
+        elif row.nivel > 0:
+            utilidad_total = (row.utilidad or Decimal("0")) * (row.cantidad or Decimal("0"))
+
+            grupos[c_grupo]["items"].append({
+                "item": len(grupos[c_grupo]["items"]) + 1,
+                "cod": row.codigo_item,
+                "des": row.descripcion,
+                "pro": row.proveedor,
+                "can": int(row.cantidad or 0),
+                "val": round(row.costo_precio or Decimal("0"), 2),   # Costo Unitario
+                "tot": round(row.costo_total or Decimal("0"), 2),    # Costo Total Neto
+                "puc": round(row.precio_venta or Decimal("0"), 2),   # Precio Venta Unitario
+                "toc": round(row.venta_total or Decimal("0"), 2),    # Venta Total
+                "utilidad": round(utilidad_total, 2),
             })
 
-    # Crear workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.title = f"Suministros_{num_reg}"
+    context = {
+        "id_registro": id_registro,  # <--- Alineado con el nuevo parámetro
+        "grupos": grupos
+    }
 
-    # Escribir tabla similar al HTML
-    row_index = 1
-    for grupo in grupos.values():
-        # Título de grupo
-        ws.merge_cells(start_row=row_index, start_column=1, end_row=row_index, end_column=10)
-        ws.cell(row=row_index, column=1, value=f"{grupo['tipo']} - {grupo['titulo']}")
-        row_index += 1
-
-        # Cabecera
-        headers_1 = ["Ítems", "Código", "Descripción", "Proveedor", "Cant", "Cliente Final", "", "Precio Final", "", "Utilidad"]
-        headers_2 = ["", "", "", "", "", "Prec. Unit.", "Total", "Prec. Unit.", "Total", ""]
-        ws.append(headers_1)
-        ws.append(headers_2)
-        row_index += 2
-
-        # Items
-        for it in grupo["items"]:
-            ws.append([
-                it["item"],
-                it["cod"],
-                it["des"],
-                it["pro"],
-                it["can"],
-                it["val"],
-                it["tot"],
-                it["puc"],
-                it["toc"],
-                it["utilidad"]
-            ])
-            row_index += 1
-
-        row_index += 1  # espacio entre grupos
-
-    # Respuesta Excel
-    response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    response['Content-Disposition'] = f'attachment; filename=Suministros_{num_reg}.xlsx'
-    wb.save(response)
+    # 1. Generamos la respuesta del renderizado
+    response = render(
+        request,
+        "reportes/reporte_suministros.html",
+        context
+    )
+    
+    # 2. Eliminamos explícitamente cualquier restricción de Frame para esta vista
+    if 'X-Frame-Options' in response:
+        del response['X-Frame-Options']
+        
+    # Alternativa ultra segura para navegadores modernos en entornos locales cruzados:
+    response['X-Frame-Options'] = 'ALLOWALL' 
+    
     return response
-
+ 
 @csrf_exempt
-def reporte_servicios_html(request, num_reg):
+@xframe_options_exempt
+def reporte_servicios_html(request, id_registro):
+    # 1. Filtramos usando la nueva relación id_registro en lugar del campo num_reg
     servicios = (
-        CotiServicios.objects
-        .filter(num_reg=num_reg)
-        .order_by("cog", "nig", "num")
+        CotizacionServicio.objects
+        .filter(id_registro=id_registro)
+        .order_by("codigo_servicio", "nivel", "orden")
     )
 
     if not servicios.exists():
@@ -4129,43 +4633,39 @@ def reporte_servicios_html(request, num_reg):
 
     grupos = OrderedDict()
 
-    # =========================
-    # AGRUPAR POR GRUPO Y SUBGRUPO
-    # =========================
+    # ==========================================
+    # AGRUPAR POR GRUPO (SERVICIO) Y SUBGRUPO
+    # ==========================================
     for row in servicios:
-        cog_key = str(row.cog).zfill(5)  # ej: 01041
+        # Usamos codigo_servicio como clave de grupo principal (equivalente al antiguo cog)
+        c_servicio_key = row.codigo_servicio or "SIN_CODIGO"
 
-        # Grupo principal (nig=0)
-        if row.nig == 0:
-            grupos[cog_key] = {
-                "titulo": row.nog or "",
+        # --- NIVEL 0: Grupo Principal (Datos del Servicio) ---
+        if row.nivel == 0:
+            grupos[c_servicio_key] = {
+                "titulo": row.nombre_servicio or "",
                 "subgrupos": OrderedDict(),
-                "total_val": Decimal("0.00"),
-                "total_tot": Decimal("0.00"),
-                "total_puc": Decimal("0.00"),
-                "total_toc": Decimal("0.00"),
+                "total_val": Decimal("0.00"),       # Costo Hombre Día
+                "total_tot": Decimal("0.00"),       # Costo Total
+                "total_puc": Decimal("0.00"),       # Cotizado Hombre Día
+                "total_toc": Decimal("0.00"),       # Cotizado Total
                 "total_utilidad": Decimal("0.00"),
             }
 
-        # Subgrupo (nig=1)
-        elif row.nig == 1:
-            # 🔥 Obtener tipo desde los dígitos centrales del COG (**04*, **05*, **06*)
-            try:
-                cog_str = str(row.cog).zfill(5)
-                tipo_code = cog_str[2:4]  # ej: 01041 → "04"
-            except:
-                tipo_code = ""
+        # --- NIVEL 1: Subgrupo (Tipo Gasto / Categoría) ---
+        elif row.nivel == 1:
+            # Intentamos resolver el nombre a través de la relación id_tipo_gasto si existe
+            if row.id_tipo_gasto:
+                tipo = str(row.id_tipo_gasto.nombre).upper() # Asegura compatibilidad con tu HTML (MANO DE OBRA, etc.)
+            else:
+                tipo = "OTROS"
 
-            tipo_map = {
-                "04": "MANO DE OBRA",
-                "05": "GASTOS DE SERVICIOS",
-                "06": "OTROS",
-            }
-
-            tipo = tipo_map.get(tipo_code, "OTROS")
-
+            # Validamos que exista un grupo principal contenedor por seguridad
+            if not grupos:
+                continue
+                
             ultimo_grupo_key = list(grupos.keys())[-1]
-            grupos[ultimo_grupo_key]["subgrupos"][cog_key] = {
+            grupos[ultimo_grupo_key]["subgrupos"][c_servicio_key] = {
                 "tipo": tipo,
                 "items": [],
                 "sub_total_val": Decimal("0.00"),
@@ -4175,31 +4675,39 @@ def reporte_servicios_html(request, num_reg):
                 "sub_total_utilidad": Decimal("0.00"),
             }
 
-
-        # Items (nig=2)
-        elif row.nig == 2:
-            utilidad = (row.tou or Decimal("0")) * (row.tde or Decimal("0"))
+        # --- NIVEL 2: Ítems del Subgrupo ---
+        elif row.nivel == 2:
+            if not grupos:
+                continue
+            
             ultimo_grupo_key = list(grupos.keys())[-1]
+            if not grupos[ultimo_grupo_key]["subgrupos"]:
+                continue
+                
             ultimo_subgrupo_key = list(grupos[ultimo_grupo_key]["subgrupos"].keys())[-1]
+
+            # El cálculo de utilidad usa los nuevos nombres de campos monetarios
+            # Utilidad total = utilidad unitaria * cantidad de dias (siguiendo tu lógica previa)
+            utilidad_total = (row.utilidad or Decimal("0")) * (row.cantidad_dias or Decimal("0"))
 
             item_data = {
                 "item": len(grupos[ultimo_grupo_key]["subgrupos"][ultimo_subgrupo_key]["items"]) + 1,
-                "cod": row.cod,
-                "des": row.des,
-                "pro": row.pro,
-                "can": round(row.can or 0, 2),
-                "dias": round(row.tde or 0, 0),
-                "val": round(row.val or 0, 2),
-                "tot": round(row.tot or 0, 2),
-                "puc": round(row.puc or 0, 2),
-                "toc": round(row.toc or 0, 2),
-                "utilidad": round(utilidad, 2),
+                "cod": row.codigo_item,
+                "des": row.descripcion_item,
+                "pro": f"{row.cantidad_hombres or 0} Pers. / {row.horas or 0} Hrs.", # Armamos el formato para la columna prov/obs
+                "can": int(row.cantidad_hombres or 0),
+                "dias": int(row.cantidad_dias or 0),
+                "val": round(row.costo_hombre_dia or Decimal("0"), 2),   # Costo unitario por día
+                "tot": round(row.costo_total or Decimal("0"), 2),        # Costo Total Neto
+                "puc": round(row.cotizado_hombre_dia or Decimal("0"), 2),# Precio Venta Unitario por día
+                "toc": round(row.cotizado_total or Decimal("0"), 2),     # Venta Total
+                "utilidad": round(utilidad_total, 2),
             }
 
-            # Guardar item
+            # Guardar ítem en la estructura
             grupos[ultimo_grupo_key]["subgrupos"][ultimo_subgrupo_key]["items"].append(item_data)
 
-            # Actualizar totales subgrupo
+            # Acumular sumatorias en el Subgrupo
             sg = grupos[ultimo_grupo_key]["subgrupos"][ultimo_subgrupo_key]
             sg["sub_total_val"] += Decimal(str(item_data["val"]))
             sg["sub_total_tot"] += Decimal(str(item_data["tot"]))
@@ -4207,7 +4715,7 @@ def reporte_servicios_html(request, num_reg):
             sg["sub_total_toc"] += Decimal(str(item_data["toc"]))
             sg["sub_total_utilidad"] += Decimal(str(item_data["utilidad"]))
 
-            # Actualizar totales grupo
+            # Acumular sumatorias en el Grupo Principal
             g = grupos[ultimo_grupo_key]
             g["total_val"] += Decimal(str(item_data["val"]))
             g["total_tot"] += Decimal(str(item_data["tot"]))
@@ -4215,17 +4723,25 @@ def reporte_servicios_html(request, num_reg):
             g["total_toc"] += Decimal(str(item_data["toc"]))
             g["total_utilidad"] += Decimal(str(item_data["utilidad"]))
 
-
+    # Ajustado al nuevo parámetro id_registro para que el HTML renderice el título
     context = {
-        "num_reg": num_reg,
+        "num_reg": id_registro,
         "grupos": grupos
     }
 
-    return render(
+    # 2. Renderizado e inyección manual de cabeceras de bypass de Iframe
+    response = render(
         request,
         "reportes/reporte_servicios.html",
         context
     )
+    
+    if 'X-Frame-Options' in response:
+        del response['X-Frame-Options']
+        
+    response['X-Frame-Options'] = 'ALLOWALL'
+    
+    return response
 
 from django.db import connection
 
@@ -4260,260 +4776,179 @@ def sumatoria_costos(queryset):
     return agg["costo"], ganancia
 
 @csrf_exempt
-def reporte_detallado_cotizacion(request, num_reg):
-    num_reg = str(num_reg)
+@xframe_options_exempt
+def reporte_detallado_cotizacion(request, id_registro):
+    # 1. Obtener la cotización principal usando el nuevo ID secuencial
+    cotizacion = get_object_or_404(Cotizacion, id_registro=id_registro)
+    id_area_cotizacion = cotizacion.id_area  # Área de la cotización para segmentar HH
+
+    # Obtener diccionarios de cantidades
+    # Para Suministros (código_grupo -> cantidad)
+    cantidades_suministros = dict(
+        CotizacionSuministro.objects.filter(
+            id_registro_id=id_registro,
+            nivel=0
+        ).values_list("codigo_grupo", "cantidad")
+    )
+
+    # Para Servicios (prefijo de código_servicio -> cantidad_hombres)
+    servicios_nivel0 = CotizacionServicio.objects.filter(
+        id_registro_id=id_registro,
+        nivel=0
+    ).values_list("codigo_servicio", "cantidad_hombres")
+    
+    cantidades_servicios = {}
+    for cod, cant in servicios_nivel0:
+        if cod and len(cod) >= 2:
+            prefijo = cod[:2]
+            cantidades_servicios[prefijo] = cant or 1
 
     # ==========================================================
-    # EQUIPOS (SU0 - nig=0 - cog 01%)
+    # EQUIPOS (Suministros con nivel=1 donde el TipoGasto sea Equipos)
     # ==========================================================
-    # 🔹 TOTAL VENTA
-    qs_total = CotiSuministros.objects.filter(
-        num_reg=num_reg,
-        cog__endswith="01",
-        nig=0,
+    qs_equipos = CotizacionSuministro.objects.filter(
+        id_registro_id=id_registro,
+        nivel=1,
+        id_tipo_gasto_id=1
     )
 
-    total_expr = ExpressionWrapper(
-        F("tot") * F("can"),
-        output_field=DecimalField(max_digits=18, decimal_places=2),
-    )
-
-    agg_total = qs_total.aggregate(
-        total=Coalesce(Sum(total_expr), Decimal("0"))
-    )
-
-    total_equipos = agg_total["total"]
-
-    # 🔹 COSTO
-    qs_costo = CotiSuministros.objects.filter(
-        num_reg=num_reg,
-        cog__endswith="01",
-        nig=1,
-    )
-
-    agg_costo = qs_costo.aggregate(
-        costo=Coalesce(Sum("toc"), Decimal("0"))
-    )
-
-    costo_equipos = agg_costo["costo"]
-
-    # 🔹 GANANCIA
+    costo_equipos = Decimal("0.00")
+    total_equipos = Decimal("0.00")
+    for item in qs_equipos:
+        cant_grupo = Decimal(str(cantidades_suministros.get(item.codigo_grupo, 1) or 1))
+        costo_equipos += (item.costo_total or Decimal("0.00")) * cant_grupo
+        total_equipos += (item.venta_total or Decimal("0.00")) * cant_grupo
     ganancia_equipos = total_equipos - costo_equipos
 
     # ==========================================================
-    # MATERIALES (02%)
+    # MATERIALES (Suministros con nivel=1 donde el TipoGasto sea Materiales)
     # ==========================================================
-    # 🔹 TOTAL VENTA
-    qs_total = CotiSuministros.objects.filter(
-        num_reg=num_reg,
-        cog__endswith="02",
-        nig=0,
+    qs_materiales = CotizacionSuministro.objects.filter(
+        id_registro_id=id_registro,
+        nivel=1,
+        id_tipo_gasto_id=2
     )
 
-    total_expr = ExpressionWrapper(
-        F("tot") * F("can"),
-        output_field=DecimalField(max_digits=18, decimal_places=2),
-    )
-
-    agg_total = qs_total.aggregate(
-        total=Coalesce(Sum(total_expr), Decimal("0"))
-    )
-
-    total_materiales = agg_total["total"]
-
-    # 🔹 COSTO
-    qs_costo = CotiSuministros.objects.filter(
-        num_reg=num_reg,
-        cog__endswith="02",
-        nig=1,
-    )
-
-    agg_costo = qs_costo.aggregate(
-        costo=Coalesce(Sum("toc"), Decimal("0"))
-    )
-
-    costo_materiales = agg_costo["costo"]
-
-    # 🔹 GANANCIA
+    costo_materiales = Decimal("0.00")
+    total_materiales = Decimal("0.00")
+    for item in qs_materiales:
+        cant_grupo = Decimal(str(cantidades_suministros.get(item.codigo_grupo, 1) or 1))
+        costo_materiales += (item.costo_total or Decimal("0.00")) * cant_grupo
+        total_materiales += (item.venta_total or Decimal("0.00")) * cant_grupo
     ganancia_materiales = total_materiales - costo_materiales
 
-    # =========
-    # AREA
-    # =========
-    from django.shortcuts import get_object_or_404
-
-    cotizacion = get_object_or_404(DashboardCotizacion, num_reg=num_reg)
-
-    area_cotizacion = str(cotizacion.area_codigo)
-
     # ==========================================================
-    # HH PROPIOS (MOP → cog ???4)
+    # HH PROPIOS (Servicios nivel=2 pertenecientes al área de la cotización)
     # ==========================================================
-    qs = CotiServicios.objects.filter(
-        num_reg=num_reg,
-        cog__regex=r"^\d{3}4",
-        tpr=area_cotizacion,
-        nig=2,
+    qs_hh_propios = CotizacionServicio.objects.filter(
+        id_registro_id=id_registro,
+        nivel=2,
+        id_tipo_gasto_id=3,
     )
 
-    total_hh_propios = qs.aggregate(
-        total=Coalesce(
-            Sum("tot"),
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-    )["total"]
-
-    costo_hh_propios = qs.aggregate(
-        costo=Coalesce(
-            Sum("toc"),
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-    )["costo"]
-
+    costo_hh_propios = Decimal("0.00")
+    total_hh_propios = Decimal("0.00")
+    
+    for item in qs_hh_propios:
+        prefijo = (item.codigo_servicio or "")[:2]
+        cant_grupo = Decimal(str(cantidades_servicios.get(prefijo, 1) or 1))
+        
+        costo_hh_propios += (item.costo_total or Decimal("0.00")) * cant_grupo
+        total_hh_propios += (item.cotizado_total or Decimal("0.00")) * cant_grupo
+        
     ganancia_hh_propios = total_hh_propios - costo_hh_propios
 
     # ==========================================================
-    # HH OTRAS AREAS (MOI → cog ???4, área distinta)
+    # COSTO SERVICIOS / SUBCONTRATOS (Tipo Gasto Servicios/Subcontratos)
     # ==========================================================
-    qs_otras = CotiServicios.objects.filter(
-        num_reg=num_reg,
-        cog__regex=r"^\d{3}4",
-        nig=2
-    ).exclude(tpr=area_cotizacion)
-
-    total_hh_otras = qs_otras.aggregate(
-        total=Coalesce(
-            Sum("tot"), 
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2)
-        )
-    )["total"]
-
-    costo_hh_otras = qs_otras.aggregate(
-        costo=Coalesce(
-            Sum("toc"), 
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2)
-        )
-    )["costo"]
-
-    ganancia_hh_otras = total_hh_otras - costo_hh_otras
-
-    # ==========================================================
-    # COSTO SERVICIOS (05%)
-    # ==========================================================
-    qs_base = CotiServicios.objects.filter(
-        num_reg=num_reg,
-        mov="05",
+    qs_servicios = CotizacionServicio.objects.filter(
+        id_registro_id=id_registro,
+        nivel=2,
+        id_tipo_gasto_id=4
     )
-
-    total_servicios = qs_base.filter(nig=1).aggregate(
-        total=Coalesce(
-            Sum("tot"),
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-    )["total"]
-
-    costo_servicios = qs_base.filter(nig=2).aggregate(
-        costo=Coalesce(
-            Sum("toc"),
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-    )["costo"]
-
+    
+    costo_servicios = Decimal("0.00")
+    total_servicios = Decimal("0.00")
+    
+    for item in qs_servicios:
+        prefijo = (item.codigo_servicio or "")[:2]
+        cant_grupo = Decimal(str(cantidades_servicios.get(prefijo, 1) or 1))
+        
+        costo_servicios += (item.costo_total or Decimal("0.00")) * cant_grupo
+        total_servicios += (item.cotizado_total or Decimal("0.00")) * cant_grupo
+        
+    # 4. Cálculo de la ganancia marginal del bloque
     ganancia_servicios = total_servicios - costo_servicios
 
     # ==========================================================
-    # GASTOS ENTREGA (00%)
+    # GASTOS ENTREGA / LOGÍSTICA (En pausa - Lógica por definir)
     # ==========================================================
-    qs_base = CotiServicios.objects.filter(
-        num_reg=num_reg,
-        mov="00",
+    # Se inicializa temporalmente en 0.00 a la espera de la implementación
+    # final de las reglas de negocio para este módulo.
+    costo_gastos_entrega = Decimal("0.00")
+    total_gastos_entrega = Decimal("0.00")
+    ganancia_gastos_entrega = Decimal("0.00")
+
+    # ==========================================================
+    # IMPREVISTOS
+    # ==========================================================
+    qs_imprevistos = CotizacionServicio.objects.filter(
+        id_registro_id=id_registro,
+        nivel=2,
+        id_tipo_gasto_id=5
     )
-
-    total_gastos_entrega = qs_base.filter(nig=1).aggregate(
-        total=Coalesce(
-            Sum("tot"),
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-    )["total"]
-
-    costo_gastos_entrega = qs_base.filter(nig=2).aggregate(
-        costo=Coalesce(
-            Sum("toc"),
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-    )["costo"]
-
-    ganancia_gastos_entrega = total_gastos_entrega - costo_gastos_entrega
-
-    # ==========================================================
-    # IMPREVISTOS (06%)
-    # ==========================================================
-    qs_base = CotiServicios.objects.filter(
-        num_reg=num_reg,
-        mov="06",
-    )
-
-    total_imprevistos = qs_base.filter(nig=1).aggregate(
-        total=Coalesce(
-            Sum("tot"),
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-    )["total"]
-
-    costo_imprevistos = qs_base.filter(nig=2).aggregate(
-        costo=Coalesce(
-            Sum("toc"),
-            Decimal("0.00"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-    )["costo"]
-
+    
+    costo_imprevistos = Decimal("0.00")
+    total_imprevistos = Decimal("0.00")
+    
+    for item in qs_imprevistos:
+        prefijo = (item.codigo_servicio or "")[:2]
+        cant_grupo = Decimal(str(cantidades_servicios.get(prefijo, 1) or 1))
+        
+        costo_imprevistos += (item.costo_total or Decimal("0.00")) * cant_grupo
+        total_imprevistos += (item.cotizado_total or Decimal("0.00")) * cant_grupo
+        
     ganancia_imprevistos = total_imprevistos - costo_imprevistos
 
     # ==========================================================
-    # DESCUENTO
+    # DESCUENTOS (Usa las nuevas propiedades de la Cabecera)
     # ==========================================================
-    cotizacion = DashboardCotizacion.objects.only("des_m").get(num_reg=num_reg)
-
-    costo_descuento = cotizacion.des_m or Decimal("0.00")
+    costo_descuento = Decimal("0.00")
+    total_descuento = Decimal("0.00")
+    
+    if cotizacion.descuento_aplica == 1:
+        costo_descuento = cotizacion.descuento_monto or Decimal("0.00")
+        total_descuento = -costo_descuento
 
     ganancia_descuento = Decimal("0.00")
 
-    total_descuento = -costo_descuento
-
-    print(f"DEBUG: Area Cotizacion es {area_cotizacion}")
-    print(f"DEBUG: Registros terminados en 6: {CotiServicios.objects.filter(num_reg=num_reg, cog__regex=r'^\d{3}6').count()}")
-    
     # ==========================================================
-    # TABLA FINAL
+    # CONSTRUCCIÓN DE LA TABLA FINAL
     # ==========================================================
     datos = [
-        {"concepto": "EQUIPOS", "costo": costo_equipos, "ganancia": ganancia_equipos, "total": costo_equipos + ganancia_equipos},
-        {"concepto": "MATERIALES", "costo": costo_materiales, "ganancia": ganancia_materiales, "total": costo_materiales + ganancia_materiales},
-        {"concepto": "HH PROPIOS", "costo": costo_hh_propios, "ganancia": ganancia_hh_propios, "total": costo_hh_propios + ganancia_hh_propios},
-        {"concepto": "COSTO SERVICIOS", "costo": costo_servicios, "ganancia": ganancia_servicios, "total": costo_servicios + ganancia_servicios},
-        {"concepto": "GASTOS ENTREGA", "costo": costo_gastos_entrega, "ganancia": ganancia_gastos_entrega, "total": costo_gastos_entrega + ganancia_gastos_entrega},
-        {"concepto": "IMPREVISTOS", "costo": costo_imprevistos, "ganancia": ganancia_imprevistos, "total": costo_imprevistos + ganancia_imprevistos},
+        {"concepto": "EQUIPOS", "costo": costo_equipos, "ganancia": ganancia_equipos, "total": total_equipos},
+        {"concepto": "MATERIALES", "costo": costo_materiales, "ganancia": ganancia_materiales, "total": total_materiales},
+        {"concepto": "HH PROPIOS", "costo": costo_hh_propios, "ganancia": ganancia_hh_propios, "total": total_hh_propios},
+        {"concepto": "COSTO SERVICIOS", "costo": costo_servicios, "ganancia": ganancia_servicios, "total": total_servicios},
+        {"concepto": "GASTOS ENTREGA", "costo": costo_gastos_entrega, "ganancia": ganancia_gastos_entrega, "total": total_gastos_entrega},
+        {"concepto": "IMPREVISTOS", "costo": costo_imprevistos, "ganancia": ganancia_imprevistos, "total": total_imprevistos},
         {"concepto": "DESCUENTO", "costo": costo_descuento, "ganancia": ganancia_descuento, "total": total_descuento},
     ]
 
-    total_final = sum(d["total"] for d in datos)
+    # Cálculos horizontales y verticales rápidos
+    total_costo_final = sum(d["costo"] for d in datos if d["concepto"] != "DESCUENTO") + costo_descuento
+    total_ganancia_final = sum(d["ganancia"] for d in datos)
+    total_venta_final = sum(d["total"] for d in datos)
 
     context = {
-        "num_reg": num_reg,
-        "titulo": "RESUMEN DE COSTO UTILIDAD",
-        "proyecto": num_reg,
+        "id_registro": id_registro,
+        "codigo_cotizacion": cotizacion.codigo,
+        "titulo": "RESUMEN DE COSTO UTILIDAD DETALLADO",
         "datos": datos,
-        "total_final": total_final,
+        "total_costo": total_costo_final,
+        "total_ganancia": total_ganancia_final,
+        "total_final": total_venta_final,
+        "moneda": "$" if cotizacion.tipo_moneda == "D" else "S/.",
     }
 
     return render(
@@ -4523,162 +4958,102 @@ def reporte_detallado_cotizacion(request, num_reg):
     )
 
 @csrf_exempt
-def reporte_detallado_excel(request, num_reg):
-    num_reg = str(num_reg)
+@xframe_options_exempt
+def reporte_resumen_cotizacion(request, id_registro):
+    # Conseguimos la cotización principal usando la nueva PK autoincremental
+    cotizacion = get_object_or_404(Cotizacion, id_registro=id_registro)
+    codigo_cotizacion = cotizacion.codigo or f"REG-{id_registro}"
+    moneda = "$" if cotizacion.tipo_moneda == "D" else "S/."
 
-    # === CALCULOS (igual que tu versión) ===
-    qs_total = CotiSuministros.objects.filter(num_reg=num_reg, cog__endswith="01", nig=0)
-    total_equipos = qs_total.aggregate(total=Coalesce(Sum(F("tot") * F("can")), Decimal("0")))["total"]
-    qs_costo = CotiSuministros.objects.filter(num_reg=num_reg, cog__endswith="01", nig=1)
-    costo_equipos = qs_costo.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_equipos = total_equipos - costo_equipos
+    # Obtener diccionarios de cantidades para Suministros
+    cantidades_suministros = dict(
+        CotizacionSuministro.objects.filter(
+            id_registro_id=id_registro,
+            nivel=0
+        ).values_list("codigo_grupo", "cantidad")
+    )
 
-    qs_total = CotiSuministros.objects.filter(num_reg=num_reg, cog__endswith="02", nig=0)
-    total_materiales = qs_total.aggregate(total=Coalesce(Sum(F("tot") * F("can")), Decimal("0")))["total"]
-    qs_costo = CotiSuministros.objects.filter(num_reg=num_reg, cog__endswith="02", nig=1)
-    costo_materiales = qs_costo.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_materiales = total_materiales - costo_materiales
+    # Para Servicios (prefijo de código_servicio -> cantidad_hombres)
+    servicios_nivel0 = CotizacionServicio.objects.filter(
+        id_registro_id=id_registro,
+        nivel=0
+    ).values_list("codigo_servicio", "cantidad_hombres")
+    
+    cantidades_servicios = {}
+    for cod, cant in servicios_nivel0:
+        if cod and len(cod) >= 2:
+            prefijo = cod[:2]
+            cantidades_servicios[prefijo] = cant or 1
 
-    cotizacion = DashboardCotizacion.objects.only("des_m", "area_codigo").get(num_reg=num_reg)
-    area_cotizacion = str(cotizacion.area_codigo)
+    # 1. EQUIPOS & MATERIALES (Mapeados desde CotizacionSuministro)
+    qs_suministros = CotizacionSuministro.objects.filter(id_registro_id=id_registro, nivel=1)
 
-    qs = CotiServicios.objects.filter(num_reg=num_reg, cog__regex=r"^\d{3}4", tpr=area_cotizacion, nig=2)
-    total_hh_propios = qs.aggregate(total=Coalesce(Sum("tot"), Decimal("0")))["total"]
-    costo_hh_propios = qs.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_hh_propios = total_hh_propios - costo_hh_propios
+    # Equipos (id_tipo_gasto_id = 1)
+    qs_equipos = qs_suministros.filter(id_tipo_gasto_id=1)
+    costo_equipos = Decimal("0.00")
+    venta_equipos = Decimal("0.00")
+    for item in qs_equipos:
+        cant_grupo = Decimal(str(cantidades_suministros.get(item.codigo_grupo, 1) or 1))
+        costo_equipos += (item.costo_total or Decimal("0.00")) * cant_grupo
+        venta_equipos += (item.venta_total or Decimal("0.00")) * cant_grupo
+    ganancia_equipos = venta_equipos - costo_equipos
 
-    qs_total_otras = CotiServicios.objects.filter(num_reg=num_reg, cog__regex=r"^\d{3}4", nig=0)
-    total_hh_otras = qs_total_otras.aggregate(total=Coalesce(Sum(F("tot") * F("can")), Decimal("0")))["total"]
-    qs_costo_otras = CotiServicios.objects.filter(num_reg=num_reg, cog__regex=r"^\d{3}4", nig=1)
-    costo_hh_otras = qs_costo_otras.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_hh_otras = total_hh_otras - costo_hh_otras
+    # Materiales (id_tipo_gasto_id = 2)
+    qs_materiales = qs_suministros.filter(id_tipo_gasto_id=2)
+    costo_materiales = Decimal("0.00")
+    venta_materiales = Decimal("0.00")
+    for item in qs_materiales:
+        cant_grupo = Decimal(str(cantidades_suministros.get(item.codigo_grupo, 1) or 1))
+        costo_materiales += (item.costo_total or Decimal("0.00")) * cant_grupo
+        venta_materiales += (item.venta_total or Decimal("0.00")) * cant_grupo
+    ganancia_materiales = venta_materiales - costo_materiales
 
-    qs_base = CotiServicios.objects.filter(num_reg=num_reg, mov="05")
-    total_servicios = qs_base.filter(nig=1).aggregate(total=Coalesce(Sum("tot"), Decimal("0")))["total"]
-    costo_servicios = qs_base.filter(nig=2).aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_servicios = total_servicios - costo_servicios
+    # 2. MANO DE OBRA (id_tipo_gasto_id = 3)
+    qs_hh = CotizacionServicio.objects.filter(id_registro_id=id_registro, nivel=2, id_tipo_gasto_id=3)
+    costo_hh_propios = Decimal("0.00")
+    venta_hh_propios = Decimal("0.00")
+    for item in qs_hh:
+        prefijo = (item.codigo_servicio or "")[:2]
+        cant_grupo = Decimal(str(cantidades_servicios.get(prefijo, 1) or 1))
+        costo_hh_propios += (item.costo_total or Decimal("0.00")) * cant_grupo
+        venta_hh_propios += (item.cotizado_total or Decimal("0.00")) * cant_grupo
+    ganancia_hh_propios = venta_hh_propios - costo_hh_propios
 
-    qs_base = CotiServicios.objects.filter(num_reg=num_reg, mov="00")
-    total_gastos_entrega = qs_base.filter(nig=1).aggregate(total=Coalesce(Sum("tot"), Decimal("0")))["total"]
-    costo_gastos_entrega = qs_base.filter(nig=2).aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_gastos_entrega = total_gastos_entrega - costo_gastos_entrega
+    # 3. GASTOS SERVICIO (id_tipo_gasto_id = 4)
+    qs_terceros = CotizacionServicio.objects.filter(id_registro_id=id_registro, nivel=2, id_tipo_gasto_id=4)
+    costo_servicios = Decimal("0.00")
+    venta_servicios = Decimal("0.00")
+    for item in qs_terceros:
+        prefijo = (item.codigo_servicio or "")[:2]
+        cant_grupo = Decimal(str(cantidades_servicios.get(prefijo, 1) or 1))
+        costo_servicios += (item.costo_total or Decimal("0.00")) * cant_grupo
+        venta_servicios += (item.cotizado_total or Decimal("0.00")) * cant_grupo
+    ganancia_servicios = venta_servicios - costo_servicios
 
-    qs_base = CotiServicios.objects.filter(num_reg=num_reg, mov="06")
-    total_imprevistos = qs_base.filter(nig=1).aggregate(total=Coalesce(Sum("tot"), Decimal("0")))["total"]
-    costo_imprevistos = qs_base.filter(nig=2).aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_imprevistos = total_imprevistos - costo_imprevistos
+    # 4. GASTOS DE ENTREGA / LOGÍSTICA (Temporalmente en 0.00)
+    costo_gastos_entrega = Decimal("0.00")
+    venta_gastos_entrega = Decimal("0.00")
+    ganancia_gastos_entrega = Decimal("0.00")
 
-    costo_descuento = cotizacion.des_m or Decimal("0.00")
-    ganancia_descuento = Decimal("0.00")
-    total_descuento = -costo_descuento
+    # 5. IMPREVISTOS / OTROS (id_tipo_gasto_id = 5)
+    qs_imprevistos = CotizacionServicio.objects.filter(id_registro_id=id_registro, nivel=2, id_tipo_gasto_id=5)
+    costo_imprevistos = Decimal("0.00")
+    venta_imprevistos = Decimal("0.00")
+    for item in qs_imprevistos:
+        prefijo = (item.codigo_servicio or "")[:2]
+        cant_grupo = Decimal(str(cantidades_servicios.get(prefijo, 1) or 1))
+        costo_imprevistos += (item.costo_total or Decimal("0.00")) * cant_grupo
+        venta_imprevistos += (item.cotizado_total or Decimal("0.00")) * cant_grupo
+    ganancia_imprevistos = venta_imprevistos - costo_imprevistos
 
-    datos = [
-        {"concepto": "EQUIPOS", "costo": costo_equipos, "ganancia": ganancia_equipos, "total": costo_equipos + ganancia_equipos},
-        {"concepto": "MATERIALES", "costo": costo_materiales, "ganancia": ganancia_materiales, "total": costo_materiales + ganancia_materiales},
-        {"concepto": "HH PROPIOS", "costo": costo_hh_propios, "ganancia": ganancia_hh_propios, "total": costo_hh_propios + ganancia_hh_propios},
-        {"concepto": "HH OTRAS AREAS", "costo": costo_hh_otras, "ganancia": ganancia_hh_otras, "total": costo_hh_otras + ganancia_hh_otras},
-        {"concepto": "COSTO SERVICIOS", "costo": costo_servicios, "ganancia": ganancia_servicios, "total": costo_servicios + ganancia_servicios},
-        {"concepto": "GASTOS ENTREGA", "costo": costo_gastos_entrega, "ganancia": ganancia_gastos_entrega, "total": costo_gastos_entrega + ganancia_gastos_entrega},
-        {"concepto": "IMPREVISTOS", "costo": costo_imprevistos, "ganancia": ganancia_imprevistos, "total": costo_imprevistos + ganancia_imprevistos},
-        {"concepto": "DESCUENTO", "costo": costo_descuento, "ganancia": ganancia_descuento, "total": total_descuento},
-    ]
-
-    # === GENERAR EXCEL CON DISEÑO ===
-    wb = Workbook()
-    ws = wb.active
-    ws.title = f"Detalle_{num_reg}"
-
-    # Cabecera
-    ws.append(["Concepto", "Costo", "Ganancia", "Total"])
-    header_fill = PatternFill("solid", fgColor="BDD7EE")
-    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="000000")
-        cell.alignment = Alignment(horizontal="center")
-        cell.fill = header_fill
-        cell.border = thin_border
-
-    # Filas de datos
-    for d in datos:
-        ws.append([d["concepto"], float(d["costo"]), float(d["ganancia"]), float(d["total"])])
-
-    for row in ws.iter_rows(min_row=2, min_col=1, max_col=4):
-        row[0].alignment = Alignment(horizontal="left")
-        for cell in row[1:]:
-            cell.alignment = Alignment(horizontal="right")
-        for cell in row:
-            cell.border = thin_border
-
-    # Autoajustar ancho de columnas
-    for col in ws.columns:
-        max_length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in col)
-        ws.column_dimensions[col[0].column_letter].width = max_length + 5
-
-    # Respuesta
-    response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    response['Content-Disposition'] = f'attachment; filename=Detalle_{num_reg}.xlsx'
-    wb.save(response)
-    return response
-
-@csrf_exempt
-def reporte_resumen_cotizacion(request, num_reg):
-    num_reg = str(num_reg)
-
-    # --------------------------
-    # REUTILIZAR CÁLCULOS DETALLE
-    # --------------------------
-    # Equipos
-    qs_total = CotiSuministros.objects.filter(num_reg=num_reg, cog__endswith="01", nig=0)
-    total_equipos = qs_total.aggregate(total=Coalesce(Sum(F("tot")*F("can")), Decimal("0")))["total"]
-    qs_costo = CotiSuministros.objects.filter(num_reg=num_reg, cog__endswith="01", nig=1)
-    costo_equipos = qs_costo.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_equipos = total_equipos - costo_equipos
-
-    # Materiales
-    qs_total = CotiSuministros.objects.filter(num_reg=num_reg, cog__endswith="02", nig=0)
-    total_materiales = qs_total.aggregate(total=Coalesce(Sum(F("tot")*F("can")), Decimal("0")))["total"]
-    qs_costo = CotiSuministros.objects.filter(num_reg=num_reg, cog__endswith="02", nig=1)
-    costo_materiales = qs_costo.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_materiales = total_materiales - costo_materiales
-
-    # Área
-    cotizacion = get_object_or_404(DashboardCotizacion, num_reg=num_reg)
-    area_cotizacion = str(cotizacion.area_codigo)
-
-    # HH propios
-    qs_hh_propios = CotiServicios.objects.filter(num_reg=num_reg, cog__regex=r"^\d{3}4", tpr=area_cotizacion, nig=2)
-    total_hh_propios = qs_hh_propios.aggregate(total=Coalesce(Sum("tot"), Decimal("0")))["total"]
-    costo_hh_propios = qs_hh_propios.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_hh_propios = total_hh_propios - costo_hh_propios
-
-    # HH otras áreas
-    qs_hh_otras = CotiServicios.objects.filter(num_reg=num_reg, cog__regex=r"^\d{3}4", nig=1)
-    costo_hh_otras = qs_hh_otras.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_hh_otras = CotiServicios.objects.filter(num_reg=num_reg, cog__regex=r"^\d{3}4", nig=0).aggregate(total=Coalesce(Sum(F("tot")*F("can")), Decimal("0")))["total"] - costo_hh_otras
-
-    # Costo servicios
-    qs_servicios = CotiServicios.objects.filter(num_reg=num_reg, mov="05")
-    costo_servicios = qs_servicios.filter(nig=2).aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_servicios = qs_servicios.filter(nig=1).aggregate(total=Coalesce(Sum("tot"), Decimal("0")))["total"] - costo_servicios
-
-    # Gastos entrega
-    qs_gastos_entrega = CotiServicios.objects.filter(num_reg=num_reg, mov="00", nig=2)
-    costo_gastos_entrega = qs_gastos_entrega.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_gastos_entrega = qs_gastos_entrega.aggregate(total=Coalesce(Sum("tot"), Decimal("0")))["total"] - costo_gastos_entrega
-
-    # Imprevistos
-    qs_imprevistos = CotiServicios.objects.filter(num_reg=num_reg, mov="06", nig=1)
-    costo_imprevistos = qs_imprevistos.aggregate(costo=Coalesce(Sum("toc"), Decimal("0")))["costo"]
-    ganancia_imprevistos = qs_imprevistos.aggregate(total=Coalesce(Sum("tot"), Decimal("0")))["total"] - costo_imprevistos
-
-    # --------------------------
-    # RESUMEN
-    # --------------------------
+    # -----------------------------------------------------------------
+    # CONSTRUCCIÓN DEL ESTRUCTURADO CONSOLIDADO (Costo vs Utilidad)
+    # -----------------------------------------------------------------
     resumen = [
-        {"concepto": "GASTOS", "importe": costo_equipos + costo_servicios},
-        {"concepto": "GANANCIAS", "importe": ganancia_equipos + ganancia_materiales + ganancia_hh_propios +
-                                         ganancia_hh_otras + ganancia_imprevistos + ganancia_gastos_entrega + ganancia_servicios},
+        {"concepto": "GASTOS", "importe": costo_equipos + costo_servicios + costo_materiales},
+        {"concepto": "GANANCIAS", "importe": (ganancia_equipos + ganancia_materiales + 
+                                             ganancia_hh_propios + ganancia_imprevistos + 
+                                             ganancia_gastos_entrega + ganancia_servicios)},
         {"concepto": "HH PROPIOS", "importe": costo_hh_propios},
         {"concepto": "IMPREVISTOS", "importe": costo_imprevistos},
         {"concepto": "GASTOS ENTREGA", "importe": costo_gastos_entrega},
@@ -4687,25 +5062,22 @@ def reporte_resumen_cotizacion(request, num_reg):
     total_final = sum(d["importe"] for d in resumen)
 
     context = {
-        "num_reg": num_reg,
-        "titulo": "RESUMEN DE COSTO UTILIDAD",
-        "proyecto": num_reg,
+        "id_registro": id_registro,
+        "codigo_cotizacion": codigo_cotizacion,
+        "titulo": "REPORTE RESUMEN",
         "resumen": resumen,
         "total_final": total_final,
+        "moneda": moneda,
     }
 
-    return render(
-        request,
-        "reportes/reporte_resumen_cotizacion.html",  # Plantilla específica para este resumen
-        context,
-    )
+    return render(request, "reportes/reporte_resumen_cotizacion.html", context)
 
 @csrf_exempt
 def reporte_venta_total_html(request, num_reg):
     num_reg = str(num_reg)
 
     suministros = (
-        CotiSuministros.objects
+        CotizacionSuministro.objects
         .filter(num_reg=num_reg)
         .order_by("cog", "nig", "num")
     )
@@ -4767,7 +5139,7 @@ def reporte_venta_parcial_html(request, num_reg):
     
     # Traemos los datos ordenados por grupo y número de ítem
     suministros = (
-        CotiSuministros.objects
+        CotizacionSuministro.objects
         .filter(num_reg=num_reg)
         .order_by("cog", "nig", "num")
     )
@@ -4817,19 +5189,6 @@ def reporte_venta_parcial_html(request, num_reg):
     }
     
     return render(request, "reportes/reporte_venta_parcial.html", context)
-
-#========================================================================================
-
-##============##
-## AÑO ACTUAL ##
-##============##
-@api_view(["GET"])
-def anno_actual(request):
-    try:
-        cia = cont_cias.objects.get(cod="001")
-        return Response({"anno": cia.anno})
-    except cont_cias.DoesNotExist:
-        return Response({"anno": timezone.now().year})
 
 #========================================================================================
 

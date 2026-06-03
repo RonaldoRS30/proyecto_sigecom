@@ -259,7 +259,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
     setError("");
 
     try {
-      const res = await api.get(`cotizaciones/modal/${num_reg}/`);
+      const res = await api.get(`cotizaciones/cotizacion_detalle/${num_reg}/`);
 
       setData(res.data);
 
@@ -1191,7 +1191,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
     if (!num_reg) return;
 
     try {
-      const res = await api.get(`cotizacion/${num_reg}/servicios/`);
+      const res = await api.get(`cotizaciones/lista_servicios/${num_reg}/`);
 
       const lista = Array.isArray(res.data) ? res.data : [];
 
@@ -1591,7 +1591,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
   const condicionesGenerales = useMutation({
     mutationFn: (texto) =>
       api.post(
-        `cotizaciones/${numReg}/condiciones-generales/`,
+        `cotizaciones/condiciones-generales/${numReg}/`,
         { condiciones: texto }
       ),
 
@@ -1617,7 +1617,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
     queryKey: ["condiciones-generales", numReg],
     queryFn: async () => {
       const res = await api.get(
-        `cotizaciones/${numReg}/condiciones-generales/`
+        `cotizaciones/condiciones-generales/${numReg}/`
       );
       return res.data.condiciones;
     },
@@ -1801,7 +1801,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
 
   const handleNuevaVersion = useMutation({
     mutationFn: () =>
-      api.post(`cotizaciones/${cotizacionVista}/nueva-version/`),
+      api.post(`cotizaciones/nueva-version/${cotizacionVista}/`),
 
     onSuccess: (res) => {
       const { num_reg, cotin } = res.data;
@@ -1850,7 +1850,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
       try {
         // Lanzamos ambas peticiones en paralelo
         const [resCotizacion, resOportunidad] = await Promise.all([
-          api.get(`cotizaciones/modal/${cotizacionVista}/`),
+          api.get(`cotizaciones/cotizacion_detalle/${cotizacionVista}/`),
           api.get(`oportunidades/modal/${cotizacionVista}/`).catch(err => {
             console.warn("⚠️ No se encontró registro de oportunidad para este ID, usando datos vacíos.");
             return { data: {} }; // Si falla la op, devolvemos objeto vacío para no romper el flujo
@@ -1921,7 +1921,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
 
   const enviarCotizacionAprobacion = useMutation({
     mutationFn: () =>
-      api.patch(`cotizaciones/${numReg}/enviar-aprobacion/`, {
+      api.patch(`cotizaciones//enviar-aprobacion/${numReg}/`, {
         estado_codigo: 3,
       }),
 
@@ -2143,7 +2143,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
 
       // Pago / Moneda / Totales (Pestaña DATOS)
       tot_c: Number(data.tot_c || 0),
-      fpago: data.fpago || "",
+      forma_pago: data.forma_pago || "",
       lugar: data.lugar || "",
       tmone: data.tmone || "D", // Dólares por defecto
       tcamb: Number(data.tcamb || 0),

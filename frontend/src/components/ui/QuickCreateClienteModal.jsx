@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { X, Save } from "lucide-react";
+import SelectField from "./SelectField";
 // Asumiendo que usas un componente Dialog de tu UI library o un div fixed centrado
 export default function QuickCreateClienteModal({ open, onClose, onSave }) {
   const [formData, setFormData] = useState({
@@ -31,11 +32,18 @@ export default function QuickCreateClienteModal({ open, onClose, onSave }) {
 
           <div className="col-span-1"><label className="text-[9px] font-bold text-slate-500 uppercase">Iniciales</label>
             <input className="w-full border rounded text-xs p-1.5 mt-0.5" value={formData.iniciales} onChange={e => setFormData({...formData, iniciales: e.target.value})} /></div>
-          <div className="col-span-1"><label className="text-[9px] font-bold text-slate-500 uppercase">Tipo</label>
-            <select className="w-full border rounded text-xs p-1.5 mt-0.5" value={formData.tipo} onChange={e => setFormData({...formData, tipo: e.target.value})}>
-                <option value="Cliente">Cliente</option>
-                <option value="Proveedor">Proveedor</option>
-            </select></div>
+          <div className="col-span-1">
+            <SelectField
+              label="Tipo"
+              value={formData.tipo}
+              onChange={e => setFormData({...formData, tipo: e.target.value})}
+              options={[
+                { id: "Cliente", nombre: "Cliente" },
+                { id: "Proveedor", nombre: "Proveedor" }
+              ]}
+              className="mt-0.5 [&_label]:text-[9px] [&_label]:font-bold [&_label]:text-slate-500 [&_label]:uppercase [&_label]:ml-0 [&_div]:py-1 [&_div]:rounded-lg [&_div]:px-2.5"
+            />
+          </div>
 
           <div className="col-span-2"><label className="text-[9px] font-bold text-slate-500 uppercase">Dirección</label>
             <input className="w-full border rounded text-xs p-1.5 mt-0.5" value={formData.direccion} onChange={e => setFormData({...formData, direccion: e.target.value})} /></div>

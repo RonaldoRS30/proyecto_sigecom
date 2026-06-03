@@ -51,7 +51,7 @@ export default function LoginPage() {
 
       // ✅ Pequeño retardo para asegurar sincronización antes de navegar
       // ✅ Recarga forzada del contexto tras guardar tokens
-      window.location.replace("/dashboard/aprobacion-cotizacion");
+      window.location.replace("/sigecom/comercial");
 
     } catch (error) {
       console.error("Error en login:", error);

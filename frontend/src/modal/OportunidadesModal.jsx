@@ -228,7 +228,7 @@ export default function OportunidadesModal({ open, onClose, cotizacion, modo, ti
     setError("");
 
     try {
-      const res = await api.get(`cotizaciones/modal/${num_reg}/`);
+      const res = await api.get(`cotizaciones/cotizacion_detalle/${num_reg}/`);
 
       setData(res.data);
 
@@ -987,7 +987,7 @@ export default function OportunidadesModal({ open, onClose, cotizacion, modo, ti
     if (!num_reg) return;
 
     try {
-      const res = await api.get(`cotizacion/${num_reg}/servicios/`);
+      const res = await api.get(`cotizaciones/lista_servicios/${num_reg}/`);
 
       const lista = Array.isArray(res.data) ? res.data : [];
 
@@ -1345,7 +1345,7 @@ export default function OportunidadesModal({ open, onClose, cotizacion, modo, ti
   const condicionesGenerales = useMutation({
     mutationFn: (texto) =>
       api.post(
-        `cotizaciones/${numReg}/condiciones-generales/`,
+        `cotizaciones/condiciones-generales/${numReg}/`,
         { condiciones: texto }
       ),
 
@@ -1371,7 +1371,7 @@ export default function OportunidadesModal({ open, onClose, cotizacion, modo, ti
     queryKey: ["condiciones-generales", numReg],
     queryFn: async () => {
       const res = await api.get(
-        `cotizaciones/${numReg}/condiciones-generales/`
+        `cotizaciones/condiciones-generales/${numReg}/`
       );
       return res.data.condiciones;
     },
@@ -1542,7 +1542,7 @@ export default function OportunidadesModal({ open, onClose, cotizacion, modo, ti
 
   const handleNuevaVersion = useMutation({
     mutationFn: () =>
-      api.post(`cotizaciones/${cotizacionVista}/nueva-version/`),
+      api.post(`cotizaciones/nueva-version/${cotizacionVista}/`),
 
     onSuccess: (res) => {
       const { num_reg, cotin } = res.data;
@@ -1616,7 +1616,7 @@ export default function OportunidadesModal({ open, onClose, cotizacion, modo, ti
 
   const enviarCotizacionAprobacion = useMutation({
     mutationFn: () =>
-      api.patch(`cotizaciones/${numReg}/enviar-aprobacion/`, {
+      api.patch(`cotizaciones//enviar-aprobacion/${numReg}/`, {
         estado_codigo: 3,
       }),
 

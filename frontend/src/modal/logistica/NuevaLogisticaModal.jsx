@@ -219,11 +219,17 @@ export default function NuevaLogisticaModal({ open, onClose, logistica, operacio
               <SelectField id="almacen" value={form.almacen || ""} onChange={handleInputChange} options={almacenesOptions} />
             </div>
             <div className="col-span-3 space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Moneda</label>
-              <select name="moneda" value={form.moneda || "Soles"} onChange={handleInputChange} className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2 bg-white">
-                <option value="Soles">Soles</option>
-                <option value="Dolares">Dólares</option>
-              </select>
+              <SelectField
+                label="Moneda"
+                name="moneda"
+                value={form.moneda || "Soles"}
+                onChange={handleInputChange}
+                options={[
+                  { id: "Soles", nombre: "Soles" },
+                  { id: "Dolares", nombre: "Dólares" }
+                ]}
+                className="[&_label]:text-[10px] [&_label]:font-bold [&_label]:text-slate-500 [&_label]:uppercase [&_label]:ml-0 [&_div]:py-1 [&_div]:rounded-lg [&_div]:px-2.5"
+              />
             </div>
             <div className="col-span-3 space-y-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">Referencia</label>

@@ -14,7 +14,7 @@ urlpatterns = [
     path('api/core/', include('core.urls')),
  
     # APIs de Negocio
-    path('api/', include('cotizaciones_api.urls')),
+    path('api/cotizaciones/', include('cotizaciones_api.urls')),
     path('api/', include('logistica_api.urls')),
 
     # Django admin
