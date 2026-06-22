@@ -115,6 +115,9 @@ class Cotizacion(models.Model):
     class Meta:
         managed = False # Cambiar a True si vas a migrar datos de la vieja a la nueva
         db_table = 'cotizaciones'
+        indexes = [
+            models.Index(fields=['id_cliente', 'id_tipo']),
+        ]
 
     def __str__(self):
         return f"Cotización {self.codigo} - {self.id_cliente}"
@@ -154,15 +157,15 @@ class CotizacionSuministro(models.Model):
 
     # ── CAMPOS DE GRUPO Y ESTRUCTURA ──
     codigo_grupo = models.IntegerField()
-    nombre_grupo = models.CharField(max_length=45, null=True, blank=True)
+    nombre_grupo = models.CharField(max_length=500, null=True, blank=True)
     nivel = models.IntegerField(null=True, blank=True) # 0=Nombre Grupo, 1=Items
     orden = models.IntegerField(default=0, null=True, blank=True)
     
     # ── INFORMACIÓN DEL ITEM ──
-    codigo_item = models.CharField(max_length=45)
-    descripcion = models.CharField(max_length=45)
-    observacion = models.CharField(max_length=45, null=True, blank=True)
-    proveedor = models.CharField(max_length=45, null=True, blank=True)
+    codigo_item = models.CharField(max_length=100)
+    descripcion = models.CharField(max_length=5000)
+    observacion = models.CharField(max_length=3000, null=True, blank=True)
+    proveedor = models.CharField(max_length=100, null=True, blank=True)
     tipo_unidad = models.CharField(max_length=45, null=True, blank=True)
     cantidad = models.IntegerField(null=True, blank=True)
     
@@ -228,7 +231,7 @@ class CotizacionServicio(models.Model):
     # Cálculos y Cantidades
     horas = models.IntegerField(null=True, blank=True)
     cantidad_hombres = models.IntegerField(null=True, blank=True)
-    costo_hombre_dia = models.IntegerField(null=True, blank=True)
+    costo_hombre_dia = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     cantidad_dias = models.IntegerField(null=True, blank=True)
     
     # Valores Monetarios (Costo)
@@ -402,7 +405,7 @@ class CotizacionApertura(models.Model):
     )
 
     # ── VALORES ECONÓMICOS Y DESGLOSE COMPRAS ──────────────────
-    total_order = models.DecimalField(max_digits=11, decimal_places=2, null=True, blank=True, db_column='total_order')
+    total_orden = models.DecimalField(max_digits=11, decimal_places=2, null=True, blank=True, db_column='total_orden')
     presupuesto = models.DecimalField(max_digits=11, decimal_places=2, null=True, blank=True, db_column='presupuesto')
     
     orden_compra_equipos = models.DecimalField(max_digits=11, decimal_places=2, null=True, blank=True, db_column='orden_compra_equipos')

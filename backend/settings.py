@@ -14,7 +14,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ------------
 SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-dev-key")
 DEBUG = True
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "192.168.1.14", "*"]
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "192.168.1.27", "*"]
 
 # ----------
 # Entorno
@@ -230,7 +230,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
-    "http://192.168.1.14:5173",
+    "http://192.168.1.27:5173",
 ]
 CSRF_COOKIE_SECURE = False
 SESSION_COOKIE_SECURE = False

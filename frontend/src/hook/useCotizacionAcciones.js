@@ -1,12 +1,24 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useCallback, useEffect } from 'react';
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import api from "@/services/api";
 
 export const useCotizacionAcciones = (numReg, onActionSuccess) => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Obtiene el prefijo de ruta plural correspondiente según el path actual
+  const getPluralPrefix = () => {
+    if (location.pathname.includes("/oportunidades")) {
+      return "/sigecom/comercial/oportunidades";
+    }
+    if (location.pathname.includes("/aperturas")) {
+      return "/sigecom/comercial/aperturas";
+    }
+    return "/sigecom/comercial/cotizaciones";
+  };
 
   // 1. Nueva Versión (Navega al nuevo registro creado)
   const crearNuevaVersion = useMutation({
@@ -15,13 +27,16 @@ export const useCotizacionAcciones = (numReg, onActionSuccess) => {
       const { id_registro_nuevo, codigo_nuevo } = res.data.data;
       toast.success(`Versión ${codigo_nuevo} creada`);
 
-      // Refresca la lista de aprobación para que aparezca la nueva versión
-      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"] });
+      // Refresca las listas de cotizaciones, oportunidades y aperturas
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["oportunidades"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["aperturas"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"], refetchType: "none" });
 
       if (onActionSuccess) onActionSuccess("nueva-version", id_registro_nuevo);
 
-      // Navega al detalle del nuevo registro generado
-      navigate(`/sigecom/comercial/${id_registro_nuevo}`);
+      // Navega al detalle del nuevo registro generado con la ruta plural correcta
+      navigate(`${getPluralPrefix()}/${id_registro_nuevo}`);
     },
     onError: () => toast.error("Error al crear nueva versión"),
   });
@@ -33,12 +48,16 @@ export const useCotizacionAcciones = (numReg, onActionSuccess) => {
       const { id_registro_nuevo } = res.data.data;
       toast.success("Copia creada correctamente");
 
-      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"] });
+      // Refresca las listas de cotizaciones, oportunidades y aperturas
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["oportunidades"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["aperturas"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"], refetchType: "none" });
 
       if (onActionSuccess) onActionSuccess("copiar", id_registro_nuevo);
 
-      // Navega a la copia recién creada
-      navigate(`/sigecom/comercial/${id_registro_nuevo}`);
+      // Navega a la copia recién creada con la ruta plural correcta
+      navigate(`${getPluralPrefix()}/${id_registro_nuevo}`);
     },
     onError: () => toast.error("Error al crear la copia"),
   });
@@ -48,7 +67,11 @@ export const useCotizacionAcciones = (numReg, onActionSuccess) => {
     mutationFn: () => api.delete(`cotizaciones/eliminar/${numReg}/`),
     onSuccess: () => {
       toast.success("Cotización eliminada correctamente");
-      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"] });
+      // Refresca las listas de cotizaciones, oportunidades y aperturas
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["oportunidades"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["aperturas"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"], refetchType: "none" });
 
       if (onActionSuccess) onActionSuccess("eliminar");
 
@@ -63,8 +86,12 @@ export const useCotizacionAcciones = (numReg, onActionSuccess) => {
     mutationFn: (payload) => api.post(`/cotizaciones/guardar/`, payload),
     onSuccess: () => {
       toast.success("Cotización guardada");
-      // Refresca solo el detalle actual
+      // Refresca el detalle actual y las listas globales para reflejar los cambios
       queryClient.invalidateQueries({ queryKey: ["cotizacion-detalle", numReg] });
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["oportunidades"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["aperturas"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"], refetchType: "none" });
       if (onActionSuccess) onActionSuccess("guardar");
     },
     onError: () => toast.error("Error al guardar cambios"),
@@ -87,9 +114,12 @@ export const useCotizacionAcciones = (numReg, onActionSuccess) => {
     },
     onSuccess: (responseData) => {
       toast.success(responseData.message || "Cotización enviada al cliente exitosamente");
-      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"] });
       queryClient.invalidateQueries({ queryKey: ["cotizacion", numReg] });
       queryClient.invalidateQueries({ queryKey: ["cotizacion-detalle", numReg] });
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["oportunidades"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["aperturas"], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones-aprobacion"], refetchType: "none" });
       
       if (onActionSuccess) onActionSuccess("enviar-aprobacion", responseData);
     },

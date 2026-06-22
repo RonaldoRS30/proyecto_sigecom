@@ -492,7 +492,7 @@ function RegistroItemModal({ open, onClose, onConfirm, item, num_reg, tipoVenta,
                   size="sm"
                   label="Costo Precio:"
                   name="costoPrecio"
-                  type="number"
+                  type="currency"
                   value={form.costoPrecio}
                   onChange={handleChange}
                 />
@@ -506,7 +506,7 @@ function RegistroItemModal({ open, onClose, onConfirm, item, num_reg, tipoVenta,
                       size="sm"
                       label="Costo Envío:"
                       name="costoEnvio"
-                      type="number"
+                      type="currency"
                       value={form.costoEnvio}
                       onChange={handleChange}
                       className={tipoVenta === "T" ? "bg-gray-100 font-semibold text-gray-500" : "bg-blue-50/50 font-semibold"}
@@ -537,7 +537,7 @@ function RegistroItemModal({ open, onClose, onConfirm, item, num_reg, tipoVenta,
                     inline size="sm"
                     label="Utilidad:"
                     name="utilidad"
-                    type="number"
+                    type="currency"
                     value={form.utilidad}
                     onChange={handleChange}
                   />
@@ -545,7 +545,7 @@ function RegistroItemModal({ open, onClose, onConfirm, item, num_reg, tipoVenta,
                     inline size="sm"
                     label="% Utilidad:"
                     name="porcentaje"
-                    type="number"
+                    type="currency"
                     value={form.porcentaje}
                     onChange={handleChange}
                   />
@@ -560,14 +560,14 @@ function RegistroItemModal({ open, onClose, onConfirm, item, num_reg, tipoVenta,
                 <span className="text-[11px] font-black text-[#0d767e] uppercase tracking-tight">Resumen de Venta</span>
               </div>
               <div className="space-y-1">
-                <InputField inline size="sm" label="Costo Total:" value={form.costoTotal} readOnly className="bg-transparent border-none text-[11px]" />
+                <InputField inline size="sm" type="currency" label="Costo Total:" value={form.costoTotal} readOnly className="bg-transparent border-none text-[11px]" />
                 {/* 💡 Solo aparece si hay logística de envío */}
                 {(tipoVenta === "T" || tipoVenta === "P") && (
-                  <InputField inline size="sm" label="Costo c/ Envio:" value={form.costoConEnvio} readOnly className="bg-transparent border-none text-[11px]" />
+                  <InputField inline size="sm" type="currency" label="Costo c/ Envio:" value={form.costoConEnvio} readOnly className="bg-transparent border-none text-[11px]" />
                 )}
-                <InputField inline size="sm" label="Precio Venta:" value={form.ventaPrecio} readOnly className="bg-transparent border-none text-[11px]" />
-                <InputField inline size="sm" label="Venta Total:" value={form.ventaTotal} readOnly className="bg-transparent border-none font-black text-[#0d767e] text-sm" />
-                <InputField inline size="sm" label="Utilidad Total:" value={form.utilidadTotal} readOnly className="bg-transparent border-none font-bold text-teal-700 text-[11px]" />
+                <InputField inline size="sm" type="currency" label="Precio Venta:" value={form.ventaPrecio} readOnly className="bg-transparent border-none text-[11px]" />
+                <InputField inline size="sm" type="currency" label="Venta Total:" value={form.ventaTotal} readOnly className="bg-transparent border-none font-black text-[#0d767e] text-sm" />
+                <InputField inline size="sm" type="currency" label="Utilidad Total:" value={form.utilidadTotal} readOnly className="bg-transparent border-none font-bold text-teal-700 text-[11px]" />
               </div>
             </div>
 

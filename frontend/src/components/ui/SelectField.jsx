@@ -12,19 +12,47 @@ export default function SelectField({
   error,
   className,
   disabled,
+  tabIndex,
+  children,
+  searchable = false,
+  dropdownClassName,
+  triggerClassName,
+  labelClassName,
   ...props
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const containerRef = useRef(null);
 
+  // Extract options from children if no options prop is provided
+  let finalOptions = options || [];
+  if (finalOptions.length === 0 && children) {
+    finalOptions = React.Children.map(children, (child) => {
+      if (!child || child.type !== "option") return null;
+      return {
+        value: child.props.value,
+        id: child.props.value,
+        label: child.props.children,
+        nombre: child.props.children,
+      };
+    }).filter(Boolean);
+  }
+
   // Find selected option
-  const selectedOption = options.find(
+  const selectedOption = finalOptions.find(
     (o) => String(o.id ?? o.value) === String(value)
   );
 
   const displayText = selectedOption
     ? selectedOption.nombre || selectedOption.label
     : "Seleccionar…";
+
+  // Reset search query on close
+  useEffect(() => {
+    if (!isOpen) {
+      setSearchQuery("");
+    }
+  }, [isOpen]);
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -54,6 +82,27 @@ export default function SelectField({
     }
   };
 
+  const handleKeyDown = (e) => {
+    if (disabled) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setIsOpen(!isOpen);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setIsOpen(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setIsOpen(false);
+    }
+  };
+
+  const filteredOptions = searchable && searchQuery.trim() !== ""
+    ? finalOptions.filter(o => 
+        String(o.nombre || o.label).toLowerCase().includes(searchQuery.toLowerCase()) ||
+        String(o.id ?? o.value).toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : finalOptions;
+
   return (
     <div
       ref={containerRef}
@@ -64,19 +113,22 @@ export default function SelectField({
       )}
     >
       {label && (
-        <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-2 block mb-0.5 shrink-0 select-none">
+        <label className={cn("text-[10px] font-black text-slate-600 uppercase tracking-wider ml-2 block mb-0.5 shrink-0 select-none", labelClassName)}>
           {label}
         </label>
       )}
 
       <div
         onClick={() => !disabled && setIsOpen(!isOpen)}
+        onKeyDown={handleKeyDown}
+        tabIndex={disabled ? -1 : (tabIndex !== undefined ? tabIndex : 0)}
         className={cn(
-          "group relative flex items-center px-4 py-2 rounded-full transition-all duration-200 border border-slate-100/50 shadow-sm cursor-pointer select-none",
-          "bg-slate-50/60 hover:bg-slate-100/40 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500/25",
+          "group relative flex items-center px-4 py-2 rounded-full transition-all duration-200 border border-slate-100/50 shadow-sm cursor-pointer select-none outline-none flex-1",
+          "bg-slate-50/60 hover:bg-slate-100/40 focus:bg-white focus:ring-2 focus:ring-teal-500/25 focus:border-teal-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500/25",
           isOpen ? "bg-white ring-2 ring-teal-500/25 border-teal-200" : "",
           error ? "bg-red-50/60 border-red-300" : "",
-          disabled && "opacity-50 cursor-not-allowed pointer-events-none"
+          disabled && "opacity-50 cursor-not-allowed pointer-events-none",
+          triggerClassName
         )}
       >
         {icon && (
@@ -103,13 +155,33 @@ export default function SelectField({
       </div>
 
       {isOpen && (
-        <div className="absolute top-[102%] left-0 w-full bg-white/95 backdrop-blur-md border border-slate-100 rounded-2xl shadow-xl z-[999] py-1.5 max-h-52 overflow-y-auto no-scrollbar animate-in fade-in slide-in-from-top-1 duration-150">
-          {options.length === 0 ? (
+        <div className={cn(
+          "absolute left-0 w-full min-w-max bg-white border border-slate-200/80 rounded-2xl shadow-2xl z-[999] py-1.5 max-h-52 overflow-y-auto no-scrollbar",
+          dropdownClassName?.includes("bottom-")
+            ? "bottom-[102%] animate-in fade-in slide-in-from-bottom-1 duration-150"
+            : "top-[102%] animate-in fade-in slide-in-from-top-1 duration-150",
+          dropdownClassName
+        )}>
+          {searchable && (
+            <div className="px-3 py-1 sticky top-0 bg-white/95 z-10 border-b border-slate-100 mb-1">
+              <input
+                type="text"
+                autoFocus
+                className="w-full text-[10.5px] border border-slate-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-teal-500 bg-white placeholder:text-slate-400 font-semibold"
+                placeholder="Buscar..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+            </div>
+          )}
+          {filteredOptions.length === 0 ? (
             <div className="px-4 py-2 text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">
               Sin opciones
             </div>
           ) : (
-            options.map((o, idx) => {
+            filteredOptions.map((o, idx) => {
               const optVal = o.id ?? o.value ?? "";
               const optLabel = String(o.nombre || o.label).toUpperCase();
               const isSelected = String(value) === String(optVal);

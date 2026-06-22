@@ -63,6 +63,7 @@ import ImportarXLS1Modal from "../dashboard/Suministros/ImportarXLS1Modal";
 import ImportarXLS2Modal from "../dashboard/Suministros/ImportarXLS2Modal";
 import { calcularItemSegunProveedor, resolverEndpointPorCodigo } from "../dashboard/Suministros/tables/tablaUtils";
 
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { crearCotizacion } from "@/api/cotizaciones";
 import { toast } from "react-toastify";
@@ -123,14 +124,16 @@ const getStatusColor = (code) => {
 };
 
 export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, tipo, dashboard, cotizaciones = [], esOportunidad }) {
+  const navigate = useNavigate();
 
   // ==========================
   // DATA INICIAL (LIMPIA)
   // ==========================
   const [data, setData] = useState({
     num_reg: "",
-    fecha: new Date().toISOString().split("T")[0],
-    estado_codigo: 2,
+    fecha: "",
+    f_visita: "",
+    estado_codigo: 11,
     tot_d: "D",
     tot_s: "D",
     tmone: "D",
@@ -143,10 +146,13 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
     mov3c: "",
     mailc: "",
   });
+  const [sugerenciasTiempos, setSugerenciasTiempos] = useState({ suministros: [], servicios: [], validez: [] });
   const [loading, setLoading] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [reporteMenuOpen, setReporteMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const defaultComercialRef = useRef(null);
+  const lastRequestedClienteIdRef = useRef(null);
 
   const updatePreviewCode = async (areaId, tipoId, clienteId) => {
     const targetId = cotizacion?.id_registro || 0;
@@ -181,6 +187,85 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
       });
     }
   }, [data?.area_codigo, data?.cotit, data?.id_cliente]);
+
+  // Cargar sugerencias de tiempos de entrega
+  useEffect(() => {
+    const fetchSugerencias = async () => {
+      try {
+        const { data: res } = await api.get("cotizaciones/tiempos-frecuentes/", {
+          params: {
+            id_cliente: data?.id_cliente || "",
+            id_tipo: data?.cotit || ""
+          }
+        });
+        if (res) {
+          setSugerenciasTiempos({
+            suministros: res.suministros || [],
+            servicios: res.servicios || [],
+            validez: res.validez || []
+          });
+
+          // Pre-populado inicial automático con la sugerencia más frecuente en caso de nueva cotización/oportunidad
+          if (tipo === "N") {
+            setData(prev => {
+              const updates = {};
+              
+              if (res.suministros?.length > 0) {
+                const topSuministro = res.suministros[0];
+                updates.plazo = topSuministro.cantidad;
+                let unit = topSuministro.unidad_frontend;
+                if (!unit) {
+                  unit = "D";
+                  if (topSuministro.unidad_codigo === "SE") unit = "S";
+                  else if (topSuministro.unidad_codigo === "ME") unit = "M";
+                }
+                updates.tot_d = unit;
+              } else {
+                updates.plazo = 0;
+                updates.tot_d = "D";
+              }
+
+              if (res.servicios?.length > 0) {
+                const topServicio = res.servicios[0];
+                updates.por_c = topServicio.cantidad;
+                let unit = topServicio.unidad_frontend;
+                if (!unit) {
+                  unit = "D";
+                  if (topServicio.unidad_codigo === "SE") unit = "S";
+                  else if (topServicio.unidad_codigo === "ME") unit = "M";
+                }
+                updates.tot_s = unit;
+              } else {
+                updates.por_c = 0;
+                updates.tot_s = "D";
+              }
+
+              if (res.validez?.length > 0) {
+                const topValidez = res.validez[0];
+                updates.valid = topValidez.cantidad;
+                let unit = topValidez.unidad_frontend;
+                if (!unit) {
+                  unit = "D";
+                  if (topValidez.unidad_codigo === "SE") unit = "S";
+                  else if (topValidez.unidad_codigo === "ME") unit = "M";
+                }
+                updates.acu_s = unit;
+              } else {
+                updates.valid = 0;
+                updates.acu_s = "D";
+              }
+
+              return { ...prev, ...updates };
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Error cargando sugerencias de tiempos:", err);
+      }
+    };
+
+    fetchSugerencias();
+  }, [data?.id_cliente, data?.cotit]);
 
   // Estados locales para entrada de plazos en texto libre
   const [suministrosTexto, setSuministrosTexto] = useState("");
@@ -365,20 +450,48 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
   // Estado dedicado para el num_reg de oportunidad
   const [nuevoNumOportunidad, setNuevoNumOportunidad] = useState("");
 
-  // Cuando abrimos el modal, inicializamos el estado
+  // Sincronización del estado al abrir/cerrar modal
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      // Limpiar inmediatamente al cerrar para evitar persistencia en la siguiente apertura
+      setClienteQuery("");
+      setClienteSelected(false);
+      setEncargadoQuery("");
+      setComercialQuery("");
+      setTecnicoQuery("");
+      setCondicionesHtml("");
+      setNuevoNumOportunidad("");
+      setSuministrosTexto("");
+      setServiciosTexto("");
+      setValidezTexto("");
+      setGruposSuministros({});
+      setGruposServicios({});
+      return;
+    }
 
     const inicializarModal = async () => {
       if (tipo === "N") {
         // Inicialización inmediata y limpia para nuevas cotizaciones
+        setClienteQuery("");
+        setClienteSelected(false);
+        setEncargadoQuery("");
+        setComercialQuery("");
+        setTecnicoQuery("");
+        setCondicionesHtml("");
+        setNuevoNumOportunidad("");
+        setSuministrosTexto("");
+        setServiciosTexto("");
+        setValidezTexto("");
+        setGruposSuministros({});
+        setGruposServicios({});
+
         setData({
           num_reg: "",
-          fecha: new Date().toISOString().split("T")[0],
+          fecha: "",
           cliente_codigo: "",
           nombr: "",
           referencia: "",
-          estado_codigo: 2,
+          estado_codigo: 11,
           tot_d: "D",
           tot_s: "D",
           tmone: "D",
@@ -393,6 +506,12 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
           suministros: {},
           servicios: {},
           tot_c: 0,
+          f_recp: new Date().toISOString().split("T")[0],
+          f_limite: "",
+          f_visita: "",
+          f_emi: "",
+          estado_op: "1",
+          coment: "",
         });
 
         try {
@@ -404,6 +523,18 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
 
           const usuario = usuarioRes.status === "fulfilled" ? usuarioRes.value.data : null;
           const numRegData = numRegRes.status === "fulfilled" ? numRegRes.value.data : null;
+
+          if (usuario) {
+            defaultComercialRef.current = {
+              codic: usuario.dni || "",
+              codco: usuario.dni || "",
+              nombc: usuario.nombre_completo || "",
+              telec: usuario.telefono || "",
+              mov1c: usuario.movil1 || "",
+              mov2c: usuario.movil2 || "",
+              mailc: usuario.email_usu || "",
+            };
+          }
 
           if (numRegData && numRegData.num_reg) {
             setNuevoNumOportunidad(numRegData.num_reg);
@@ -472,6 +603,14 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
             mov1t: cotizacion.tecnico_movil_corporativo,
             mov2t: cotizacion.tecnico_movil_personal,
             mailt: cotizacion.tecnico_correo,
+
+            // Campos de Oportunidad
+            f_recp: cotizacion.recepcion_solicitud ? cotizacion.recepcion_solicitud.split("T")[0] : "",
+            f_limite: cotizacion.fecha_limite ? cotizacion.fecha_limite.split("T")[0] : "",
+            f_emi: cotizacion.emision_cotizacion ? cotizacion.emision_cotizacion.split("T")[0] : "",
+            f_visita: cotizacion.visita_tecnica ? cotizacion.visita_tecnica.split(/[T ]/)[0] : "",
+            estado_op: cotizacion.estado_oportunidad ? String(cotizacion.estado_oportunidad) : "1",
+            coment: cotizacion.comentario || "",
           });
 
           if (cotizacion.comercial_nombre) {
@@ -516,6 +655,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
     mutationFn: crearCotizacion,
     onSuccess: (res) => {
       const cot = res?.cotizacion;
+      const targetNumReg = cot?.num_reg || data.num_reg;
 
       setData(prev => ({
         ...prev,
@@ -531,6 +671,12 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
       queryClient.invalidateQueries({ queryKey: ["revision-cotizaciones"] });
       queryClient.invalidateQueries({ queryKey: ["aprobacion-cotizaciones"] });
       queryClient.invalidateQueries({ queryKey: ["seguimiento-cotizaciones"] });
+
+      if (esNueva && targetNumReg) {
+        navigate(`/sigecom/comercial/oportunidades/${targetNumReg}`);
+      }
+
+      if (onClose) onClose();
     },
     onError: () => {
       toast.error("Error al guardar la cotización");
@@ -617,7 +763,6 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
   const areasOptions = [
     { id: "1", nombre: "Industria" },
     { id: "2", nombre: "Mineria" },
-    { id: "3", nombre: "Mantenimiento" },
     { id: "4", nombre: "Petroquimica" },
     { id: "8", nombre: "Seguridad de Maquinaria" },
   ];
@@ -663,10 +808,10 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
   ];
 
   const estadoOpOptions = [
-    { id: "0", nombre: "Pendiente" },
-    { id: "1", nombre: "No Cotizado" },
-    { id: "2", nombre: "Rechazado" },
-    { id: "3", nombre: "Cotizado" },
+    { id: "1", nombre: "Pendiente" },
+    { id: "2", nombre: "No Cotizado" },
+    { id: "3", nombre: "Rechazado" },
+    { id: "4", nombre: "Cotizado" },
   ];
 
   // =====================
@@ -698,6 +843,41 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
     });
   };
 
+  const handleKeyDownNavigation = (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+
+    const tabIndex = Number(e.target.getAttribute("tabindex"));
+    if (!tabIndex || tabIndex <= 0) return;
+
+    if (e.key === "ArrowRight") {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+        const isAtEnd = e.target.selectionStart === e.target.value.length;
+        if (!isAtEnd) return;
+      }
+      e.preventDefault();
+      const nextEl = document.querySelector(`[tabindex="${tabIndex + 1}"]`);
+      if (nextEl) {
+        nextEl.focus();
+        if (nextEl.tagName === "INPUT" && nextEl.select) {
+          nextEl.select();
+        }
+      }
+    } else if (e.key === "ArrowLeft") {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+        const isAtStart = e.target.selectionStart === 0;
+        if (!isAtStart) return;
+      }
+      e.preventDefault();
+      const prevEl = document.querySelector(`[tabindex="${tabIndex - 1}"]`);
+      if (prevEl) {
+        prevEl.focus();
+        if (prevEl.tagName === "INPUT" && prevEl.select) {
+          prevEl.select();
+        }
+      }
+    }
+  };
+
   // =====================
   // AUTOCOMPLETE FETCHERS & HANDLERS
   // =====================
@@ -720,12 +900,18 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
 
   const autocompletarTiemposDesdeUltima = async (clienteId, clienteCodigo) => {
     if (!clienteId) return;
+    lastRequestedClienteIdRef.current = clienteId;
     
     try {
       const token = localStorage.getItem("access_token");
       const { data: detalles } = await api.get(`cotizaciones/ultima_cotizacion_cliente/${clienteId}/`, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      
+      if (lastRequestedClienteIdRef.current !== clienteId) {
+        console.log("Discarded autocomplete response for client ID", clienteId, "because a newer request was initiated");
+        return;
+      }
       
       console.log("Detalles completos para autocompletar desde última cotización:", detalles);
       
@@ -738,86 +924,138 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
           return "D";
         };
 
-        const plazoVal = detalles.entrega_suministros !== undefined && detalles.entrega_suministros !== null ? Number(detalles.entrega_suministros) : 0;
-        const totD = getUnitCodeFromName(detalles.unidad_suministro_nombre);
-        const porC = detalles.entrega_servicios !== undefined && detalles.entrega_servicios !== null ? Number(detalles.entrega_servicios) : 0;
-        const totS = getUnitCodeFromName(detalles.unidad_servicio_nombre);
         const validVal = detalles.validez_oferta !== undefined && detalles.validez_oferta !== null ? Number(detalles.validez_oferta) : 0;
         const acuS = getUnitCodeFromName(detalles.unidad_validez_nombre);
 
         setData(prev => ({
           ...prev,
-          plazo: plazoVal,
-          tot_d: totD,
-          por_c: porC,
-          tot_s: totS,
           valid: validVal,
           acu_s: acuS,
           // Preservar fecha y referencia
           fecha: prev.fecha,
+          referencia: prev.referencia,
+          
+          // Preservar Representante
+          id_representante: prev.id_representante,
+          codir: prev.codir,
+          nombr: prev.nombr,
+          cargo: prev.cargo,
+          teler: prev.teler,
+          movir: prev.movir,
+          mailr: prev.mailr,
 
-          // Autocompletar otros campos útiles
-          forma_pago: detalles.forma_pago || prev.forma_pago,
-          lugar: detalles.lugar || prev.lugar,
-          cotit: detalles.id_tipo || prev.cotit,
-          area_codigo: detalles.id_area || prev.id_area || prev.area_codigo,
-          tipo_moneda: detalles.tipo_moneda || prev.tipo_moneda,
-          tipo_cambio: detalles.tipo_cambio || prev.tipo_cambio,
-          igv: detalles.igv || prev.igv,
-          prob: String(detalles.probabilidad ?? prev.prob ?? "0"),
-          tven: detalles.tipo_venta || prev.tven,
+          // Autocompletar otros campos útiles (fallback a vacío si no vienen)
+          forma_pago: detalles.forma_pago || "",
+          lugar: detalles.lugar || "",
+          cotit: detalles.id_tipo || null,
+          area_codigo: detalles.id_area || null,
+          tipo_moneda: detalles.tipo_moneda || "D",
+          tipo_cambio: detalles.tipo_cambio || "3.362",
+          igv: detalles.igv || "N",
+          prob: detalles.probabilidad !== undefined && detalles.probabilidad !== null ? String(detalles.probabilidad) : "0",
+          tven: detalles.tipo_venta || "1",
           des_a: detalles.descuento_aplica === 1 ? "S" : "N",
-          des_t: detalles.descuento_afecto || prev.des_t,
-          des_m: detalles.descuento_monto || prev.des_m,
-          des_p: detalles.descuento_porcentaje || prev.des_p,
+          des_t: detalles.descuento_afecto || "N",
+          des_m: detalles.descuento_monto || 0,
+          des_p: detalles.descuento_porcentaje || 0,
 
           // Responsable Comercial
-          codic: detalles.comercial_dni || prev.codic,
-          codco: detalles.comercial_dni || prev.codco,
-          nombc: detalles.comercial_nombre || prev.nombc,
-          telec: detalles.comercial_telefono || prev.telec,
-          mov1c: detalles.comercial_movil_corporativo || prev.mov1c,
-          mov2c: detalles.comercial_movil_personal || prev.mov2c,
-          mailc: detalles.comercial_correo || prev.mailc,
+          codic: detalles.comercial_dni || "",
+          codco: detalles.comercial_dni || "",
+          nombc: detalles.comercial_nombre || "",
+          telec: detalles.comercial_telefono || "",
+          mov1c: detalles.comercial_movil_corporativo || "",
+          mov2c: detalles.comercial_movil_personal || "",
+          mailc: detalles.comercial_correo || "",
 
           // Responsable Técnico
-          codit: detalles.tecnico_dni || prev.codit,
-          nombt: detalles.tecnico_nombre || prev.nombt,
-          telet: detalles.tecnico_telefono || prev.telet,
-          mov1t: detalles.tecnico_movil_corporativo || prev.mov1t,
-          mov2t: detalles.tecnico_movil_personal || prev.mov2t,
-          mailt: detalles.tecnico_correo || prev.mailt,
-
-          // Representante de contacto
-          id_representante: detalles.id_representante || prev.id_representante || null,
-          codir: detalles.id_representante ? String(detalles.id_representante) : prev.codir,
-          nombr: detalles.representante_nombre || prev.nombr,
-          cargo: detalles.representante_cargo || prev.cargo,
-          teler: detalles.representante_telefono || prev.teler,
-          movir: detalles.representante_movil || prev.movir,
-          mailr: detalles.representante_correo || prev.mailr,
+          codit: detalles.tecnico_dni || "",
+          nombt: detalles.tecnico_nombre || "",
+          telet: detalles.tecnico_telefono || "",
+          mov1t: detalles.tecnico_movil_corporativo || "",
+          mov2t: detalles.tecnico_movil_personal || "",
+          mailt: detalles.tecnico_correo || "",
         }));
 
         // Sincronizar las queries para que los inputs muestren los nombres correspondientes
-        if (detalles.comercial_nombre) {
-          setComercialQuery(detalles.comercial_nombre);
-        }
-        if (detalles.tecnico_nombre) {
-          setTecnicoQuery(detalles.tecnico_nombre);
-        }
-        if (detalles.representante_nombre) {
-          setEncargadoQuery(detalles.representante_nombre);
-        }
+        setComercialQuery(detalles.comercial_nombre || "");
+        setTecnicoQuery(detalles.tecnico_nombre || "");
 
         if (detalles.condiciones_generales) {
           setCondicionesHtml(detalles.condiciones_generales);
+        } else {
+          setCondicionesHtml("");
         }
 
         toast.info("Campos autocompletados desde la última cotización de este cliente.");
+      } else {
+        resetCamposAutocompletar();
       }
     } catch (err) {
       console.error("Error al obtener detalles de la última cotización para autocompletar:", err);
+      resetCamposAutocompletar();
     }
+  };
+
+  const resetCamposAutocompletar = () => {
+    const defCom = defaultComercialRef.current || {};
+    setData(prev => ({
+      ...prev,
+      plazo: 0,
+      tot_d: "D",
+      por_c: 0,
+      tot_s: "D",
+      valid: 0,
+      acu_s: "D",
+      // Preservar fecha y referencia
+      fecha: prev.fecha,
+      referencia: prev.referencia,
+
+      // Vaciar/Por defecto
+      forma_pago: "",
+      lugar: "",
+      cotit: null,
+      area_codigo: null,
+      tipo_moneda: "D",
+      tipo_cambio: "3.362",
+      igv: "N",
+      prob: "0",
+      tven: "1",
+      des_a: "N",
+      des_t: "N",
+      des_m: 0,
+      des_p: 0,
+
+      // Responsable Comercial (revertir al default actual)
+      codic: defCom.codic || "",
+      codco: defCom.codco || "",
+      nombc: defCom.nombc || "",
+      telec: defCom.telec || "",
+      mov1c: defCom.mov1c || "",
+      mov2c: defCom.mov2c || "",
+      mailc: defCom.mailc || "",
+
+      // Responsable Técnico
+      codit: "",
+      nombt: "",
+      telet: "",
+      mov1t: "",
+      mov2t: "",
+      mailt: "",
+
+      // Preservar Representante
+      id_representante: prev.id_representante,
+      codir: prev.codir,
+      nombr: prev.nombr,
+      cargo: prev.cargo,
+      teler: prev.teler,
+      movir: prev.movir,
+      mailr: prev.mailr,
+    }));
+
+    setComercialQuery(defCom.nombc || "");
+    setTecnicoQuery("");
+    setCondicionesHtml("");
   };
 
   const handleClienteSelect = (cliente) => {
@@ -1075,7 +1313,6 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
   // CAMPOS OBLIGATORIOS
   // ======================
   const CAMPOS_OBLIGATORIOS = [
-    { key: "fecha", label: "Fecha" },
     { key: "referencia", label: "Referencia" },
     { key: "cliente_codigo", label: "Para (Cliente)" },
     { key: "prob", label: "Probabilidad" },
@@ -1293,6 +1530,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
       refer: data.referencia || data.refer || "",
       f_recp: data.f_recp || data.fecha,
       f_limite: data.f_limite || null,
+      f_visita: data.f_visita || null,
       f_emi: data.f_emi || null,
       estado_op: Number(data.estado_op ?? 0), // 0: Pendiente por defecto
       coment: data.coment || "",
@@ -1302,13 +1540,13 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
       cotit: data.cotit || "",
       area: data.area_codigo || data.area || "",
       tven: data.tven || "1",
-      estad: data.estado_codigo || "2", // Estado de coti (2: Pendiente)
+      estad: data.estado_codigo || "11", // Estado de coti (11: Oportunidad)
       envio: Number(data.estado_op) === 3 ? 2 : 0, // 🚩 LA LÓGICA CLAVE
 
       // Cliente y Contacto
       empre: data.cliente_codigo || data.empre || "",
       nombr: data.nombr || "",
-      cargr: data.cargr || "",
+      cargr: data.cargo || "",
       codir: data.codir || "",
       teler: data.teler || "",
       movir: data.movir || "",
@@ -2417,10 +2655,13 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="w-full max-w-4xl max-h-[90vh] overflow-hidden bg-white rounded-[28px] shadow-2xl p-0 flex flex-col border-none">
+      <DialogContent 
+        onKeyDown={handleKeyDownNavigation}
+        className="w-[95vw] md:w-[92vw] lg:w-[90vw] xl:max-w-6xl h-fit max-h-[90vh] overflow-hidden bg-white rounded-[28px] shadow-2xl p-0 flex flex-col border-none"
+      >
 
         {/* ENCABEZADO PREMIUM INTERACTIVO */}
-        <div className="relative bg-gradient-to-r from-slate-50/60 to-white/30 backdrop-blur-md border-b border-slate-100/80 px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 font-sans">
+        <div className="relative z-20 bg-gradient-to-r from-slate-50/60 to-white/30 backdrop-blur-md border-b border-slate-100/80 px-4 pt-5 pb-3 sm:px-6 sm:pt-7 sm:pb-4 flex items-center justify-between gap-3 shrink-0 font-sans">
           <div className="flex items-center gap-4">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-teal-600 to-cyan-500 text-white shadow-lg shadow-teal-500/20 flex items-center justify-center shrink-0">
               <Icon name="layout-dashboard" className="h-5.5 w-5.5 text-white" />
@@ -2430,7 +2671,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
               <div className="flex items-center gap-3 mb-1">
                 <DialogTitle className="text-xl font-black text-gray-900 tracking-tight leading-none uppercase">
                   {esNueva 
-                    ? (data?.codigo ? `NUEVA COTIZACIÓN ${data.codigo}` : "NUEVA COTIZACIÓN") 
+                    ? (data?.codigo ? `${data.codigo}` : "NUEVA COTIZACIÓN") 
                     : `COTIZACIÓN ${data?.codigo || data?.numero || 'S/N'}`}
                 </DialogTitle>
               </div>
@@ -2442,6 +2683,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   value={clienteQuery}
                   initialId={data.id_cliente}
                   isReadOnly={isReadOnly}
+                  tabIndex={1}
                   onSelect={(cliente) => {
                     setData(prev => ({
                       ...prev,
@@ -2460,6 +2702,8 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     setEncargadoQuery("");
                     if (cliente.id_cliente) {
                       autocompletarTiemposDesdeUltima(cliente.id_cliente, cliente.ruc || cliente.codigo);
+                    } else {
+                      resetCamposAutocompletar();
                     }
                   }}
                 />
@@ -2470,6 +2714,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   clienteId={data.id_cliente}
                   initialId={data.codir}
                   isReadOnly={isReadOnly || !data.id_cliente}
+                  tabIndex={2}
                   onSelect={(enc) => {
                     setData(prev => ({
                       ...prev,
@@ -2492,7 +2737,9 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   onChange={(e) => handleFieldChange("area_codigo", e.target.value)}
                   options={areasOptions}
                   disabled={isReadOnly}
-                  className="w-auto shrink-0 [&_div]:px-2.5 [&_div]:py-1 [&_div]:rounded-xl [&_div]:border-none [&_div]:shadow-none [&_div]:bg-transparent hover:[&_div]:bg-gray-50 focus-within:[&_div]:bg-white"
+                  tabIndex={3}
+                  className="w-auto shrink-0"
+                  triggerClassName="!px-2.5 !py-1 !rounded-xl !border-none !shadow-none !bg-transparent hover:!bg-gray-50 focus-within:!bg-white"
                 />
 
                 {/* TIPO Y TIPO VENTA */}
@@ -2504,7 +2751,9 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     onChange={(e) => handleFieldChange("cotit", e.target.value)}
                     options={tipoOptions}
                     disabled={isReadOnly}
-                    className="w-auto shrink-0 [&_div]:px-2.5 [&_div]:py-1 [&_div]:rounded-xl [&_div]:border-none [&_div]:shadow-none [&_div]:bg-transparent hover:[&_div]:bg-gray-50 focus-within:[&_div]:bg-white"
+                    tabIndex={4}
+                    className="w-auto shrink-0"
+                    triggerClassName="!px-2.5 !py-1 !rounded-xl !border-none !shadow-none !bg-transparent hover:!bg-gray-50 focus-within:!bg-white"
                   />
 
                   {/* Divisor interno y Sub-tipo solo si es Venta */}
@@ -2517,7 +2766,9 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                         onChange={(e) => handleFieldChange("tven", e.target.value)}
                         options={tipoVentaOptions}
                         disabled={isReadOnly}
-                        className="w-auto shrink-0 [&_div]:px-2.5 [&_div]:py-1 [&_div]:rounded-xl [&_div]:border-none [&_div]:shadow-none [&_div]:bg-transparent hover:[&_div]:bg-gray-50 focus-within:[&_div]:bg-white"
+                        tabIndex={5}
+                        className="w-auto shrink-0"
+                        triggerClassName="!px-2.5 !py-1 !rounded-xl !border-none !shadow-none !bg-transparent hover:!bg-gray-50 focus-within:!bg-white"
                       />
                     </div>
                   )}
@@ -2526,179 +2777,157 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
             </div>
           </div>
 
-          {/* BOTÓN REPORTE (SOLO PARA EXISTENTES) */}
-          {!esNueva && (
-            <div className="flex items-center gap-2">
-              <div className="relative" ref={dropdownRef}>
-                <button
-                  onClick={() => setReporteMenuOpen(!reporteMenuOpen)}
-                  className="flex items-center px-4 py-2 bg-sky-50/70 border border-sky-200 rounded-xl text-[10px] font-black text-sky-700 hover:bg-sky-100/70 hover:border-sky-300 hover:shadow-sm transition-all h-[42px] uppercase group"
-                >
-                  <Icon name="file-text" className="h-3.5 w-3.5 mr-2 text-sky-600 group-hover:scale-110 transition-transform" />
-                  <span>Reporte</span>
-                  <Icon name="chevron-down" className={`ml-1.5 h-3 w-3 transition-transform duration-200 ${reporteMenuOpen ? "rotate-180" : ""}`} />
-                </button>
-
-                {reporteMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-50 py-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
-                    <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
-                      <span className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Opciones de Cliente</span>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        handleReporteDetallado();
-                        setReporteMenuOpen(false);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-                    >
-                      <div className="p-1 bg-indigo-50 rounded-lg text-indigo-600">
-                        <Icon name="list" className="h-3.5 w-3.5" />
-                      </div>
-                      <div>
-                        <p className="font-bold leading-none">Reporte Detallado</p>
-                        <span className="text-[9px] text-slate-400 font-medium">Desglose completo</span>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        handleReporteResumen();
-                        setReporteMenuOpen(false);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-                    >
-                      <div className="p-1 bg-amber-50 rounded-lg text-amber-600">
-                        <Icon name="file-text" className="h-3.5 w-3.5" />
-                      </div>
-                      <div>
-                        <p className="font-bold leading-none">Reporte Resumen</p>
-                        <span className="text-[9px] text-slate-400 font-medium">Totales generales</span>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        toast.success("Se harán reportes WORD y PDF (API pendiente)");
-                        setReporteMenuOpen(false);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
-                    >
-                      <div className="p-1 bg-slate-50 rounded-lg text-slate-400">
-                        <Icon name="download" className="h-3.5 w-3.5" />
-                      </div>
-                      <div>
-                        <p className="font-bold leading-none text-slate-600">Exportar Word / PDF</p>
-                        <span className="text-[9px] text-slate-400 font-medium">Formatos de descarga</span>
-                      </div>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* FORM CENTRAL - DISEÑO 3 COLUMNAS SIN SCROLL INNECESARIO */}
-        <div className="flex-initial overflow-y-auto p-6 space-y-5 bg-slate-50/10 no-scrollbar">
-          
-          {/* SECCIÓN OPORTUNIDADES */}
-          {esOportunidad && (
-            <div className="bg-white/80 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-6 space-y-4 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300">
-              <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1">
-                <div className="p-2 rounded-xl bg-teal-500/10 text-teal-600 flex items-center justify-center">
-                  <CalendarRange className="w-4 h-4" />
+        <div className="flex-1 overflow-y-auto px-4 pt-3 pb-3 sm:px-6 sm:pt-4 sm:pb-4 bg-slate-50/50 no-scrollbar">
+          {/* GRID TRIPLE COLUMNAR */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3 lg:gap-4 items-stretch">
+            
+            {/* 1. OPORTUNIDADES */}
+            {true && (
+              <div className="md:col-span-2 lg:col-span-4 bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-4 space-y-3 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300 relative z-10 focus-within:z-30">
+                <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1">
+                  <div className="p-2 rounded-xl bg-teal-500/10 text-teal-600 flex items-center justify-center">
+                    <CalendarRange className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Oportunidad</span>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block -mt-0.5">Cronología y Registro de Solicitud</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  <InputField
+                    inline
+                    size="sm" type="date"
+                    label="Recepción:"
+                    value={data.f_recp || ""}
+                    onChange={(e) => handleFieldChange("f_recp", e.target.value)}
+                    readOnly={isReadOnly}
+                    className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+                  />
+                  <InputField
+                    inline
+                    size="sm" type="date"
+                    label="Visita Técnica:"
+                    value={data.f_visita || ""}
+                    onChange={(e) => handleFieldChange("f_visita", e.target.value)}
+                    readOnly={isReadOnly}
+                    className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+                  />
+                  <InputField
+                    inline
+                    size="sm" type="date"
+                    label="Límite:*"
+                    className="border-red-100 bg-red-50/30 [&_input]:border-none [&_input]:bg-red-50/60 hover:[&_input]:bg-red-100/30 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-red-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-red-600 [&_label]:uppercase [&_label]:tracking-wider"
+                    value={data.f_limite || ""}
+                    onChange={(e) => handleFieldChange("f_limite", e.target.value)}
+                    readOnly={isReadOnly}
+                  />
+                  {!esNueva && (
+                    <InputField
+                      inline
+                      size="sm" type="date"
+                      label="Emisión Cotización:"
+                      value={data.f_emi || ""}
+                      onChange={(e) => handleFieldChange("f_emi", e.target.value)}
+                      readOnly={isReadOnly}
+                      className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+                    />
+                  )}
+                </div>
+                <div className="pt-1">
+                  <InputField
+                    inline
+                    as="textarea"
+                    rows={2}
+                    size="sm"
+                    label="Comentarios:"
+                    value={data.coment || ""}
+                    onChange={(e) => handleFieldChange("coment", e.target.value)}
+                    readOnly={isReadOnly}
+                    className="[&_textarea]:border-none [&_textarea]:bg-slate-50/60 hover:[&_textarea]:bg-slate-100/40 [&_textarea]:rounded-2xl [&_textarea]:px-3 focus-within:[&_textarea]:bg-white focus-within:[&_textarea]:ring-2 focus-within:[&_textarea]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* 6. FINANCIERO */}
+            <div className="md:col-span-2 lg:col-span-2 bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-4 space-y-3 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300 relative z-10 focus-within:z-30 flex flex-col">
+              <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1 shrink-0">
+                <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
+                  <Coins className="w-4 h-4" />
                 </div>
                 <div>
-                  <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Seguimiento de Oportunidad</span>
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block -mt-0.5">Control de Fechas</span>
+                  <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Financiero</span>
+                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block -mt-0.5">Moneda, Impuestos y Tipo de Cambio</span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <InputField
-                  size="sm" type="date"
-                  label="Recepción Solicitud:"
-                  value={data.f_recp || ""}
-                  onChange={(e) => handleFieldChange("f_recp", e.target.value)}
-                  readOnly={isReadOnly}
-                  className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider"
-                />
-                <InputField
-                  size="sm" type="date"
-                  label="Fecha Límite:*"
-                  className="border-red-100 bg-red-50/30 [&_input]:border-none [&_input]:bg-red-50/60 hover:[&_input]:bg-red-100/30 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-red-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-red-500 [&_label]:uppercase [&_label]:tracking-wider"
-                  value={data.f_limite || ""}
-                  onChange={(e) => handleFieldChange("f_limite", e.target.value)}
-                  readOnly={isReadOnly}
-                />
-                <InputField
-                  size="sm" type="date"
-                  label="Emisión Cotización:"
-                  value={data.f_emi || ""}
-                  onChange={(e) => handleFieldChange("f_emi", e.target.value)}
-                  readOnly={isReadOnly}
-                  className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider"
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                <SelectField
+                  inline
+                  size="sm"
+                  label="Moneda:"
+                  labelClassName="text-slate-600"
+                  value={data.tipo_moneda || (esNueva ? "D" : "")}
+                  onChange={(e) => handleFieldChange("tipo_moneda", e.target.value)}
+                  options={monedasOptions}
+                  disabled={isReadOnly}
                 />
                 <SelectField
+                  inline
                   size="sm"
-                  label="Estado Op.:"
-                  value={(data.estado_op !== undefined && data.estado_op !== null) ? data.estado_op : ""}
-                  options={estadoOpOptions}
-                  onChange={(e) => handleFieldChange("estado_op", e.target.value)}
+                  label="IGV:"
+                  labelClassName="text-slate-600"
+                  value={data.igv || "N"}
+                  onChange={(e) => handleFieldChange("igv", e.target.value)}
+                  options={igvOptions}
                   disabled={isReadOnly}
                 />
               </div>
-              <div className="pt-1">
-                <InputField
-                  inline size="sm"
-                  label="Comentarios:"
-                  value={data.coment || ""}
-                  onChange={(e) => handleFieldChange("coment", e.target.value)}
-                  readOnly={isReadOnly}
-                  className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider"
-                />
-              </div>
+
+              <InputField
+                inline
+                size="sm"
+                label="T.C.:"
+                value={data.tipo_cambio || (esNueva ? "3.425" : "")}
+                onChange={(e) => handleFieldChange("tipo_cambio", e.target.value)}
+                readOnly={isReadOnly}
+                className="[&_input]:border-none [&_input]:bg-slate-50/60 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+              />
             </div>
-          )}
 
-          {/* GRID TRIPLE COLUMNAR */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
-            
-            {/* COLUMNA 1: IDENTIFICACIÓN & CONDICIONES */}
-            <div className="space-y-5">
-              {/* IDENTIFICACIÓN */}
-              <div className="bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-5 space-y-4 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-1">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-teal-500/10 text-teal-600 flex items-center justify-center">
-                      <FileText className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Identificación</span>
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block -mt-0.5">Registro Base</span>
-                    </div>
+            {/* 2. IDENTIFICACIÓN */}
+            <div className="md:col-span-2 lg:col-span-4 bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-4 space-y-3 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300 relative z-10 focus-within:z-30">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-1">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-teal-500/10 text-teal-600 flex items-center justify-center">
+                    <FileText className="w-4 h-4" />
                   </div>
-                  {data?.numero?.trim() ? (
-                    <Check className="w-4 h-4 text-emerald-500" />
-                  ) : (
-                    <Loader className="w-4 h-4 text-slate-400 animate-spin" />
-                  )}
+                  <div>
+                    <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Identificación</span>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block -mt-0.5">Referencia y Probabilidad</span>
+                  </div>
                 </div>
-                
-                <InputField
-                  id="referencia"
-                  inline
-                  size="sm"
-                  label="Referencia:*"
-                  as="textarea"
-                  rows={2}
-                  value={data.referencia || ""}
-                  onChange={(e) => handleFieldChange("referencia", e.target.value)}
-                  readOnly={isReadOnly}
-                  className={`[&_textarea]:border-none [&_textarea]:bg-slate-50/60 hover:[&_textarea]:bg-slate-100/40 [&_textarea]:rounded-2xl [&_textarea]:px-3 focus-within:[&_textarea]:bg-white focus-within:[&_textarea]:ring-2 focus-within:[&_textarea]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider ${campoError === "referencia" ? "[&_textarea]:border [&_textarea]:border-red-400 [&_textarea]:bg-red-50/50" : ""}`}
-                />
+              </div>
+              
+              <InputField
+                id="referencia"
+                inline
+                size="sm"
+                label="Referencia:*"
+                as="textarea"
+                rows={2}
+                value={data.referencia || ""}
+                onChange={(e) => handleFieldChange("referencia", e.target.value)}
+                readOnly={isReadOnly}
+                tabIndex={6}
+                className={`[&_textarea]:border-none [&_textarea]:bg-slate-50/60 hover:[&_textarea]:bg-slate-100/40 [&_textarea]:rounded-2xl [&_textarea]:px-3 focus-within:[&_textarea]:bg-white focus-within:[&_textarea]:ring-2 focus-within:[&_textarea]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider ${campoError === "referencia" ? "[&_textarea]:border [&_textarea]:border-red-400 [&_textarea]:bg-red-50/50" : ""}`}
+              />
 
+              {!esNueva && (
                 <InputField
                   id="fecha"
                   inline
@@ -2708,356 +2937,300 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   value={data.fecha || ""}
                   onChange={(e) => handleFieldChange("fecha", e.target.value)}
                   readOnly={isReadOnly}
-                  className={`[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider ${campoError === "fecha" ? "[&_input]:border [&_input]:border-red-400 [&_input]:bg-red-50/50" : ""}`}
+                  tabIndex={7}
+                  className={`[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider ${campoError === "fecha" ? "[&_input]:border [&_input]:border-red-400 [&_input]:bg-red-50/50" : ""}`}
                 />
-                
+              )}
+              
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <SelectField
-                  id="probbabilidad"
+                  id="prob"
                   inline
                   size="sm"
                   label="Probabilidad:*"
+                  labelClassName="text-slate-600"
                   value={data.prob || ""}
-                  onChange={(e) => handleFieldChange("probbabilidad", e.target.value)}
+                  onChange={(e) => handleFieldChange("prob", e.target.value)}
                   options={probOptions}
                   disabled={isReadOnly}
-                  className={campoError === "probbabilidad" ? "border-red-400 bg-red-50/50" : ""}
-                />
-              </div>
-
-              {/* CONDICIONES */}
-              <div className="bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-5 space-y-4 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300">
-                <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1">
-                  <div className="p-2 rounded-xl bg-violet-500/10 text-violet-600 flex items-center justify-center">
-                    <ShieldCheck className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Condiciones</span>
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block -mt-0.5">Parámetros de Cotización</span>
-                  </div>
-                </div>
-
-                <SelectField
-                  size="sm"
-                  label="Forma Pago:"
-                  value={data.forma_pago || ""}
-                  onChange={(e) => handleFieldChange("forma_pago", e.target.value)}
-                  disabled={isReadOnly}
-                  options={formasPagoOptions}
-                />
-
-                <InputField
-                  inline
-                  size="sm"
-                  label="Lugar Entrega:"
-                  value={data.lugar || ""}
-                  onChange={(e) => handleFieldChange("lugar", e.target.value)}
-                  readOnly={isReadOnly}
-                  className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider"
+                  tabIndex={8}
+                  className={campoError === "prob" ? "border-red-400 bg-red-50/50" : ""}
                 />
               </div>
             </div>
 
-            {/* COLUMNA 2: TIEMPOS DE ENTREGA & CONTACTO */}
-            <div className="space-y-5">
-              {/* TIEMPOS */}
-              <div className="bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-5 space-y-4 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-1">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center">
-                      <Clock className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Tiempos de Entrega</span>
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block -mt-0.5">Plazos Estimados</span>
-                    </div>
+            {/* 5. TIEMPOS Y PLAZOS */}
+            <div className="md:col-span-2 lg:col-span-2 lg:row-span-2 bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-4 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300 relative z-10 focus-within:z-30 flex flex-col h-full">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Tiempos y Plazos</span>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block -mt-0.5">Plazos de Entrega y Validez de Oferta</span>
                   </div>
                 </div>
-
-                {!isReadOnly && (
-                  <div className="flex flex-wrap gap-1.5 items-center bg-slate-50/50 p-2 rounded-2xl border border-slate-100/50 mb-2">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider ml-1 shrink-0">Predeterminados:</span>
-                    {[
-                      { label: "3 días", val: 3, uni: "D" },
-                      { label: "1 Sem.", val: 1, uni: "S" },
-                      { label: "15 días", val: 15, uni: "D" },
-                      { label: "30 días", val: 30, uni: "D" }
-                    ].map((pill, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        className="text-[9px] px-2 py-0.5 bg-white hover:bg-teal-50 hover:text-teal-600 text-slate-600 rounded-full font-bold border border-slate-200/60 shadow-sm transition-colors uppercase tracking-tight"
-                        onClick={() => {
-                          let diasASumar = pill.val;
-                          if (pill.uni === "S") diasASumar = pill.val * 7;
-                          if (pill.uni === "M") diasASumar = pill.val * 30;
-
-                          const nuevaFecha = new Date();
-                          nuevaFecha.setDate(nuevaFecha.getDate() + diasASumar);
-
-                          setData(prev => ({
-                            ...prev,
-                            plazo: pill.val,
-                            tot_d: pill.uni,
-                            fecha: nuevaFecha.toISOString().split('T')[0]
-                          }));
-                          toast.success(`Plazo configurado en ${pill.label}`);
-                        }}
-                      >
-                        {pill.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <InputField
-                  inline
-                  size="sm"
-                  label="Suministros:"
-                  value={suministrosTexto}
-                  onChange={(e) => handleSuministrosTextoChange(e.target.value)}
-                  onFocus={() => setSuministrosFocused(true)}
-                  onBlur={handleSuministrosBlur}
-                  readOnly={isReadOnly}
-                  placeholder="ej. 15 días o 2 sem"
-                  className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider"
-                />
-
-                <InputField
-                  inline
-                  size="sm"
-                  label="Servicios:"
-                  value={serviciosTexto}
-                  onChange={(e) => handleServiciosTextoChange(e.target.value)}
-                  onFocus={() => setServiciosFocused(true)}
-                  onBlur={handleServiciosBlur}
-                  readOnly={isReadOnly}
-                  placeholder="ej. 7 días o 1 sem"
-                  className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider"
-                />
-
-                <InputField
-                  inline
-                  size="sm"
-                  label="Validez Oferta:"
-                  value={validezTexto}
-                  onChange={(e) => handleValidezTextoChange(e.target.value)}
-                  onFocus={() => setValidezFocused(true)}
-                  onBlur={handleValidezBlur}
-                  readOnly={isReadOnly}
-                  placeholder="ej. 30 días o 1 mes"
-                  className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider"
-                />
               </div>
 
-              {/* CONTACTO REPRESENTANTE */}
-              {data.nombr ? (
-                <div className="bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-5 space-y-4 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300 animate-in fade-in duration-200">
-                  <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1">
-                    <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-600 flex items-center justify-center">
-                      <UserCheck className="w-4 h-4" />
+              <div className="space-y-4 mt-3">
+                <div className="space-y-1">
+                  <InputField
+                    inline
+                    size="sm"
+                    label="Suministros:"
+                    value={suministrosTexto}
+                    onChange={(e) => handleSuministrosTextoChange(e.target.value)}
+                    onFocus={() => setSuministrosFocused(true)}
+                    onBlur={handleSuministrosBlur}
+                    readOnly={isReadOnly}
+                    placeholder="ej. 15 días o 2 sem"
+                    className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+                  />
+                  {!isReadOnly && sugerenciasTiempos.suministros?.length > 0 && (
+                    <div className="pl-24 flex flex-wrap gap-1.5 -mt-1 pb-1">
+                      {sugerenciasTiempos.suministros.map((sug, idx) => {
+                        const isActive = suministrosTexto?.trim().toLowerCase() === sug.formateado?.trim().toLowerCase();
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleSuministrosTextoChange(sug.formateado)}
+                            className={`px-2 py-0.5 text-[9px] font-bold rounded-full transition-all cursor-pointer shadow-sm ${
+                              isActive
+                                ? "bg-indigo-600 text-white border border-indigo-600"
+                                : "bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-100/30"
+                            }`}
+                          >
+                            {sug.formateado}
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div>
-                      <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Contacto</span>
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block -mt-0.5">Representante de Cliente</span>
-                    </div>
-                  </div>
-                  
-                  <div className="text-[11px] text-slate-600 space-y-2 bg-gradient-to-br from-teal-50/40 via-cyan-50/20 to-white border border-teal-100/50 rounded-2xl p-4 shadow-sm border-l-4 border-l-teal-500">
-                    <div className="flex justify-between border-b border-slate-100 pb-1.5 mb-1.5">
-                      <span className="font-black text-slate-700 uppercase text-[9.5px] tracking-wider truncate max-w-[150px]">
-                        {data.nombr}
-                      </span>
-                      <span className="text-[8.5px] font-black text-teal-700 bg-teal-50 border border-teal-100/50 px-2 py-0.5 rounded-full uppercase tracking-tighter shrink-0">
-                        Representante
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <span className="font-bold text-slate-400 uppercase text-[9px] block mb-0.5">Cargo</span>
-                        <span className="text-slate-700 font-bold text-xs truncate block">{data.cargo || "---"}</span>
-                      </div>
-                      <div>
-                        <span className="font-bold text-slate-400 uppercase text-[9px] block mb-0.5">Móvil</span>
-                        <span className="text-slate-700 font-bold text-xs flex items-center gap-1">
-                          <Phone className="w-3.5 h-3.5 text-teal-500 shrink-0" />
-                          <span className="truncate">{data.movir || data.teler || "---"}</span>
-                        </span>
-                      </div>
-                    </div>
-                    <div>
-                      <span className="font-bold text-slate-400 uppercase text-[9px] block mb-0.5">Correo Electrónico</span>
-                      <span className="text-slate-700 font-bold text-xs truncate flex items-center gap-1">
-                        <Mail className="w-3.5 h-3.5 text-teal-500 shrink-0" />
-                        <span className="truncate">{data.mailr || "---"}</span>
-                      </span>
-                    </div>
-                  </div>
+                  )}
                 </div>
-              ) : null}
+
+                <div className="space-y-1">
+                  <InputField
+                    inline
+                    size="sm"
+                    label="Servicios:"
+                    value={serviciosTexto}
+                    onChange={(e) => handleServiciosTextoChange(e.target.value)}
+                    onFocus={() => setServiciosFocused(true)}
+                    onBlur={handleServiciosBlur}
+                    readOnly={isReadOnly}
+                    placeholder="ej. 7 días o 1 sem"
+                    className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+                  />
+                  {!isReadOnly && sugerenciasTiempos.servicios?.length > 0 && (
+                    <div className="pl-24 flex flex-wrap gap-1.5 -mt-1 pb-1">
+                      {sugerenciasTiempos.servicios.map((sug, idx) => {
+                        const isActive = serviciosTexto?.trim().toLowerCase() === sug.formateado?.trim().toLowerCase();
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleServiciosTextoChange(sug.formateado)}
+                            className={`px-2 py-0.5 text-[9px] font-bold rounded-full transition-all cursor-pointer shadow-sm ${
+                              isActive
+                                ? "bg-indigo-600 text-white border border-indigo-600"
+                                : "bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-100/30"
+                            }`}
+                          >
+                            {sug.formateado}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <InputField
+                    inline
+                    size="sm"
+                    label="Validez Oferta:"
+                    value={validezTexto}
+                    onChange={(e) => handleValidezTextoChange(e.target.value)}
+                    onFocus={() => setValidezFocused(true)}
+                    onBlur={handleValidezBlur}
+                    readOnly={isReadOnly}
+                    placeholder="ej. 30 días o 1 mes"
+                    className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+                  />
+                  {!isReadOnly && sugerenciasTiempos.validez?.length > 0 && (
+                    <div className="pl-24 flex flex-wrap gap-1.5 -mt-1 pb-1">
+                      {sugerenciasTiempos.validez.map((sug, idx) => {
+                        const isActive = validezTexto?.trim().toLowerCase() === sug.formateado?.trim().toLowerCase();
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleValidezTextoChange(sug.formateado)}
+                            className={`px-2 py-0.5 text-[9px] font-bold rounded-full transition-all cursor-pointer shadow-sm ${
+                              isActive
+                                ? "bg-indigo-600 text-white border border-indigo-600"
+                                : "bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-100/30"
+                            }`}
+                          >
+                            {sug.formateado}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* COLUMNA 3: FINANCIERO & RESPONSABLES */}
-            <div className="space-y-5">
-              {/* FINANCIERO */}
-              <div className="bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-5 space-y-4 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300">
-                <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1">
-                  <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
-                    <Coins className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Financiero</span>
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block -mt-0.5">Moneda e Impuestos</span>
-                  </div>
+            {/* 4. CONDICIONES */}
+            <div className="md:col-span-1 lg:col-span-2 bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-4 space-y-3 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300 relative z-10 focus-within:z-30">
+              <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1">
+                <div className="p-2 rounded-xl bg-violet-500/10 text-violet-600 flex items-center justify-center">
+                  <ShieldCheck className="w-4 h-4" />
                 </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <SelectField
-                    size="sm"
-                    label="Moneda:"
-                    value={data.tipo_moneda || (esNueva ? "D" : "")}
-                    onChange={(e) => handleFieldChange("tipo_moneda", e.target.value)}
-                    options={monedasOptions}
-                    disabled={isReadOnly}
-                  />
-                  <SelectField
-                    size="sm"
-                    label="IGV:"
-                    value={data.igv || "N"}
-                    onChange={(e) => handleFieldChange("igv", e.target.value)}
-                    options={igvOptions}
-                    disabled={isReadOnly}
-                  />
+                <div>
+                  <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Condiciones</span>
+                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block -mt-0.5">Forma de Pago y Punto de Entrega</span>
                 </div>
-
-                <InputField
-                  inline
-                  size="sm"
-                  label="T.C.:"
-                  value={data.tipo_cambio || (esNueva ? "3.425" : "")}
-                  onChange={(e) => handleFieldChange("tipo_cambio", e.target.value)}
-                  readOnly={isReadOnly}
-                  className="[&_input]:border-none [&_input]:bg-slate-50/60 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-400 [&_label]:uppercase [&_label]:tracking-wider"
-                />
               </div>
 
-              {/* RESPONSABLES */}
-              <div className="bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-5 space-y-4 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300">
-                <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1">
-                  <div className="p-2 rounded-xl bg-fuchsia-500/10 text-fuchsia-600 flex items-center justify-center">
-                    <UserPlus className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Responsables</span>
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block -mt-0.5">Asignación Interna</span>
-                  </div>
+              <SelectField
+                inline
+                size="sm"
+                label="Forma Pago:"
+                labelClassName="text-slate-600"
+                dropdownClassName="bottom-[102%] top-auto animate-in fade-in slide-in-from-bottom-1"
+                value={data.forma_pago || ""}
+                onChange={(e) => handleFieldChange("forma_pago", e.target.value)}
+                disabled={isReadOnly}
+                options={formasPagoOptions}
+              />
+
+              <InputField
+                inline
+                size="sm"
+                label="Lugar Entrega:"
+                value={data.lugar || ""}
+                onChange={(e) => handleFieldChange("lugar", e.target.value)}
+                readOnly={isReadOnly}
+                className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
+              />
+            </div>
+
+            {/* 3. RESPONSABLES */}
+            <div className="md:col-span-1 lg:col-span-2 bg-white/90 backdrop-blur-md rounded-3xl border border-slate-100/50 shadow-md shadow-slate-100/40 p-4 space-y-3 hover:shadow-lg hover:shadow-slate-100/50 transition-all duration-300 relative z-10 focus-within:z-30">
+              <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3 mb-1">
+                <div className="p-2 rounded-xl bg-fuchsia-500/10 text-fuchsia-600 flex items-center justify-center">
+                  <UserPlus className="w-4 h-4" />
                 </div>
+                <div>
+                  <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest block">Responsables</span>
+                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block -mt-0.5">Asignación de Comercial y Técnico</span>
+                </div>
+              </div>
 
-                {/* COMERCIAL */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Comercial:</span>
+              {/* COMERCIAL */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider w-22 shrink-0">Comercial:</span>
+
+                <div className="relative flex-1" ref={comercialRef}>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      value={comercialQuery}
+                      disabled={isReadOnly}
+                      placeholder="Buscar comercial..."
+                      onFocus={() => {
+                        setComercialFocused(true);
+                        fetchComercialInline("");
+                        setShowComercialDropdown(true);
+                      }}
+                      onChange={(e) => {
+                        setComercialQuery(e.target.value);
+                        if (!e.target.value) {
+                          setData(prev => ({ ...prev, nombc: "", codic: "", codco: "", telec: "", mov1c: "", mov2c: "", mailc: "" }));
+                        }
+                      }}
+                      className="w-full pl-9 pr-3 py-1.5 border-none rounded-full text-xs font-bold text-slate-700 bg-slate-50/60 outline-none focus:ring-2 focus:ring-teal-500/25 transition-all"
+                    />
                   </div>
 
-                  <div className="relative" ref={comercialRef}>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                      <input
-                        value={comercialQuery}
-                        disabled={isReadOnly}
-                        placeholder="Buscar comercial..."
-                        onFocus={() => {
-                          setComercialFocused(true);
-                          fetchComercialInline("");
-                          setShowComercialDropdown(true);
-                        }}
-                        onChange={(e) => {
-                          setComercialQuery(e.target.value);
-                          if (!e.target.value) {
-                            setData(prev => ({ ...prev, nombc: "", codic: "", codco: "", telec: "", mov1c: "", mov2c: "", mailc: "" }));
-                          }
-                        }}
-                        className="w-full pl-9 pr-3 py-1.5 border-none rounded-full text-xs font-bold text-slate-700 bg-slate-50/60 outline-none focus:ring-2 focus:ring-teal-500/25 transition-all"
-                      />
-                    </div>
-
-                    {/* DROPDOWN COMERCIAL */}
-                    {showComercialDropdown && (
-                      <div className="absolute top-full left-0 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-y-auto">
-                        {comercialLoading ? (
-                          <div className="p-3 text-xs text-center text-slate-400">Buscando...</div>
-                        ) : (
-                          comercialResults.map((c, i) => (
-                            <div
-                              key={i}
-                              onMouseDown={() => handleComercialSelect(c)}
-                              className={`px-3 py-2 text-xs cursor-pointer border-b border-slate-50 last:border-0 transition-colors
-                                ${highlightComercialIndex === i ? "bg-teal-600 text-white" : "hover:bg-teal-50 text-slate-700"}`}
-                            >
-                              <div className="font-bold text-[11px]">{c.nombre_completo}</div>
-                              <div className={`text-[9px] ${highlightComercialIndex === i ? "text-teal-100" : "text-slate-400"} mt-0.5`}>
-                                {c.mail_usu}
-                              </div>
+                  {/* DROPDOWN COMERCIAL */}
+                  {showComercialDropdown && (
+                    <div className="absolute bottom-full left-0 mb-1 w-full bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-y-auto">
+                      {comercialLoading ? (
+                        <div className="p-3 text-xs text-center text-slate-400">Buscando...</div>
+                      ) : (
+                        comercialResults.map((c, i) => (
+                          <div
+                            key={i}
+                            onMouseDown={() => handleComercialSelect(c)}
+                            className={`px-3 py-2 text-xs cursor-pointer border-b border-slate-50 last:border-0 transition-colors
+                              ${highlightComercialIndex === i ? "bg-teal-600 text-white" : "hover:bg-teal-50 text-slate-700"}`}
+                          >
+                            <div className="font-bold text-[11px]">{c.nombre_completo}</div>
+                            <div className={`text-[9px] ${highlightComercialIndex === i ? "text-teal-100" : "text-slate-400"} mt-0.5`}>
+                              {c.mail_usu}
                             </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* TÉCNICO */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Técnico:</span>
-                  </div>
-
-                  <div className="relative" ref={tecnicoRef}>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                      <input
-                        value={tecnicoQuery}
-                        disabled={isReadOnly}
-                        placeholder="Buscar técnico..."
-                        onFocus={() => {
-                          setTecnicoFocused(true);
-                          fetchTecnicoInline("");
-                          setShowTecnicoDropdown(true);
-                        }}
-                        onChange={(e) => {
-                          setTecnicoQuery(e.target.value);
-                          if (!e.target.value) {
-                            setData(prev => ({ ...prev, nombt: "", codit: "", telet: "", mov1t: "", mov2t: "", mailt: "" }));
-                          }
-                        }}
-                        className="w-full pl-9 pr-3 py-1.5 border-none rounded-full text-xs font-bold text-slate-700 bg-slate-50/60 outline-none focus:ring-2 focus:ring-teal-500/25 transition-all"
-                      />
+                          </div>
+                        ))
+                      )}
                     </div>
-
-                    {/* DROPDOWN TÉCNICO */}
-                    {showTecnicoDropdown && (
-                      <div className="absolute top-full left-0 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-y-auto">
-                        {tecnicoLoading ? (
-                          <div className="p-3 text-xs text-center text-slate-400">Buscando...</div>
-                        ) : (
-                          tecnicoResults.map((t, i) => (
-                            <div
-                              key={i}
-                              onMouseDown={() => handleTecnicoSelect(t)}
-                              className={`px-3 py-2 text-xs cursor-pointer border-b border-slate-50 last:border-0 transition-colors
-                                ${highlightTecnicoIndex === i ? "bg-teal-600 text-white" : "hover:bg-teal-50 text-slate-700"}`}
-                            >
-                              <div className="font-bold text-[11px]">{t.nombre_completo}</div>
-                              <div className={`text-[9px] ${highlightTecnicoIndex === i ? "text-teal-100" : "text-slate-400"} mt-0.5`}>
-                                {t.mail_usu}
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </div>
+              </div>
 
+              {/* TÉCNICO */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider w-22 shrink-0">Técnico:</span>
+
+                <div className="relative flex-1" ref={tecnicoRef}>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      value={tecnicoQuery}
+                      disabled={isReadOnly}
+                      placeholder="Buscar técnico..."
+                      onFocus={() => {
+                        setTecnicoFocused(true);
+                        fetchTecnicoInline("");
+                        setShowTecnicoDropdown(true);
+                      }}
+                      onChange={(e) => {
+                        setTecnicoQuery(e.target.value);
+                        if (!e.target.value) {
+                          setData(prev => ({ ...prev, nombt: "", codit: "", telet: "", mov1t: "", mov2t: "", mailt: "" }));
+                        }
+                      }}
+                      className="w-full pl-9 pr-3 py-1.5 border-none rounded-full text-xs font-bold text-slate-700 bg-slate-50/60 outline-none focus:ring-2 focus:ring-teal-500/25 transition-all"
+                    />
+                  </div>
+
+                  {/* DROPDOWN TÉCNICO */}
+                  {showTecnicoDropdown && (
+                    <div className="absolute bottom-full left-0 mb-1 w-full bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-y-auto">
+                      {tecnicoLoading ? (
+                        <div className="p-3 text-xs text-center text-slate-400">Buscando...</div>
+                      ) : (
+                        tecnicoResults.map((t, i) => (
+                          <div
+                            key={i}
+                            onMouseDown={() => handleTecnicoSelect(t)}
+                            className={`px-3 py-2 text-xs cursor-pointer border-b border-slate-50 last:border-0 transition-colors
+                              ${highlightTecnicoIndex === i ? "bg-teal-600 text-white" : "hover:bg-teal-50 text-slate-700"}`}
+                          >
+                            <div className="font-bold text-[11px]">{t.nombre_completo}</div>
+                            <div className={`text-[9px] ${highlightTecnicoIndex === i ? "text-teal-100" : "text-slate-400"} mt-0.5`}>
+                              {t.mail_usu}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -3084,11 +3257,10 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
               }
             }}
           />
-
         </div>
 
         {/* SECCIÓN DE ACCIONES (FOOTER) - SOLO SALIR Y CREAR */}
-        <div className="sticky bottom-0 bg-slate-50 border-t border-slate-100 px-6 py-3 flex justify-end items-center gap-3 shrink-0 z-10">
+        <div className="sticky bottom-0 bg-slate-50 border-t border-slate-100 px-4 py-2.5 sm:px-6 sm:py-3 flex justify-end items-center gap-3 shrink-0 z-10">
           {/* SALIR */}
           <Button
             variant="ghost"

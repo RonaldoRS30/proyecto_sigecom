@@ -1,6 +1,6 @@
 // frontend/src/App.jsx
 import React from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from "react-router-dom";
 import "@/styles/Home.css";
 import { ToastContainer } from "react-toastify";
 import 'react-toastify/dist/ReactToastify.css';
@@ -19,9 +19,9 @@ import GlobalNavbar from "@/dashboard/layout/GlobalNavbar.jsx";
 
 // DASHBOARDS DE PRUEBA PARA COTIZACIONES
 import CotizacionesHome from "./dashboard/comercial/Home/CotizacionesHome";
-import AprobacionCotizacion from "./dashboard/comercial/AprobacionCotizacion";
+import Comercial from "./dashboard/comercial/Comercial";
 import CotizacionDetallePage from "./dashboard/comercial/CotizacionDetallePage";
-import LogisticaDashboard from "./dashboard/logistica/LogisticaDashboard";
+
 
 // TABLAS
 import EstructuraComercial from "./dashboard/Tablas/EstructuraComercial/EstructuraComercial";
@@ -35,6 +35,12 @@ import CotizacionNuevaModal from "./modal/CotizacionNuevaModal";
 import { KeyboardProvider } from "@/context/KeyboardContext.jsx";
 import MockModulePage from "@/dashboard/layout/MockModulePage";
 import * as Icons from "lucide-react";
+
+// Redirecciona rutas singulares legacy a sus plurales unificados
+const RedirectToPlural = ({ type }) => {
+  const { numReg } = useParams();
+  return <Navigate to={`/sigecom/comercial/${type}/${numReg}`} replace />;
+};
 
 export default function App() {
   return (
@@ -63,17 +69,31 @@ export default function App() {
 
               {/* Módulo Comercial (Agrupado) */}
               <Route path="comercial">
-                {/* Listado principal: /sigecom/comercial */}
-                <Route index element={<AprobacionCotizacion />} /> 
+                {/* Listado principal: /sigecom/comercial (redirige al tab por defecto) */}
+                <Route index element={<Navigate to="cotizaciones" replace />} /> 
                 
-                {/* Detalle: /sigecom/comercial/2026000246 */}
+                {/* Pestañas individuales y detalles del módulo comercial con nombres unificados en plural */}
+                <Route path="oportunidades" element={<Comercial defaultTab="oportunidades" />} />
+                <Route path="oportunidades/:numReg" element={<CotizacionDetallePage esOportunidad />} />
+
+                <Route path="cotizaciones" element={<Comercial defaultTab="cotizaciones" />} />
+                <Route path="cotizaciones/:numReg" element={<CotizacionDetallePage />} />
+
+                <Route path="aperturas" element={<Comercial defaultTab="aperturas" />} />
+                <Route path="aperturas/:numReg" element={<CotizacionDetallePage forcingApertura />} />
+
+                <Route path="programacion" element={<Comercial defaultTab="programacion" />} />
+                
+                {/* Redirecciones de compatibilidad para URLs legacy en singular */}
+                <Route path="cotizacion/:numReg" element={<RedirectToPlural type="cotizaciones" />} />
+                <Route path="oportunidad/:numReg" element={<RedirectToPlural type="oportunidades" />} />
+                <Route path="apertura/:numReg" element={<RedirectToPlural type="aperturas" />} />
+                
+                {/* Detalle legacy genérico */}
                 <Route path=":numReg" element={<CotizacionDetallePage />} />
                 
                 {/* Nueva: /sigecom/comercial/nueva */}
                 <Route path="nueva" element={<CotizacionNuevaModal />} />
-                
-                {/* Oportunidad: /sigecom/comercial/oportunidad/:numReg */}
-                <Route path="oportunidad/:numReg" element={<CotizacionDetallePage esOportunidad />} />
               </Route>
 
               {/* Módulo Maestro / Tablas */}

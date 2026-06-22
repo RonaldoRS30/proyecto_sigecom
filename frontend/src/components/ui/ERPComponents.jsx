@@ -76,6 +76,7 @@ export const StatusBadge = ({ status }) => {
 export const ERPTable = ({
   headers,
   children,
+  mobileCards,
   loading,
   onSort,
   sortConfig,
@@ -83,7 +84,8 @@ export const ERPTable = ({
 }) => {
   return (
     <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden transition-all duration-300 hover:shadow-md flex flex-col h-full">
-      <div className="overflow-x-auto flex-1">
+      {/* Vista Escritorio / Tabletas */}
+      <div className="hidden md:block overflow-x-auto flex-1">
         <table className="min-w-full table-auto divide-y divide-gray-200">
           <thead className="bg-gray-50/80 sticky top-0 z-10 backdrop-blur-md">
             <tr>
@@ -91,7 +93,7 @@ export const ERPTable = ({
                 <th
                   key={i}
                   onClick={() => onSort && h.key && onSort(h.key)}
-                  className={`px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-widest ${h.key ? 'cursor-pointer hover:bg-gray-100 transition-colors' : ''} ${h.className || ''}`}
+                  className={`px-4 py-2.5 text-left text-xs font-bold text-gray-500 uppercase tracking-widest ${h.key ? 'cursor-pointer hover:bg-gray-100 transition-colors' : ''} ${h.className || ''}`}
                 >
                   <div className="flex items-center space-x-1">
                     <span>{h.label || h}</span>
@@ -120,10 +122,26 @@ export const ERPTable = ({
         </table>
       </div>
 
+      {/* Vista Celular */}
+      <div className="block md:hidden flex-1 overflow-y-auto p-4 space-y-3">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-12 space-y-3">
+            <LucideIcons.Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+            <span className="text-xs font-semibold animate-pulse text-gray-500">Cargando datos...</span>
+          </div>
+        ) : (
+          mobileCards || (
+            <div className="text-center py-8 text-xs font-bold text-gray-400 uppercase">
+              No hay registros disponibles
+            </div>
+          )
+        )}
+      </div>
+
       {pagination && (
-        <div className="bg-gray-50/50 px-6 py-3 border-t border-gray-100 flex items-center justify-between">
-          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-            Mostrando {pagination.from} - {pagination.to} de {pagination.total} registros
+        <div className="bg-gray-50/50 px-4 py-2 border-t border-gray-100 flex items-center justify-between">
+          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate">
+            {pagination.from} - {pagination.to} de {pagination.total}
           </div>
           <div className="flex items-center space-x-2">
             <button
@@ -133,7 +151,7 @@ export const ERPTable = ({
             >
               <LucideIcons.ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="text-xs font-black text-gray-700 min-w-[2rem] text-center">
+            <span className="text-xs font-black text-gray-700 min-w-[1.5rem] text-center">
               {pagination.currentPage}
             </span>
             <button
@@ -205,7 +223,7 @@ export const ERPInput = ({ placeholder, value, onChange, icon, type = 'text', cl
   );
 };
 
-export const FilterDropdown = ({ label, value, options, onSelect, icon: Icon, onToggle }) => {
+export const FilterDropdown = ({ label, value, options, onSelect, icon: Icon, onToggle, showSearch = true, gridLayout = false }) => {
   const [isOpen, setIsOpen] = React.useState(false);
   const [localSearch, setLocalSearch] = React.useState("");
   const containerRef = React.useRef(null);
@@ -229,19 +247,19 @@ export const FilterDropdown = ({ label, value, options, onSelect, icon: Icon, on
   }, [isOpen]);
 
   const filteredOptions = React.useMemo(() => {
+    if (!showSearch) return options;
     return options.filter(opt => 
       opt.n.toLowerCase().includes(localSearch.toLowerCase())
     );
-  }, [options, localSearch]);
+  }, [options, localSearch, showSearch]);
 
   return (
     <div className="relative" ref={containerRef}>
       <div
         onClick={() => {
-          if (!isOpen) {
-            setIsOpen(true);
-            if (onToggle) onToggle(true);
-          }
+          const nextState = !isOpen;
+          setIsOpen(nextState);
+          if (onToggle) onToggle(nextState);
         }}
         className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all text-[10px] font-black uppercase tracking-tighter cursor-pointer ${isOpen
             ? "border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm"
@@ -253,39 +271,91 @@ export const FilterDropdown = ({ label, value, options, onSelect, icon: Icon, on
             ? <ERPIcon name={Icon} className={`h-3.5 w-3.5 ${isOpen ? "text-indigo-600" : "text-gray-400"}`} />
             : <Icon className={`h-3.5 w-3.5 ${isOpen ? "text-indigo-600" : "text-gray-400"}`} />
         )}
-        <span className="opacity-60">{label}:</span>
-        {isOpen ? (
-          <input
-            autoFocus
-            className="bg-transparent outline-none text-indigo-700 font-black text-[10px] uppercase w-20"
-            value={localSearch}
-            onChange={(e) => setLocalSearch(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            placeholder="Escribe..."
-          />
-        ) : (
-          <span className="text-gray-900">{value}</span>
-        )}
+        {label && <span className="opacity-60">{label}:</span>}
+        <span className="text-gray-900">{value}</span>
         <LucideIcons.ChevronDown className={`h-3 w-3 transition-transform ${isOpen ? "rotate-180" : ""}`} />
       </div>
 
       {isOpen && (
-        <div className="absolute z-50 mt-2 w-48 bg-white border border-gray-100 rounded-2xl shadow-xl py-2 animate-in fade-in zoom-in duration-150">
-          <div className="max-h-60 overflow-y-auto no-scrollbar">
-            {filteredOptions.map((opt) => (
-              <button
-                key={opt.v}
-                onClick={() => {
-                  onSelect(opt.v);
-                  setIsOpen(false);
-                  if (onToggle) onToggle(false);
-                }}
-                className={`w-full text-left px-4 py-2 text-[10px] font-bold uppercase hover:bg-indigo-50 hover:text-indigo-600 transition-colors ${value === opt.n ? "text-indigo-600 bg-indigo-50/50" : "text-gray-600"
+        <div className={`absolute z-50 mt-2 ${gridLayout ? 'w-64' : 'w-48'} bg-white border border-gray-100 rounded-2xl shadow-xl py-2 animate-in fade-in zoom-in duration-150 flex flex-col max-h-[480px]`}>
+          {showSearch && (
+            <div className="px-3 pb-2 pt-1 border-b border-gray-100 flex items-center gap-2 shrink-0">
+              <LucideIcons.Search className="h-3.5 w-3.5 text-gray-400" />
+              <input
+                autoFocus
+                className="bg-transparent outline-none text-gray-700 font-bold text-[10px] uppercase w-full placeholder:text-gray-300"
+                value={localSearch}
+                onChange={(e) => setLocalSearch(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="Buscar..."
+              />
+            </div>
+          )}
+          
+          <div className={`overflow-y-auto flex-1 ${gridLayout ? "p-2 space-y-1.5" : ""}`}>
+            {gridLayout ? (
+              <>
+                {/* First option (TODOS / Limpiar) at the top as full-width */}
+                {filteredOptions[0] && (filteredOptions[0].v === "%" || filteredOptions[0].v === "") && (
+                  <button
+                    key={filteredOptions[0].v}
+                    onClick={() => {
+                      onSelect(filteredOptions[0].v);
+                      setIsOpen(false);
+                      if (onToggle) onToggle(false);
+                    }}
+                    className={`w-full text-center py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors ${
+                      (String(value) === String(filteredOptions[0].n) || 
+                       (filteredOptions[0].v === "" && String(value) === "Seleccionar") || 
+                       (filteredOptions[0].v === "%" && String(value) === "TODOS"))
+                        ? "text-indigo-600 bg-indigo-50"
+                        : "text-gray-600 hover:bg-gray-50 bg-gray-50/50"
+                    }`}
+                  >
+                    {filteredOptions[0].n}
+                  </button>
+                )}
+                <div className="grid grid-cols-3 gap-1">
+                  {filteredOptions.slice((filteredOptions[0] && (filteredOptions[0].v === "%" || filteredOptions[0].v === "")) ? 1 : 0).map((opt) => {
+                    const isSelected = String(value) === String(opt.n) || 
+                      (opt.n && value !== undefined && value !== null && String(value).toUpperCase() === String(opt.n).toUpperCase());
+                    return (
+                      <button
+                        key={opt.v}
+                        onClick={() => {
+                          onSelect(opt.v);
+                          setIsOpen(false);
+                          if (onToggle) onToggle(false);
+                        }}
+                        className={`text-center py-1.5 px-0.5 rounded-lg text-[8.5px] font-bold uppercase transition-colors truncate border ${
+                          isSelected
+                            ? "text-indigo-600 bg-indigo-50 border-indigo-200 font-black"
+                            : "text-gray-600 hover:bg-indigo-50/30 hover:text-indigo-600 bg-white border-gray-100"
+                        }`}
+                      >
+                        {opt.n}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              filteredOptions.map((opt) => (
+                <button
+                  key={opt.v}
+                  onClick={() => {
+                    onSelect(opt.v);
+                    setIsOpen(false);
+                    if (onToggle) onToggle(false);
+                  }}
+                  className={`w-full text-left px-4 py-2 text-[10px] font-bold uppercase hover:bg-indigo-50 hover:text-indigo-600 transition-colors ${
+                    String(value) === String(opt.n) ? "text-indigo-600 bg-indigo-50/50" : "text-gray-600"
                   }`}
-              >
-                {opt.n}
-              </button>
-            ))}
+                >
+                  {opt.n}
+                </button>
+              ))
+            )}
           </div>
         </div>
       )}
