@@ -228,7 +228,9 @@ export default function NuevaLogisticaModal({ open, onClose, logistica, operacio
                   { id: "Soles", nombre: "Soles" },
                   { id: "Dolares", nombre: "Dólares" }
                 ]}
-                className="[&_label]:text-[10px] [&_label]:font-bold [&_label]:text-slate-500 [&_label]:uppercase [&_label]:ml-0 [&_div]:py-1 [&_div]:rounded-lg [&_div]:px-2.5"
+                className=""
+                labelClassName="!text-[10px] !font-bold !text-slate-500 !uppercase !ml-0"
+                triggerClassName="!py-1 !rounded-lg !px-2.5"
               />
             </div>
             <div className="col-span-3 space-y-1">

@@ -2081,7 +2081,7 @@ export default function OportunidadesModal({ open, onClose, cotizacion, modo, ti
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="w-full max-w-[175vh] max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-lg p-4">
+      <DialogContent className="w-[95vw] md:w-[92vw] lg:w-[90vw] xl:max-w-[175vh] h-fit max-h-[95vh] md:max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-2xl p-3 sm:p-5 border-none">
 
         {/* ENCABEZADO OPTIMIZADO */}
         <div className="relative bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between shrink-0">

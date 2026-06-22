@@ -38,12 +38,12 @@ export default function EstadoCotizacionModal({ open, onClose, num_reg }) {
   const cargarEstados = async () => {
     try {
       const token = localStorage.getItem("access_token");
-      const res = await axios.get("/api/core/estados/", {
+      const res = await axios.get("/api/core/estados/?cotizaciones=1", {
         headers: { Authorization: `Bearer ${token}` },
       });
 
       const estadosFiltrados = res.data.filter(
-        item => item.activo && Number(item.cot) === 1
+        item => item.activo && (Number(item.cotizaciones) === 1 || Number(item.cot) === 1)
       );
 
       setEstados(estadosFiltrados);

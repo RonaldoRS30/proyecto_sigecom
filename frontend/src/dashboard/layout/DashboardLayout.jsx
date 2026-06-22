@@ -23,9 +23,14 @@ const NAV_ITEMS = [
 
 export default function DashboardLayout() {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
   const { authUser: user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    setIsMobileOpen(false);
+  }, [location.pathname]);
 
   const handleLogout = () => {
     localStorage.clear();
@@ -46,17 +51,26 @@ export default function DashboardLayout() {
   const breadcrumbs = getBreadcrumbs();
 
   return (
-    <div className="flex h-screen w-screen bg-gray-50 font-sans overflow-hidden">
+    <div className="flex h-screen w-screen bg-gray-50 font-sans overflow-hidden relative">
+      {/* Backdrop para móviles */}
+      {isMobileOpen && (
+        <div
+          onClick={() => setIsMobileOpen(false)}
+          className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-40 md:hidden animate-in fade-in duration-300"
+        />
+      )}
+
       {/* Sidebar */}
       <aside
-        className={`${isExpanded ? "w-60" : "w-20"
-          } flex flex-col h-full bg-white border-r border-gray-200 shrink-0 transition-all duration-300 z-40`}
+        className={`fixed md:relative inset-y-0 left-0 z-50 md:z-40 flex flex-col h-full bg-white border-r border-gray-200 shrink-0 transition-all duration-300 
+          ${isMobileOpen ? "translate-x-0 w-64 shadow-2xl" : "-translate-x-full md:translate-x-0"}
+          ${isExpanded ? "md:w-60" : "md:w-20"}`}
       >
         <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
           <div className="flex items-center overflow-hidden">
             <img src={logo} alt="Logo" className="h-12 w-12 object-contain shrink-0" />
             {isExpanded && (
-              <span className="text-lg font-bold text-gray-900 ml-2 whitespace-nowrap">
+              <span className="text-[14.5px] font-bold text-gray-900 ml-2 whitespace-nowrap">
                 SIGECOM 5.0
               </span>
             )}
@@ -121,33 +135,40 @@ export default function DashboardLayout() {
 
       {/* Main Content Area */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <header className="h-16 shrink-0 bg-white border-b border-gray-200 flex items-center justify-between px-6 z-30">
-          <nav className="flex items-center overflow-hidden">
-            <ol className="flex items-center space-x-2 text-sm text-gray-500 min-w-0">
-              <li>
-                <NavLink to="/sigecom/home" className="hover:text-indigo-600 transition-colors">
-                  <LucideIcons.Home className="h-4 w-4" />
-                </NavLink>
-              </li>
-              {breadcrumbs.slice(1).map((crumb) => (
-                <li key={crumb.path} className="flex items-center min-w-0">
-                  <LucideIcons.ChevronRight className="h-4 w-4 text-gray-300 mx-1 shrink-0" />
-                  {crumb.isLast ? (
-                    <span className="font-bold text-indigo-600 truncate uppercase tracking-tight">
-                      {crumb.label}
-                    </span>
-                  ) : (
-                    <NavLink
-                      to={crumb.path}
-                      className="hover:text-gray-900 transition-colors truncate"
-                    >
-                      {crumb.label}
-                    </NavLink>
-                  )}
+        <header className="h-16 shrink-0 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-6 z-30">
+          <div className="flex items-center gap-3 overflow-hidden">
+            {/* Botón de Hamburguesa para celulares */}
+            <button
+              onClick={() => setIsMobileOpen(true)}
+              className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-indigo-600 md:hidden shrink-0"
+            >
+              <LucideIcons.Menu className="h-5.5 w-5.5" />
+            </button>
+
+            <nav className="flex items-center overflow-hidden">
+              <ol className="flex items-center space-x-2 text-sm text-gray-500 min-w-0">
+                <li className="hidden sm:block">
+                  <NavLink to="/sigecom/home" className="hover:text-indigo-600 transition-colors">
+                    <LucideIcons.Home className="h-4 w-4" />
+                  </NavLink>
                 </li>
-              ))}
-            </ol>
-          </nav>
+                {breadcrumbs.slice(1).map((crumb) => (
+                  <li key={crumb.path} className={`items-center min-w-0 ${crumb.isLast ? "flex" : "hidden sm:flex"}`}>
+                    <LucideIcons.ChevronRight className="h-4 w-4 text-gray-300 mx-1 shrink-0" />
+                    {crumb.isLast ? (
+                      <span className="font-bold text-indigo-600 truncate uppercase tracking-tight text-xs sm:text-sm">
+                        {crumb.label}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400 font-semibold truncate uppercase tracking-tight text-xs sm:text-sm">
+                        {crumb.label}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </nav>
+          </div>
 
           <div className="flex items-center space-x-4">
             {/* Dynamic icons or actions could go here */}
@@ -161,7 +182,7 @@ export default function DashboardLayout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-6 bg-gray-50/50">
+        <main className="flex-1 overflow-auto p-4 md:p-6 bg-gray-50/50">
           <div className="w-full h-full">
             <Outlet />
           </div>

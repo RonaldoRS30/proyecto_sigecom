@@ -224,13 +224,33 @@ def buscar_representantes_inline(request):
 @permission_classes([IsAuthenticated])
 def lista_estados(request):
     """
-    Lista los estados activos para las cotizaciones.
-    En SIGECOM 5, filtramos por activo=1.
+    Lista los estados activos para las cotizaciones, ordenes de compra o facturacion.
     """
-    # Filtramos por activo=1 (equivalente al antiguo activo=True)
-    # Ya no usamos el filtro 'cot=1' porque no existe en la nueva tabla
-    estados = Estado.objects.filter(activo=1).order_by("nombre")
+    estados = Estado.objects.filter(activo=1)
     
+    cotizaciones = request.query_params.get("cotizaciones")
+    orden_compra = request.query_params.get("orden_compra")
+    facturacion = request.query_params.get("facturacion")
+    
+    if cotizaciones is not None:
+        try:
+            estados = estados.filter(cotizaciones=int(cotizaciones))
+        except ValueError:
+            pass
+            
+    if orden_compra is not None:
+        try:
+            estados = estados.filter(orden_compra=int(orden_compra))
+        except ValueError:
+            pass
+            
+    if facturacion is not None:
+        try:
+            estados = estados.filter(facturacion=int(facturacion))
+        except ValueError:
+            pass
+            
+    estados = estados.order_by("nombre")
     serializer = EstadoSerializer(estados, many=True)
     return Response(serializer.data)
 

@@ -66,6 +66,9 @@ class Estado(models.Model):
     id_estado = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=45)
     activo = models.IntegerField(default=1)
+    cotizaciones = models.IntegerField(default=0)
+    orden_compra = models.IntegerField(default=0)
+    facturacion = models.IntegerField(default=0)
 
     class Meta:
         managed = False

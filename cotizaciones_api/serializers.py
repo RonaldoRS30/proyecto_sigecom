@@ -35,11 +35,16 @@ class RawDateTimeField(serializers.DateTimeField):
     def to_representation(self, value):
         if not value:
             return None
+        if isinstance(value, str):
+            return value
         from django.utils.timezone import is_aware
         import datetime
-        if is_aware(value):
-            value = value.astimezone(datetime.timezone.utc)
-        return value.strftime(self.format or "%Y-%m-%d %H:%M:%S")
+        try:
+            if is_aware(value):
+                value = value.astimezone(datetime.timezone.utc)
+            return value.strftime(self.format or "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(value)
 
 #========================================================================================
 
@@ -120,6 +125,7 @@ class CotizacionTablaSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.SerializerMethodField() 
     estado_nombre = serializers.CharField(source="id_estado.nombre", read_only=True)
     tipo_nombre = serializers.CharField(source="id_tipo.nombre", read_only=True)
+    envio = serializers.SerializerMethodField()
 
     # Responsable Comercial
     comercial_nombre = serializers.SerializerMethodField()
@@ -173,6 +179,7 @@ class CotizacionTablaSerializer(serializers.ModelSerializer):
             "tipo_moneda",
             "probabilidad",
             "estado_envio",
+            "envio",
             "suministros_valor",
             "suministros_unidad",
             "servicios_valor",
@@ -182,6 +189,11 @@ class CotizacionTablaSerializer(serializers.ModelSerializer):
         ]
 
     # ── 3. Lógica de Métodos ──
+    def get_envio(self, obj):
+        if obj.estado_envio == 2:
+            return 3
+        return 2
+
     # RESPONSABLE COMERCIAL
     def get_comercial_nombre(self, obj):
         if obj.id_comercial:
@@ -292,7 +304,7 @@ class CotizacionServicioSerializer(serializers.ModelSerializer):
         """
         data = super().to_representation(instance)
         decimal_fields = [
-            'costo_total', 'porcentaje', 'utilidad', 
+            'costo_hombre_dia', 'costo_total', 'porcentaje', 'utilidad', 
             'cotizado_hombre_dia', 'cotizado_total'
         ]
         for field in decimal_fields:
@@ -380,6 +392,10 @@ class CotizacionSeguimientoSerializer(serializers.ModelSerializer):
 
 class CotizacionModalSerializer(serializers.ModelSerializer):
     fecha = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    recepcion_solicitud = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    visita_tecnica = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    fecha_limite = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    emision_cotizacion = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     # ── Campos derivados de relaciones (Nombres legibles) ──
     cliente_nombre = serializers.SerializerMethodField()
     estado_nombre = serializers.CharField(source="id_estado.nombre", read_only=True)
@@ -415,6 +431,174 @@ class CotizacionModalSerializer(serializers.ModelSerializer):
 
     # ── ADJUNTOS ──
     adjuntos = CotizacionAdjuntoSerializer(many=True, read_only=True)
+    envio = serializers.SerializerMethodField()
+    
+    # Nombres de unidades de tiempo
+    unidad_suministro_nombre = serializers.CharField(
+        source="id_unidad_tiempo_entrega_suministros.nombre", read_only=True
+    )
+    unidad_servicio_nombre = serializers.CharField(
+        source="id_unidad_tiempo_entrega_servicios.nombre", read_only=True
+    )
+    unidad_validez_nombre = serializers.CharField(
+        source="id_unidad_tiempo_validez.nombre", read_only=True
+    )
+
+    class Meta:
+        model = Cotizacion
+        fields = [
+            # Identificación
+            "id_registro", "codigo", "fecha", "referencia", "año_apertura",
+            
+            # Cliente y Representante (Snapshot)
+            "id_cliente", "cliente_nombre", "id_representante",
+            "representante_nombre", "representante_cargo", 
+            "representante_telefono", "representante_movil", "representante_correo",
+            
+            # Personal
+            "id_comercial", "id_tecnico", "id_creador",
+            "comercial_nombre", "comercial_correo", "comercial_movil_corporativo", "comercial_movil_personal", "comercial_telefono", "comercial_dni",
+            "tecnico_nombre", "tecnico_correo", "tecnico_movil_corporativo", "tecnico_movil_personal", "tecnico_telefono", "tecnico_dni",
+            
+            # Comercial y Totales
+            "forma_pago", "lugar", "tipo_moneda", "tipo_cambio",
+            "igv", "igv_nombre", "total_cotizacion", "saldo",
+            
+            # Tiempos y Unidades
+            "entrega_suministros", "id_unidad_tiempo_entrega_suministros", "unidad_suministro_nombre",
+            "entrega_servicios", "id_unidad_tiempo_entrega_servicios", "unidad_servicio_nombre",
+            "validez_oferta", "id_unidad_tiempo_validez", "unidad_validez_nombre",
+            
+            # Estado y Área
+            "id_estado", "estado_nombre", "id_area", "area_nombre",
+            "id_tipo", "tipo_nombre", "tipo_venta", "estado_envio", "envio",
+            
+            # Seguimiento y Descuentos
+            "probabilidad", "seguimiento", "mensajes",
+            "descuento_aplica", "descuento_afecto", "descuento_monto", "descuento_porcentaje",
+            "condiciones_generales",
+
+            # Oportunidades
+            "recepcion_solicitud", "visita_tecnica", "fecha_limite", "emision_cotizacion",
+            "estado_oportunidad", "comentario",
+
+            # SUMINISTROS
+            "suministros",
+
+            # SERVICIOS
+            "servicios",
+
+            # MENSAJES
+            "mensajes",
+
+            # SEGUIMIENTO
+            "seguimiento",
+
+            # ADJUNTOS
+            "adjuntos"
+        ]
+        read_only_fields = fields
+
+    # ── Métodos de Lógica ──
+    def get_envio(self, obj):
+        if obj.estado_envio == 2:
+            return 3
+        return 2
+
+    def get_cliente_nombre(self, obj):
+        if obj.id_cliente:
+            return obj.id_cliente.nombre
+        return obj.representante_nombre or ""
+
+    def get_area_nombre(self, obj):
+        mapping = {1: "Industria", 2: "Minería", 3: "Mantenimiento", 4: "Petroquímica", 8: "Seguridad"}
+        return mapping.get(obj.id_area, "")
+
+    def get_igv_nombre(self, obj):
+        return "Incluye IGV" if obj.igv == "S" else "No Incluye IGV"
+
+    def get_comercial_nombre(self, obj):
+        if obj.id_comercial:
+            return obj.id_comercial.nombre_completo
+        return ""
+
+    def get_comercial_correo(self, obj):
+        if obj.id_comercial:
+            return obj.id_comercial.correo
+        return ""
+
+    def get_comercial_movil_corporativo(self, obj):
+        if obj.id_comercial:
+            return obj.id_comercial.movil_coorporativo
+        return ""
+
+    def get_comercial_movil_personal(self, obj):
+        if obj.id_comercial:
+            return obj.id_comercial.movil_personal
+        return ""
+
+    def get_comercial_telefono(self, obj):
+        if obj.id_comercial:
+            return obj.id_comercial.telefono
+        return ""
+
+    def get_comercial_dni(self, obj):
+        if obj.id_comercial:
+            return obj.id_comercial.dni
+        return ""
+
+    def get_tecnico_nombre(self, obj):
+        if obj.id_tecnico:
+            return obj.id_tecnico.nombre_completo
+        return ""
+
+    def get_tecnico_correo(self, obj):
+        if obj.id_tecnico:
+            return obj.id_tecnico.correo
+        return ""
+
+    def get_tecnico_movil_corporativo(self, obj):
+        if obj.id_tecnico:
+            return obj.id_tecnico.movil_coorporativo
+        return ""
+
+    def get_tecnico_movil_personal(self, obj):
+        if obj.id_tecnico:
+            return obj.id_tecnico.movil_personal
+        return ""
+
+    def get_tecnico_telefono(self, obj):
+        if obj.id_tecnico:
+            return obj.id_tecnico.telefono
+        return ""
+
+    def get_tecnico_dni(self, obj):
+        if obj.id_tecnico:
+            return obj.id_tecnico.dni
+        return ""
+
+class CotizacionAutocompleteSerializer(serializers.ModelSerializer):
+    fecha = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    # ── Campos derivados de relaciones (Nombres legibles) ──
+    cliente_nombre = serializers.SerializerMethodField()
+    estado_nombre = serializers.CharField(source="id_estado.nombre", read_only=True)
+    tipo_nombre = serializers.CharField(source="id_tipo.nombre", read_only=True)
+    area_nombre = serializers.SerializerMethodField()
+    igv_nombre = serializers.SerializerMethodField()
+
+    comercial_nombre = serializers.SerializerMethodField()
+    comercial_correo = serializers.SerializerMethodField()
+    comercial_movil_corporativo = serializers.SerializerMethodField()
+    comercial_movil_personal = serializers.SerializerMethodField()
+    comercial_telefono = serializers.SerializerMethodField()
+    comercial_dni = serializers.SerializerMethodField()
+
+    tecnico_nombre = serializers.SerializerMethodField()
+    tecnico_correo = serializers.SerializerMethodField()
+    tecnico_movil_corporativo = serializers.SerializerMethodField()
+    tecnico_movil_personal = serializers.SerializerMethodField()
+    tecnico_telefono = serializers.SerializerMethodField()
+    tecnico_dni = serializers.SerializerMethodField()
     
     # Nombres de unidades de tiempo
     unidad_suministro_nombre = serializers.CharField(
@@ -457,24 +641,9 @@ class CotizacionModalSerializer(serializers.ModelSerializer):
             "id_tipo", "tipo_nombre", "tipo_venta", "estado_envio",
             
             # Seguimiento y Descuentos
-            "probabilidad", "seguimiento", "mensajes",
+            "probabilidad",
             "descuento_aplica", "descuento_afecto", "descuento_monto", "descuento_porcentaje",
             "condiciones_generales",
-
-            # SUMINISTROS
-            "suministros",
-
-            # SERVICIOS
-            "servicios",
-
-            # MENSAJES
-            "mensajes",
-
-            # SEGUIMIENTO
-            "seguimiento",
-
-            # ADJUNTOS
-            "adjuntos"
         ]
         read_only_fields = fields
 
@@ -632,50 +801,135 @@ class OportunidadTablaSerializer(serializers.ModelSerializer):
 ##=====================##
 ## APERTURA COTIZACION ##
 ##=====================##
+class CotizacionCompletaSerializer(serializers.ModelSerializer):
+    """Retorna absolutamente todos los campos del FK Cotizacion."""
+    tipo_cotizacion_nombre = serializers.CharField(source="id_tipo.nombre", read_only=True)
+    cliente_nombre = serializers.CharField(source="id_cliente.nombre", read_only=True)
+    estado_nombre = serializers.CharField(source="id_estado.nombre", read_only=True)
+    comercial_nombre = serializers.CharField(source="id_comercial.nombre_completo", read_only=True)
+    tecnico_nombre = serializers.CharField(source="id_tecnico.nombre_completo", read_only=True)
+    id_unidad_tiempo_entrega_suministros_nombre = serializers.CharField(source="id_unidad_tiempo_entrega_suministros.nombre", read_only=True)
+    id_unidad_tiempo_entrega_servicios_nombre = serializers.CharField(source="id_unidad_tiempo_entrega_servicios.nombre", read_only=True)
+    id_unidad_tiempo_validez_nombre = serializers.CharField(source="id_unidad_tiempo_validez.nombre", read_only=True)
+    area_nombre = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Cotizacion
+        fields = "__all__"
+
+    def get_area_nombre(self, obj):
+        if not obj.id_area:
+            return "Otros"
+        mapping = {
+            1: "Industria", 
+            2: "Minería", 
+            3: "Mantenimiento", 
+            4: "Petroquímica", 
+            8: "Seguridad de Maquinaria"
+        }
+        return mapping.get(obj.id_area, "Otros")
+
 class CotizacionAperturaSerializer(serializers.ModelSerializer):
     # ── FORMATEO DE FECHAS ──────────────────────────────────────
     fecha_orden = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", required=False, allow_null=True)
     fecha_entrega = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", required=False, allow_null=True)
     fecha_factura = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", required=False, allow_null=True)
 
+    # ── SOBREESCRITURA CON EL OBJETO COMPLETO DE COTIZACIÓN ───
+    id_registro = CotizacionCompletaSerializer(read_only=True)
+
     # ── CAMPOS DE SOLO LECTURA DESDE TABLAS MAESTRAS ───────────
     unidad_plazo_nombre = serializers.CharField(source="orden_plazo_unidad.nombre", read_only=True)
     
-    # Datos heredados de la Cotización Padre (id_registro) mediante navegación FK
+    # Datos heredados directo en la raíz (Mapeos existentes)
     cotizacion_codigo = serializers.CharField(source="id_registro.codigo", read_only=True)
     cotizacion_referencia = serializers.CharField(source="id_registro.referencia", read_only=True)
 
     # ── CAMPOS CON LÓGICA DE MAPEO (LECTURA) ────────────────────
     estado_orden_nombre = serializers.SerializerMethodField()
     prioridad_nombre = serializers.SerializerMethodField()
+    tiene_archivo_fisico = serializers.SerializerMethodField()
+    extension_archivo_fisico = serializers.SerializerMethodField()
 
     class Meta:
         model = CotizacionApertura
         fields = "__all__"
         read_only_fields = [
             "id_apertura",
-            "uti_des" # Calculado a nivel de negocio/BD habitualmente
+            "uti_des"
         ]
 
     # ── LÓGICA DE REPRESENTACIÓN ────────────────────────────────
     def get_estado_orden_nombre(self, obj):
-        # Mapeo heredado del flujo legacy o reglas del negocio para estados de órdenes
         mapping = {1: "Pendiente", 2: "Aprobada", 3: "Facturada", 4: "Anulada"}
         return mapping.get(obj.estado_orden, "Desconocido")
 
     def get_prioridad_nombre(self, obj):
         mapping = {"0": "Normal", "1": "Urgente", "2": "Crítica"}
-        # Se usa str() preventivo ya que en tu BD está declarado como varchar(1)
         return mapping.get(str(obj.prio), "Normal")
 
+    def get_tiene_archivo_fisico(self, obj):
+        if not obj.id_apertura:
+            return False
+        import os
+        from django.conf import settings
+        ruta_carpeta = os.path.join(settings.BASE_DIR, 'cotizaciones_api', 'ocfiles')
+        extensiones = ['.pdf', '.xlsx', '.xls', '.docx', '.doc']
+        for ext in extensiones:
+            if os.path.exists(os.path.join(ruta_carpeta, f"{obj.id_apertura}{ext}")):
+                return True
+        return False
+
+    def get_extension_archivo_fisico(self, obj):
+        if not obj.id_apertura:
+            return None
+        import os
+        from django.conf import settings
+        ruta_carpeta = os.path.join(settings.BASE_DIR, 'cotizaciones_api', 'ocfiles')
+        extensiones = ['.pdf', '.xlsx', '.xls', '.docx', '.doc']
+        for ext in extensiones:
+            if os.path.exists(os.path.join(ruta_carpeta, f"{obj.id_apertura}{ext}")):
+                return ext
+        return None
+
+class CotizacionCompactaSerializer(serializers.ModelSerializer):
+    """
+    Retorna únicamente los campos clave solicitados del FK Cotizacion
+    con sus relaciones e IDs completamente resueltos en nombres legibles.
+    """
+    cliente_nombre = serializers.SerializerMethodField()
+    area_nombre = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Cotizacion
+        fields = ["codigo", "referencia", "id_cliente", "cliente_nombre", "id_area", "area_nombre"]
+
+    def get_cliente_nombre(self, obj):
+        if obj.id_cliente:
+            return obj.id_cliente.nombre
+        return obj.representante_nombre or "S/N"
+
+    def get_area_nombre(self, obj):
+        mapping = {
+            1: "Industria", 
+            2: "Minería", 
+            3: "Mantenimiento", 
+            4: "Petroquímica", 
+            8: "Seguridad"
+        }
+        return mapping.get(obj.id_area, "Otros")
+
 class CotizacionAperturaTablaSerializer(serializers.ModelSerializer):
-    # ── DATOS ASOCIADOS A LA APERTURA (CONEXIÓN DIRECTA) ────────
-    fecha_o = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", source="fecha_orden", read_only=True)
-    fecha_f = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", source="fecha_factura", read_only=True)
+    # ── DATOS ASOCIADOS A LA APERTURA (REVISADOS SIN 'SOURCE') ──
+    fecha_orden = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    fecha_factura = RawDateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     plazo_unidad = serializers.CharField(source="orden_plazo_unidad.nombre", read_only=True)
     estado_orden_nombre = serializers.SerializerMethodField()
 
-    # ── INFORMACIÓN DE LA COTIZACIÓN PADRE ──────────────────────
+    # ── SOBREESCRITURA CON EL OBJETO REDUCIDO Y TRADUCIDO ───────
+    id_registro = CotizacionCompactaSerializer(read_only=True)
+
+    # ── INFORMACIÓN DE LA COTIZACIÓN PADRE EN LA RAÍZ ───────────
     cotizacion_id = serializers.IntegerField(source="id_registro.id_registro", read_only=True)
     cotizacion_codigo = serializers.CharField(source="id_registro.codigo", read_only=True)
     cotizacion_referencia = serializers.CharField(source="id_registro.referencia", read_only=True)
@@ -683,6 +937,9 @@ class CotizacionAperturaTablaSerializer(serializers.ModelSerializer):
     # ── INFORMACIÓN DEL CLIENTE (TRAÍDO VÍA COTIZACIÓN PADRE) ───
     cliente_id = serializers.IntegerField(source="id_registro.id_cliente.id_cliente", read_only=True)
     cliente_nombre = serializers.SerializerMethodField()
+    
+    # ── INFORMACIÓN DEL ÁREA TRADUCIDA EN LA RAÍZ ────────────────
+    area_nombre = serializers.SerializerMethodField()
 
     class Meta:
         model = CotizacionApertura
@@ -690,10 +947,11 @@ class CotizacionAperturaTablaSerializer(serializers.ModelSerializer):
             "id_apertura",
             "anno",
             "mes",
+            "fecha_orden",
+            "fecha_factura",
             "numero_orden",
-            "fecha_o",
-            "fecha_f",
-            "total_order",
+            "id_registro",       # Retornará el JSON compacto con traducciones
+            "total_orden",
             "estado_orden",
             "estado_orden_nombre",
             "orden_plazo_valor",
@@ -705,6 +963,7 @@ class CotizacionAperturaTablaSerializer(serializers.ModelSerializer):
             "cotizacion_referencia",
             "cliente_id",
             "cliente_nombre",
+            "area_nombre",       # Traducido e inyectado en la raíz para facilitar tu Front-end
             "prio"
         ]
 
@@ -714,15 +973,23 @@ class CotizacionAperturaTablaSerializer(serializers.ModelSerializer):
         return mapping.get(obj.estado_orden, "Desconocido")
 
     def get_cliente_nombre(self, obj):
-        # Primero intentamos saltar a través de la Cotización Padre hacia el maestro Cliente
-        if obj.id_registro and obj.id_registro.id_cliente:
-            return obj.id_registro.id_cliente.nombre
-        
-        # Fallback: Si no hay cliente maestro en el padre, usamos su snapshot de texto manual
         if obj.id_registro:
+            if obj.id_registro.id_cliente:
+                return obj.id_registro.id_cliente.nombre
             return obj.id_registro.representante_nombre or "S/N"
-            
         return "S/N"
+
+    def get_area_nombre(self, obj):
+        if obj.id_registro:
+            mapping = {
+                1: "Industria", 
+                2: "Minería", 
+                3: "Mantenimiento", 
+                4: "Petroquímica", 
+                8: "Seguridad"
+            }
+            return mapping.get(obj.id_registro.id_area, "Otros")
+        return "Otros"
 
 #========================================================================================
 

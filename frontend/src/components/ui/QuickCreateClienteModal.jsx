@@ -41,7 +41,9 @@ export default function QuickCreateClienteModal({ open, onClose, onSave }) {
                 { id: "Cliente", nombre: "Cliente" },
                 { id: "Proveedor", nombre: "Proveedor" }
               ]}
-              className="mt-0.5 [&_label]:text-[9px] [&_label]:font-bold [&_label]:text-slate-500 [&_label]:uppercase [&_label]:ml-0 [&_div]:py-1 [&_div]:rounded-lg [&_div]:px-2.5"
+              className="mt-0.5"
+              labelClassName="!text-[9px] !font-bold !text-slate-500 !uppercase !ml-0"
+              triggerClassName="!py-1 !rounded-lg !px-2.5"
             />
           </div>
 
