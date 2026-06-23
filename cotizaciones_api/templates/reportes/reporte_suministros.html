@@ -11,7 +11,8 @@ body{
     font-family: "Segoe UI", Arial, Helvetica, sans-serif;
     font-size: 12px;
     color:#2b2b2b;
-    margin:20px;
+    margin:0;
+    padding:20px;
     background:#ffffff;
 }
 
@@ -192,6 +193,7 @@ h2{
 </head>
 
 <body>
+<div id="report-content-wrapper">
 <div class="header">
     <div>
         <img class="logo-img" src="{% static 'logo.png' %}" alt="Logo Empresa">
@@ -199,7 +201,7 @@ h2{
 
  <div class="excel-btn">
     <button type="button" id="btnExcel">
-        <img src="{% static 'importar-xls.png' %}" alt="excel">
+        <img src="{% static 'Formatos/excel.png' %}" alt="excel">
         Exportar Excel
     </button>
 </div>
@@ -259,8 +261,9 @@ h2{
 {% endfor %}
 
 </div>
+</div> <!-- /report-content-wrapper -->
 
-<!-- EXPORTAR A EXCEL -->
+<!-- Script to handle Excel export -->
 <script>
 
 document.getElementById("btnExcel").addEventListener("click", function(e){
@@ -413,7 +416,8 @@ var tableToExcel = (function () {
 <script>
   function notifyParentHeight() {
     if (window.parent && window.parent !== window) {
-      const height = document.documentElement.scrollHeight || document.body.scrollHeight || document.documentElement.offsetHeight;
+      const wrapper = document.getElementById('report-content-wrapper');
+      const height = wrapper ? wrapper.offsetHeight : (document.documentElement.scrollHeight || document.body.scrollHeight);
       window.parent.postMessage({ 
         type: 'set-iframe-height', 
         height: height

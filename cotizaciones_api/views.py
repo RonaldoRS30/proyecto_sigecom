@@ -327,10 +327,67 @@ def lista_cotizaciones(request):
 
         # Búsqueda Flexible
         if campo and valor not in (None, "", " "):
-            campo_real = CAMPOS_BUSQUEDA.get(campo)
-            if campo_real:
-                valor_norm = unidecode(valor.lower().strip())
-                qs = qs.filter(**{f"{campo_real}__icontains": valor_norm})
+            if campo == "all":
+                from django.db.models import Q
+                from datetime import datetime
+                valor_clean = valor.lower().strip()
+                
+                # Envío
+                q_envio = Q()
+                if "enviado" in valor_clean:
+                    q_envio = Q(estado_envio=2)
+                elif "pendiente" in valor_clean:
+                    q_envio = Q(estado_envio=1)
+                
+                # Áreas
+                AREA_MAP = {
+                    1: "Industria",
+                    2: "Minería",
+                    3: "Mantenimiento",
+                    4: "Petroquímica",
+                    8: "Seguridad de Maquinaria",
+                }
+                area_keys = [k for k, v in AREA_MAP.items() if valor_clean in v.lower()]
+                q_area = Q(id_area__in=area_keys) if area_keys else Q()
+                
+                # Intentar convertir valor_clean a número para buscar por total, id_registro
+                q_numero = Q()
+                try:
+                    clean_num_str = valor_clean.replace("$", "").replace(",", "").strip()
+                    val_num = float(clean_num_str)
+                    q_numero = Q(total_cotizacion=val_num) | Q(id_registro=int(val_num) if val_num.is_integer() else 0)
+                except ValueError:
+                    pass
+
+                # Intentar parsear fecha
+                q_fecha = Q()
+                for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+                    try:
+                        parsed_date = datetime.strptime(valor_clean, fmt).date()
+                        q_fecha = Q(fecha=parsed_date)
+                        break
+                    except ValueError:
+                        pass
+                
+                if valor_clean.isdigit() and len(valor_clean) == 4:
+                    q_fecha = q_fecha | Q(fecha__year=int(valor_clean))
+
+                qs = qs.filter(
+                    Q(codigo__icontains=valor_clean) |
+                    Q(referencia__icontains=valor_clean) |
+                    Q(id_cliente__nombre__icontains=valor_clean) |
+                    Q(representante_nombre__icontains=valor_clean) |
+                    Q(id_estado__nombre__icontains=valor_clean) |
+                    q_envio |
+                    q_area |
+                    q_numero |
+                    q_fecha
+                )
+            else:
+                campo_real = CAMPOS_BUSQUEDA.get(campo)
+                if campo_real:
+                    valor_norm = unidecode(valor.lower().strip())
+                    qs = qs.filter(**{f"{campo_real}__icontains": valor_norm})
 
         # ============================================================
         # Metrics Processing (Dashboard)
@@ -572,18 +629,21 @@ def cotizacion_detalle(request, id_registro):
                     cot.refresh_from_db()
                     serializer.save()
                     
-                    # Si ya tenía código comercial, y cambiaron campos clave, recalculamos y guardamos el nuevo código
-                    if old_codigo:
-                        cot.refresh_from_db(fields=['id_area', 'id_tipo', 'id_cliente'])
-                        nuevo_codigo = calcular_codigo_dinamico(cot, old_codigo)
-                        if nuevo_codigo != old_codigo:
+                    # Si cambiaron campos clave (área, tipo, cliente), recalculamos el código
+                    if (cot.id_area != old_area or 
+                        cot.id_tipo_id != old_tipo or 
+                        cot.id_cliente_id != old_cliente):
+                        
+                        cot.refresh_from_db(fields=['id_area', 'id_tipo', 'id_cliente', 'codigo'])
+                        nuevo_codigo = calcular_codigo_dinamico(cot, cot.codigo)
+                        if nuevo_codigo != cot.codigo:
                             cot.codigo = nuevo_codigo
                             cot.save(update_fields=['codigo'])
                             
                             # Registrar hito en seguimiento
                             CotizacionSeguimiento.objects.create(
                                 id_registro=cot,
-                                detalle=f"Código actualizado por cambio en parámetros: {nuevo_codigo} (antes: {old_codigo})",
+                                detalle=f"Código actualizado por cambio en parámetros: {nuevo_codigo or 'SIN CÓDIGO'} (antes: {old_codigo or 'SIN CÓDIGO'})",
                                 id_usuario=request.user,
                                 activo='1'
                             )
@@ -3127,6 +3187,8 @@ def calcular_codigo_dinamico(cot, codigo_actual=None):
     y el área no ha cambiado, conserva la base y actualiza iniciales y tipo.
     Si no, genera uno totalmente nuevo.
     """
+    if not cot.id_cliente:
+        return ""
     if codigo_actual and '-' in codigo_actual:
         parts = codigo_actual.split('-')
         if len(parts) == 3:
@@ -3155,6 +3217,8 @@ def _calcular_nuevo_codigo(cot):
     Calcula el código único (COTIN) para una cotización sin guardarlo.
     Formato: YYAreaCorrVersion-INICIALES-TIPO (ej: 252185A-YURA-S)
     """
+    if not cot.id_cliente:
+        return ""
     # 1. AÑO (Últimos 2 dígitos)
     year_full = cot.anno or timezone.now().year
     year_str = str(year_full)[-2:]
@@ -3240,26 +3304,46 @@ def generar_codigo_cotizacion(request, id_registro):
             cot = Cotizacion.objects.select_related('id_cliente', 'id_tipo').get(id_registro=id_registro)
 
         # Capturar parámetros de override
-        override_area = request.GET.get("id_area") or request.data.get("id_area")
-        override_tipo = request.GET.get("id_tipo") or request.data.get("id_tipo")
-        override_cliente = request.GET.get("id_cliente") or request.data.get("id_cliente")
+        override_area = request.GET.get("id_area") if "id_area" in request.GET else (request.data.get("id_area") if request.data and "id_area" in request.data else None)
+        override_tipo = request.GET.get("id_tipo") if "id_tipo" in request.GET else (request.data.get("id_tipo") if request.data and "id_tipo" in request.data else None)
+        override_cliente = request.GET.get("id_cliente") if "id_cliente" in request.GET else (request.data.get("id_cliente") if request.data and "id_cliente" in request.data else None)
+
+        has_overrides = (override_area is not None) or (override_tipo is not None) or (override_cliente is not None)
 
         # Aplicar temporalmente los overrides
-        if override_area:
-            cot.id_area = int(override_area)
-        if override_tipo:
-            from core.models import TipoCotizacion
-            tipo_obj = TipoCotizacion.objects.filter(id_tipo=override_tipo).first()
-            if tipo_obj:
-                cot.id_tipo = tipo_obj
-        if override_cliente:
-            from core.models import Cliente
-            cliente_obj = Cliente.objects.filter(id_cliente=int(override_cliente)).first()
-            if cliente_obj:
-                cot.id_cliente = cliente_obj
+        if override_area is not None:
+            if override_area in ("", "null", "None"):
+                cot.id_area = None
+            else:
+                try:
+                    cot.id_area = int(override_area)
+                except (ValueError, TypeError):
+                    cot.id_area = None
+
+        if override_tipo is not None:
+            if override_tipo in ("", "null", "None"):
+                cot.id_tipo = None
+            else:
+                from core.models import TipoCotizacion
+                tipo_obj = TipoCotizacion.objects.filter(id_tipo=override_tipo).first()
+                if tipo_obj:
+                    cot.id_tipo = tipo_obj
+                else:
+                    cot.id_tipo = None
+
+        if override_cliente is not None:
+            if override_cliente in ("", "null", "None"):
+                cot.id_cliente = None
+            else:
+                from core.models import Cliente
+                try:
+                    cliente_obj = Cliente.objects.filter(id_cliente=int(override_cliente)).first()
+                    cot.id_cliente = cliente_obj
+                except (ValueError, TypeError):
+                    cot.id_cliente = None
 
         # Si ya tiene un código guardado y no se ha especificado ningún override, devolvemos el guardado
-        if cot.codigo and not (override_area or override_tipo or override_cliente):
+        if cot.codigo and not has_overrides:
             return Response({
                 "ok": True,
                 "codigo": cot.codigo,
@@ -3270,7 +3354,7 @@ def generar_codigo_cotizacion(request, id_registro):
         codigo_final = calcular_codigo_dinamico(cot, cot.codigo)
 
         # 9. GUARDADO (Solo en POST y si no es un simple preview con overrides)
-        if request.method == "POST" and not (override_area or override_tipo or override_cliente):
+        if request.method == "POST" and not has_overrides:
             with transaction.atomic():
                 cot.codigo = codigo_final
                 cot.save(update_fields=["codigo"])
@@ -3286,7 +3370,7 @@ def generar_codigo_cotizacion(request, id_registro):
         return Response({
             "ok": True,
             "codigo": codigo_final,
-            "preview": request.method == "GET" or bool(override_area or override_tipo or override_cliente)
+            "preview": request.method == "GET" or has_overrides
         }, status=status.HTTP_200_OK)
 
     except Cotizacion.DoesNotExist:
@@ -3517,18 +3601,16 @@ def build_cotizacion_pdf_context(num_reg):
     # =========================
     cotizacion = (
         Cotizacion.objects
-        .only(
-            "numero", "fecha", "referencia", "cliente_codigo",
-            "nombr", "cargr", "teler", "movir", "mailr",
-            "nombc", "telec", "mov1c", "mov2c", "mov3c", "mailc",
-            "nombt", "telet", "mov1t", "mov2t", "mov3t", "mailt",
-            "plazo", "tot_d", "por_c", "tot_s", "tcamb",
-            "forma_pago", "lugar",
-            "tmone", "igv",
-            "valid", "acu_s",
-            "tot_c", "acu_e", "des_m", "num_reg",
+        .select_related(
+            "id_cliente",
+            "id_representante",
+            "id_comercial",
+            "id_tecnico",
+            "id_unidad_tiempo_entrega_suministros",
+            "id_unidad_tiempo_entrega_servicios",
+            "id_unidad_tiempo_validez",
         )
-        .filter(num_reg=num_reg)
+        .filter(id_registro=num_reg)
         .first()
     )
 
@@ -3538,40 +3620,28 @@ def build_cotizacion_pdf_context(num_reg):
     # =========================
     # BUSCAR NOMBRE DEL CLIENTE (Lógica directa)
     # =========================
-    from cotizaciones_api.models import vc_tab_clientes # El mismo del endpoint
-
-    nombre_cliente_final = cotizacion.nombr or "" # Valor por defecto
-
-    if cotizacion.cliente_codigo:
-        # Limpiamos y formateamos el código (zfill por si faltan los ceros)
-        codigo_busqueda = str(cotizacion.cliente_codigo).strip().zfill(5)
-        
-        # Buscamos directamente
-        cliente_obj = vc_tab_clientes.objects.filter(codigo=codigo_busqueda).first()
-        
-        if cliente_obj:
-            # Usamos 'nombre' que es el campo que vimos en tu Postman
-            nombre_cliente_final = cliente_obj.nombre
-        else:
-            # Si no lo encuentra con ceros, intentamos tal cual viene
-            cliente_obj = vc_tab_clientes.objects.filter(codigo=str(cotizacion.cliente_codigo).strip()).first()
-            if cliente_obj:
-                nombre_cliente_final = cliente_obj.nombre
+    nombre_cliente_final = ""
+    if cotizacion.id_cliente:
+        nombre_cliente_final = cotizacion.id_cliente.nombre
+    else:
+        nombre_cliente_final = cotizacion.representante_nombre or ""
 
     # =========================
     # DETALLES
     # =========================
     suministros_qs = (
         CotizacionSuministro.objects
-        .filter(num_reg=num_reg)
-        .order_by("cog", "nig", "num")
+        .select_related("id_marca", "id_unidad_tiempo_entrega")
+        .filter(id_registro=num_reg)
+        .order_by("codigo_grupo", "nivel", "orden")
         .iterator()
     )
 
     servicios_qs = (
         CotizacionServicio.objects
-        .filter(num_reg=num_reg)
-        .order_by("cog", "nig", "num")
+        .select_related("id_area")
+        .filter(id_registro=num_reg)
+        .order_by("codigo_servicio", "nivel", "orden")
         .iterator()
     )
 
@@ -3593,52 +3663,51 @@ def build_cotizacion_pdf_context(num_reg):
     # CABECERA CONTEXT
     # =========================
     cabecera = {
-        "numero": cotizacion.numero,
-        "num_reg": cotizacion.num_reg,
+        "numero": cotizacion.codigo,
+        "num_reg": cotizacion.id_registro,
         "fecha": fecha_formateada,
         "referencia": cotizacion.referencia,
         "cliente": nombre_cliente_final,
         "atencion": {
-            "nombre": cotizacion.nombr,
-            "cargo": cotizacion.cargr,
-            "telefono": cotizacion.teler or cotizacion.movir,
-            "correo": cotizacion.mailr,
+            "nombre": cotizacion.representante_nombre,
+            "cargo": cotizacion.representante_cargo,
+            "telefono": cotizacion.representante_telefono or cotizacion.representante_movil,
+            "correo": cotizacion.representante_correo,
         },
         "comercial": {
-            "nombre": cotizacion.nombc,
-            "telefono": cotizacion.telec,
-            "movil1": cotizacion.mov1c,
-            "movil2": cotizacion.mov2c,
-            "movil3": cotizacion.mov3c,
-            "correo": cotizacion.mailc,
+            "nombre": cotizacion.id_comercial.nombre_completo if cotizacion.id_comercial else "",
+            "telefono": cotizacion.id_comercial.telefono if cotizacion.id_comercial else "",
+            "movil1": cotizacion.id_comercial.movil_coorporativo if cotizacion.id_comercial else "",
+            "movil2": cotizacion.id_comercial.movil_personal if cotizacion.id_comercial else "",
+            "movil3": "",
+            "correo": cotizacion.id_comercial.correo if cotizacion.id_comercial else "",
         },
         "tecnico": {
-            "nombre": cotizacion.nombt,
-            "telefono": cotizacion.telet,
-            "movil1": cotizacion.mov1t,
-            "movil2": cotizacion.mov2t,
-            "movil3": cotizacion.mov3t,
-            "correo": cotizacion.mailt,
+            "nombre": cotizacion.id_tecnico.nombre_completo if cotizacion.id_tecnico else "",
+            "telefono": cotizacion.id_tecnico.telefono if cotizacion.id_tecnico else "",
+            "movil1": cotizacion.id_tecnico.movil_coorporativo if cotizacion.id_tecnico else "",
+            "movil2": cotizacion.id_tecnico.movil_personal if cotizacion.id_tecnico else "",
+            "movil3": "",
+            "correo": cotizacion.id_tecnico.correo if cotizacion.id_tecnico else "",
         },
         "tiempo_entrega": {
             "suministros": {
-                "cantidad": cotizacion.plazo,
-                "tipo": "Días" if cotizacion.tot_d == "D" else "Semanas" if cotizacion.tot_d == "S" else "Meses",
-
+                "cantidad": cotizacion.entrega_suministros or 0,
+                "tipo": cotizacion.id_unidad_tiempo_entrega_suministros.nombre if cotizacion.id_unidad_tiempo_entrega_suministros else "",
             },
             "servicios": {
-                "cantidad": cotizacion.por_c,
-                "tipo": "Días" if cotizacion.tot_s == "D" else "Semanas" if cotizacion.tot_s == "S" else "Meses",
+                "cantidad": cotizacion.entrega_servicios or 0,
+                "tipo": cotizacion.id_unidad_tiempo_entrega_servicios.nombre if cotizacion.id_unidad_tiempo_entrega_servicios else "",
             },
         },
         "forma_pago": cotizacion.forma_pago,
         "lugar_entrega": cotizacion.lugar,
-        "moneda": "Dólares" if cotizacion.tmone == "D" else "Soles",
-        "moneda_simbolo": "USD" if cotizacion.tmone == "D" else "PEN",
+        "moneda": "Dólares" if cotizacion.tipo_moneda == "D" else "Soles",
+        "moneda_simbolo": "USD" if cotizacion.tipo_moneda == "D" else "PEN",
         "incluye_igv": cotizacion.igv == "S",
         "validez": {
-            "cantidad": cotizacion.valid,
-            "tipo": "Días" if cotizacion.acu_s == "D" else "Semanas" if cotizacion.acu_s == "S" else "Meses",
+            "cantidad": cotizacion.validez_oferta or 0,
+            "tipo": cotizacion.id_unidad_tiempo_validez.nombre if cotizacion.id_unidad_tiempo_validez else "",
         },
     }
 
@@ -3646,8 +3715,8 @@ def build_cotizacion_pdf_context(num_reg):
     # CONVERSIÓN MONEDA
     # =========================
     def convertir(valor, cotizacion):
-        if cotizacion.tmone == "S" and cotizacion.tcamb:
-            return (valor or Decimal("0.00")) * cotizacion.tcamb
+        if cotizacion.tipo_moneda == "S" and cotizacion.tipo_cambio:
+            return (valor or Decimal("0.00")) * cotizacion.tipo_cambio
         return valor or Decimal("0.00")
 
     # =========================
@@ -3657,20 +3726,20 @@ def build_cotizacion_pdf_context(num_reg):
 
     for s in suministros_qs:
 
-        if not s.cog:
+        if s.codigo_grupo is None:
             continue
 
-        if s.nig == 0:
+        if s.nivel == 0:
 
-            can = s.can or Decimal("1.00")
-            tot = convertir(s.tot, cotizacion)
+            can = s.cantidad or Decimal("1.00")
+            tot = convertir(s.venta_total, cotizacion)
 
-            grupos[s.cog] = {
-                "cog": s.cog,
-                "titulo": s.nog,
-                "mov": s.mov,
-                "entrega":s.ent or 0,
-                "unidad_entrega": s.enu or "",
+            grupos[s.codigo_grupo] = {
+                "cog": s.codigo_grupo,
+                "titulo": s.nombre_grupo,
+                "mov": s.id_marca.nombre if s.id_marca else "",
+                "entrega": s.tiempo_entrega or 0,
+                "unidad_entrega": s.id_unidad_tiempo_entrega.nombre if s.id_unidad_tiempo_entrega else "",
                 "cantidad": can,
                 "total": tot,
                 "total_grupo": tot * can,
@@ -3679,34 +3748,39 @@ def build_cotizacion_pdf_context(num_reg):
                 "items": [],
             }
 
-        elif s.nig == 1 and s.cog in grupos:
+        elif s.nivel == 1 and s.codigo_grupo in grupos:
 
-            pu = convertir(s.puc, cotizacion)
-            tot = convertir(s.tot, cotizacion)
+            pu = convertir(s.precio_venta, cotizacion)
+            tot = convertir(s.venta_total, cotizacion)
 
             entrega_unidad = ""
-            if s.enu == 'D':
-                entrega_unidad = "Días" if s.ent != 1 else "Día"
-            elif s.enu == 'S':
-                entrega_unidad = "Semanas" if s.ent != 1 else "Semana"
-            elif s.enu == 'M':
-                entrega_unidad = "Meses" if s.ent != 1 else "Mes"
+            if s.id_unidad_tiempo_entrega:
+                cod = s.id_unidad_tiempo_entrega.codigo.upper()
+                val = s.tiempo_entrega or 0
+                if cod.startswith('D'):
+                    entrega_unidad = "Días" if val != 1 else "Día"
+                elif cod.startswith('S'):
+                    entrega_unidad = "Semanas" if val != 1 else "Semana"
+                elif cod.startswith('M'):
+                    entrega_unidad = "Meses" if val != 1 else "Mes"
+                else:
+                    entrega_unidad = s.id_unidad_tiempo_entrega.nombre
             else:
-                entrega_unidad = s.enu or ""
+                entrega_unidad = ""
 
-            grupos[s.cog]["items"].append({
-                "codigo": s.cod,
-                "descripcion": s.des,
-                "unidad": s.tde,
-                "entrega":s.ent or 0,
+            grupos[s.codigo_grupo]["items"].append({
+                "codigo": s.codigo_item,
+                "descripcion": s.descripcion,
+                "unidad": s.tipo_unidad,
+                "entrega": s.tiempo_entrega or 0,
                 "unidad_entrega": entrega_unidad,
-                "cantidad": s.can or 0,
+                "cantidad": s.cantidad or 0,
                 "precio_unitario": pu,
                 "total": tot,
             })
 
-            grupos[s.cog]["subtotal_pu_items"] += pu
-            grupos[s.cog]["subtotal_tot_items"] += tot
+            grupos[s.codigo_grupo]["subtotal_pu_items"] += pu
+            grupos[s.codigo_grupo]["subtotal_tot_items"] += tot
 
     suministros = list(grupos.values())
     total_suministros = sum(
@@ -3721,44 +3795,48 @@ def build_cotizacion_pdf_context(num_reg):
 
     for s in servicios_qs:
 
-        if not s.cog:
+        if not s.codigo_servicio:
             continue
 
-        if s.nig == 0:
+        if s.nivel == 0:
 
-            can = s.can or Decimal("1.00")
-            tot = convertir(s.tot, cotizacion)
+            can = s.cantidad_hombres or Decimal("1.00")
+            tot = convertir(s.cotizado_total, cotizacion)
 
-            servicios_grupos[s.cog] = {
-                "cog": s.cog,
-                "titulo": s.nog,
-                "mov": s.mov,
+            servicios_grupos[s.codigo_servicio] = {
+                "cog": s.codigo_servicio,
+                "titulo": s.nombre_servicio,
+                "mov": s.id_area.nombre if s.id_area else "",
                 "cantidad": can,
                 "total": tot,
                 "total_servicio": tot * can,
-                "detalle": s.tog or "",
+                "detalle": s.descripcion_servicio or "",
                 "subtotal_pu_items": Decimal("0.00"),
                 "subtotal_tot_items": Decimal("0.00"),
                 "items": [],
             }
 
-        elif s.nig == 1 and s.cog in servicios_grupos:
+        elif s.nivel == 2:
+            # Subitems of nivel 2 only
+            # Find the matching parent group by prefix (first 2 characters of code)
+            prefix = s.codigo_servicio[:2]
+            # Find if there is a group whose code starts with this prefix
+            matching_parent_code = next((k for k in servicios_grupos.keys() if k.startswith(prefix)), None)
+            if matching_parent_code:
+                tot = convertir(s.cotizado_total, cotizacion)
+                pu = convertir(s.cotizado_hombre_dia or s.costo_hombre_dia, cotizacion)
 
-            tot = convertir(s.tot, cotizacion)
-            pu = convertir(s.puc, cotizacion)
-
-            servicios_grupos[s.cog]["items"].append({
-                "codigo": s.cod,
-                "descripcion": s.des,
-                "proveedor": s.pro,
-                "unidad": s.tde,
-                "cantidad": s.can or Decimal("0.00"),
-                "precio_unitario": pu,
-                "total": tot,
-            })
-
-            servicios_grupos[s.cog]["subtotal_pu_items"] += pu
-            servicios_grupos[s.cog]["subtotal_tot_items"] += tot
+                servicios_grupos[matching_parent_code]["items"].append({
+                    "codigo": s.codigo_item or "",
+                    "descripcion": s.descripcion_item or "",
+                    "proveedor": "",
+                    "unidad": "",
+                    "cantidad": s.cantidad_hombres or Decimal("0.00"),
+                    "precio_unitario": pu,
+                    "total": tot,
+                })
+                servicios_grupos[matching_parent_code]["subtotal_pu_items"] += pu
+                servicios_grupos[matching_parent_code]["subtotal_tot_items"] += tot
 
     servicios = list(servicios_grupos.values())
 
@@ -3770,10 +3848,8 @@ def build_cotizacion_pdf_context(num_reg):
     # =========================
     # CONTEXT FINAL
     # =========================
-    descuento = convertir(cotizacion.des_m, cotizacion)
-    total_bruto = convertir(cotizacion.tot_c, cotizacion)
-
-    total_final = total_bruto - descuento
+    descuento = convertir(cotizacion.descuento_monto, cotizacion) if cotizacion.descuento_aplica == 1 else Decimal("0.00")
+    total_final = convertir(cotizacion.total_cotizacion, cotizacion)
 
     # =========================
     # ÍNDICE DINÁMICO
@@ -3832,6 +3908,16 @@ def build_cotizacion_pdf_context(num_reg):
     # Condiciones
     secciones["condiciones"] = contador
 
+    # =========================
+    # CONDICIONES GENERALES
+    # =========================
+    condiciones = ""
+    condicion_obj = CotizacionCondicionGeneral.objects.filter(id_registro=cotizacion).first()
+    if condicion_obj and condicion_obj.descripcion:
+        condiciones = condicion_obj.descripcion
+    elif cotizacion.condiciones_generales:
+        condiciones = cotizacion.condiciones_generales
+
     return {
         "cabecera": cabecera,
         "suministros": suministros,
@@ -3846,7 +3932,7 @@ def build_cotizacion_pdf_context(num_reg):
             "incluye_igv": cabecera["incluye_igv"],
         },
         "condiciones_generales": {
-            "condiciones": cotizacion.acu_e,
+            "condiciones": condiciones,
         },
         "indice": indice,
         "secciones": secciones,
@@ -3863,22 +3949,32 @@ def cotizacion_pdf_context(request, num_reg):
     return Response(context)
 
 @csrf_exempt
+@xframe_options_exempt
 def cotizacion_pdf_preview(request, num_reg):
     context = build_cotizacion_pdf_context(num_reg)
 
     if not context:
         return HttpResponse("Cotización no existe", status=404)
 
-    return render(request, "reportes/cotizacion_pdf.html", context)
+    response = render(request, "reportes/cotizacion_pdf.html", context)
+    if 'X-Frame-Options' in response:
+        del response['X-Frame-Options']
+    response['X-Frame-Options'] = 'ALLOWALL'
+    return response
 
 @csrf_exempt
+@xframe_options_exempt
 def cotizacion_reporte_html(request, num_reg):
     context = build_cotizacion_pdf_context(num_reg)
 
     if not context:
         return HttpResponse("Cotización no existe", status=404)
 
-    return render(request, "reportes/cotizacion_pdf.html", context)
+    response = render(request, "reportes/cotizacion_pdf.html", context)
+    if 'X-Frame-Options' in response:
+        del response['X-Frame-Options']
+    response['X-Frame-Options'] = 'ALLOWALL'
+    return response
 
 def descargar_cotizacion_word(request, num_reg):
     # Asumimos que build_cotizacion_pdf_context ya trae toda la data necesaria
@@ -4041,6 +4137,7 @@ def descargar_cotizacion_word(request, num_reg):
     except Exception as e:
         return HttpResponse(f"Error técnico en el servidor: {str(e)}", status=500) 
 
+@xframe_options_exempt
 def cotizacion_pdf(request, num_reg):
     context = build_cotizacion_pdf_context(num_reg)
 
@@ -4079,6 +4176,9 @@ def cotizacion_pdf(request, num_reg):
 
     # Nota: Usamos optimización de imágenes para evitar que el PDF pese demasiado
     html.write_pdf(response)
+    if 'X-Frame-Options' in response:
+        del response['X-Frame-Options']
+    response['X-Frame-Options'] = 'ALLOWALL'
     return response
 
 @csrf_exempt
@@ -5662,6 +5762,7 @@ def lista_notas(request):
 ## REPORTES ##
 ##==========##
 @csrf_exempt
+@xframe_options_exempt
 def reporte_cotizaciones_dashboard_html(request):
     # =========================
     # Filtros (Homologados con lista_cotizaciones)
@@ -5754,9 +5855,66 @@ def reporte_cotizaciones_dashboard_html(request):
 
     # Búsqueda Flexible
     if campo and valor not in (None, "", " "):
-        campo_real = CAMPOS_BUSQUEDA.get(campo)
-        if campo_real:
-            qs = qs.filter(**{f"{campo_real}__icontains": valor})
+        if campo == "all":
+            from django.db.models import Q
+            from datetime import datetime
+            valor_clean = valor.lower().strip()
+            
+            # Envío
+            q_envio = Q()
+            if "enviado" in valor_clean:
+                q_envio = Q(estado_envio=2)
+            elif "pendiente" in valor_clean:
+                q_envio = Q(estado_envio=1)
+            
+            # Áreas
+            AREA_MAP = {
+                1: "Industria",
+                2: "Minería",
+                3: "Mantenimiento",
+                4: "Petroquímica",
+                8: "Seguridad de Maquinaria",
+            }
+            area_keys = [k for k, v in AREA_MAP.items() if valor_clean in v.lower()]
+            q_area = Q(id_area__in=area_keys) if area_keys else Q()
+            
+            # Intentar convertir valor_clean a número para buscar por total, id_registro
+            q_numero = Q()
+            try:
+                clean_num_str = valor_clean.replace("$", "").replace(",", "").strip()
+                val_num = float(clean_num_str)
+                q_numero = Q(total_cotizacion=val_num) | Q(id_registro=int(val_num) if val_num.is_integer() else 0)
+            except ValueError:
+                pass
+
+            # Intentar parsear fecha
+            q_fecha = Q()
+            for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+                try:
+                    parsed_date = datetime.strptime(valor_clean, fmt).date()
+                    q_fecha = Q(fecha=parsed_date)
+                    break
+                except ValueError:
+                    pass
+            
+            if valor_clean.isdigit() and len(valor_clean) == 4:
+                q_fecha = q_fecha | Q(fecha__year=int(valor_clean))
+
+            qs = qs.filter(
+                Q(codigo__icontains=valor_clean) |
+                Q(referencia__icontains=valor_clean) |
+                Q(id_cliente__nombre__icontains=valor_clean) |
+                Q(representante_nombre__icontains=valor_clean) |
+                Q(id_estado__nombre__icontains=valor_clean) |
+                q_envio |
+                q_area |
+                q_numero |
+                q_fecha
+            )
+        else:
+            campo_real = CAMPOS_BUSQUEDA.get(campo)
+            if campo_real:
+                qs = qs.filter(**{f"{campo_real}__icontains": valor})
 
     # =========================
     # Agrupación por área
@@ -5800,7 +5958,7 @@ def reporte_cotizaciones_dashboard_html(request):
     context = {
         "resultados": resultados,
         "total_general": round(total_general, 2),
-        "titulo": "Reporte de Cotizaciones - Dashboard",
+        "titulo": "Reporte de Cotizaciones",
         "filtros": {
             "anno": anno,
             "mes": mes,
@@ -5812,7 +5970,11 @@ def reporte_cotizaciones_dashboard_html(request):
         }
     }
 
-    return render(request, "reportes/reporte_cotizaciones_dashboard.html", context)
+    response = render(request, "reportes/reporte_cotizaciones_dashboard.html", context)
+    if 'X-Frame-Options' in response:
+        del response['X-Frame-Options']
+    response['X-Frame-Options'] = 'ALLOWALL'
+    return response
 
 @csrf_exempt
 @xframe_options_exempt
@@ -6227,7 +6389,7 @@ def reporte_detallado_cotizacion(request, id_registro):
     context = {
         "id_registro": id_registro,
         "codigo_cotizacion": cotizacion.codigo,
-        "titulo": "RESUMEN DE COSTO UTILIDAD DETALLADO",
+        "titulo": "REPORTE DETALLADO",
         "datos": datos,
         "total_costo": total_costo_final,
         "total_ganancia": total_ganancia_final,
@@ -6358,12 +6520,10 @@ def reporte_resumen_cotizacion(request, id_registro):
 
 @csrf_exempt
 def reporte_venta_total_html(request, num_reg):
-    num_reg = str(num_reg)
-
     suministros = (
         CotizacionSuministro.objects
-        .filter(num_reg=num_reg)
-        .order_by("cog", "nig", "num")
+        .filter(id_registro=num_reg)
+        .order_by("codigo_grupo", "nivel", "orden")
     )
 
     if not suministros.exists():
@@ -6372,39 +6532,38 @@ def reporte_venta_total_html(request, num_reg):
     grupos = OrderedDict()
 
     for row in suministros:
-        if row.cog not in grupos:
-            grupos[row.cog] = {
+        if row.codigo_grupo not in grupos:
+            grupos[row.codigo_grupo] = {
                 "titulo_grupo": "", 
                 "total_venta_grupo": Decimal("0.00"),
                 "envio_grupo": Decimal("0.00"),
                 "items": []
             }
 
-        # CABECERA DEL GRUPO (nig = 0)
-        if row.nig == 0:
-            grupos[row.cog]["titulo_grupo"] = row.nog or "SIN TITULO"
-            # Usamos env_tot que es el campo del modelo para el total del grupo
-            grupos[row.cog]["envio_grupo"] = row.env_tot or Decimal("0.00")
-            grupos[row.cog]["total_venta_grupo"] = row.tot or Decimal("0.00")
+        # CABECERA DEL GRUPO (nivel = 0)
+        if row.nivel == 0:
+            grupos[row.codigo_grupo]["titulo_grupo"] = row.nombre_grupo or "SIN TITULO"
+            grupos[row.codigo_grupo]["envio_grupo"] = row.costo_envio_total or Decimal("0.00")
+            grupos[row.codigo_grupo]["total_venta_grupo"] = row.venta_total or Decimal("0.00")
 
-        # ITEMS DETALLE (nig > 0)
+        # ITEMS DETALLE (nivel > 0)
         else:
-            subtotal_venta = row.tot or Decimal("0.00")
-            subtotal_costo = row.toc or Decimal("0.00")
+            subtotal_venta = row.venta_total or Decimal("0.00")
+            subtotal_costo = row.costo_total or Decimal("0.00")
             
-            grupos[row.cog]["items"].append({
-                "cod": row.cod,
-                "des": row.des,
-                "can": row.can or Decimal("0"),
-                "puc": row.puc or Decimal("0.00"),     # Costo Unitario Base
-                "toc": row.toc or Decimal("0.00"),      # Costo Total Base (Sin envío)
-                "por_env": row.por_env or Decimal("0.00"), # Porcentaje Envío
-                "env_u": row.cost_env or Decimal("0.00"), # Costo Envío
-                "cce": row.cost_c_env or Decimal("0.00"), # Costo Con Envío (ya calculado)
-                "util_porc": row.cau or Decimal("0.00"), # % Utilidad (cau)
-                "tou": row.tou or Decimal("0.00"),     # Utilidad (monto unitario)
-                "val": row.val or Decimal("0.00"),     # Precio Venta Unitario
-                "tot": subtotal_venta,                  # Venta Total
+            grupos[row.codigo_grupo]["items"].append({
+                "cod": row.codigo_item,
+                "des": row.descripcion,
+                "can": row.cantidad or Decimal("0"),
+                "puc": row.costo_precio or Decimal("0.00"),
+                "toc": row.costo_total or Decimal("0.00"),
+                "por_env": row.porcentaje_envio or Decimal("0.00"),
+                "env_u": row.costo_envio or Decimal("0.00"),
+                "cce": row.costo_con_envio or Decimal("0.00"),
+                "util_porc": row.porcentaje_utilidad or Decimal("0.00"),
+                "tou": row.utilidad or Decimal("0.00"),
+                "val": row.precio_venta or Decimal("0.00"),
+                "tot": subtotal_venta,
                 "util_money": subtotal_venta - subtotal_costo
             })
 
@@ -6419,13 +6578,10 @@ def reporte_venta_total_html(request, num_reg):
 
 @csrf_exempt
 def reporte_venta_parcial_html(request, num_reg):
-    num_reg = str(num_reg)
-    
-    # Traemos los datos ordenados por grupo y número de ítem
     suministros = (
         CotizacionSuministro.objects
-        .filter(num_reg=num_reg)
-        .order_by("cog", "nig", "num")
+        .filter(id_registro=num_reg)
+        .order_by("codigo_grupo", "nivel", "orden")
     )
 
     if not suministros.exists():
@@ -6434,35 +6590,34 @@ def reporte_venta_parcial_html(request, num_reg):
     grupos = OrderedDict()
 
     for row in suministros:
-        if row.cog not in grupos:
-            grupos[row.cog] = {
+        if row.codigo_grupo not in grupos:
+            grupos[row.codigo_grupo] = {
                 "titulo_grupo": "", 
                 "envio_grupo": Decimal("0.00"),
                 "total_venta_grupo": Decimal("0.00"),
                 "items": []
             }
 
-        # CABECERA DEL GRUPO (nig = 0)
-        if row.nig == 0:
-            grupos[row.cog]["titulo_grupo"] = row.nog or "SIN TITULO"
-            # env_tot representa el envío acumulado de este grupo
-            grupos[row.cog]["envio_grupo"] = row.env_tot or Decimal("0.00")
-            grupos[row.cog]["total_venta_grupo"] = row.tot or Decimal("0.00")
+        # CABECERA DEL GRUPO (nivel = 0)
+        if row.nivel == 0:
+            grupos[row.codigo_grupo]["titulo_grupo"] = row.nombre_grupo or "SIN TITULO"
+            grupos[row.codigo_grupo]["envio_grupo"] = row.costo_envio_total or Decimal("0.00")
+            grupos[row.codigo_grupo]["total_venta_grupo"] = row.venta_total or Decimal("0.00")
 
-        # ITEMS DEL DETALLE (nig > 0)
+        # ITEMS DEL DETALLE (nivel > 0)
         else:
-            grupos[row.cog]["items"].append({
-                "cod": row.cod,
-                "des": row.des,
-                "can": row.can or Decimal("0"),
-                "puc": row.puc or Decimal("0.00"),     # Costo Unitario Base
-                "toc": row.toc or Decimal("0.00"),     # Costo Total Base
-                "env_u": row.cost_env or Decimal("0.00"), # Costo Envío
-                "cce": row.cost_c_env or Decimal("0.00"), # Costo con Envío
-                "util_porc": row.cau or Decimal("0.00"),  # % Utilidad
-                "util_money": row.tou or Decimal("0.00"), # Utilidad (monto unitario)
-                "val": row.val or Decimal("0.00"),        # Venta Precio Unitario
-                "tot": row.tot or Decimal("0.00")         # Venta Total
+            grupos[row.codigo_grupo]["items"].append({
+                "cod": row.codigo_item,
+                "des": row.descripcion,
+                "can": row.cantidad or Decimal("0"),
+                "puc": row.costo_precio or Decimal("0.00"),
+                "toc": row.costo_total or Decimal("0.00"),
+                "env_u": row.costo_envio or Decimal("0.00"),
+                "cce": row.costo_con_envio or Decimal("0.00"),
+                "util_porc": row.porcentaje_utilidad or Decimal("0.00"),
+                "util_money": row.utilidad or Decimal("0.00"),
+                "val": row.precio_venta or Decimal("0.00"),
+                "tot": row.venta_total or Decimal("0.00")
             })
 
     context = {

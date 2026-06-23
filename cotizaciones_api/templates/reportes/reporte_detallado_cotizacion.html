@@ -11,7 +11,8 @@ body{
     font-family: "Segoe UI", Arial, Helvetica, sans-serif;
     font-size: 12px;
     color:#2b2b2b;
-    margin:20px;
+    margin:0;
+    padding:20px;
     background:#ffffff;
 }
 
@@ -142,6 +143,7 @@ tbody tr:hover{
 </style>
 </head>
 <body>
+<div id="report-content-wrapper">
 <div class="header">
     <div>
         <img class="logo-img" src="{% static 'logo.png' %}" alt="Logo Empresa">
@@ -149,7 +151,7 @@ tbody tr:hover{
 
     <div class="excel-btn">
         <button type="button" id="btnExcel_detallecot">
-            <img src="{% static 'importar-xls.png' %}" alt="excel">
+            <img src="{% static 'Formatos/excel.png' %}" alt="excel">
             Exportar Excel
         </button>
     </div>
@@ -202,6 +204,7 @@ tbody tr:hover{
         </tbody>
     </table>
 </div>
+</div> <!-- /report-content-wrapper -->
 
 <script>
 
@@ -316,7 +319,8 @@ function descargarExcel(tablaHTML){
 <script>
   function notifyParentHeight() {
     if (window.parent && window.parent !== window) {
-      const height = document.documentElement.scrollHeight || document.body.scrollHeight || document.documentElement.offsetHeight;
+      const wrapper = document.getElementById('report-content-wrapper');
+      const height = wrapper ? wrapper.offsetHeight : (document.documentElement.scrollHeight || document.body.scrollHeight);
       window.parent.postMessage({ 
         type: 'set-iframe-height', 
         height: height

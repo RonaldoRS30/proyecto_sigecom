@@ -678,7 +678,7 @@ export default function AperturasDetalle({ idRegistro }) {
           return next;
         });
       } else {
-        navigate('/sigecom/comercial');
+        navigate('/sigecom/comercial/aperturas');
       }
     } catch (err) {
       console.error("Error al eliminar la apertura:", err);
@@ -937,7 +937,7 @@ export default function AperturasDetalle({ idRegistro }) {
         <Icon name="alert-triangle" className="h-8 w-8 text-amber-500 mx-auto mb-3" />
         <h3 className="text-sm font-black text-gray-900 uppercase">Apertura no encontrada</h3>
         <button
-          onClick={() => navigate('/sigecom/comercial')}
+          onClick={() => navigate('/sigecom/comercial/aperturas')}
           className="mt-4 px-4 py-2 bg-slate-900 text-white text-[10px] font-black uppercase tracking-wider rounded-xl hover:bg-slate-800 transition-colors"
         >
           Volver a comercial
@@ -960,7 +960,7 @@ export default function AperturasDetalle({ idRegistro }) {
             <div className="flex items-center">
               {/* Botón Atrás */}
               <button
-                onClick={() => navigate('/sigecom/comercial')}
+                onClick={() => navigate('/sigecom/comercial/aperturas')}
                 className="mr-5 p-2.5 bg-gray-50 rounded-xl text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all border border-gray-100 group"
               >
                 <Icon name="arrow-left" className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />

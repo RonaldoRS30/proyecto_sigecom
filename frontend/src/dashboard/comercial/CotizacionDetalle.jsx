@@ -2121,6 +2121,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   // Control de los modales de visualización para Cliente
   const [reporteResumenOpen, setReporteResumenOpen] = useState(false);
   const [reporteDetalladoOpen, setReporteDetalladoOpen] = useState(false);
+  const [reportePdfOpen, setReportePdfOpen] = useState(false);
 
   // Control de altura responsiva para iframes de reportes
   const [reporteHeight, setReporteHeight] = useState(null);
@@ -2128,14 +2129,14 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
 
   // Resetear estados al abrir/cerrar modales
   useEffect(() => {
-    if (!reporteSuministrosOpen && !reporteServiciosOpen && !reporteDetalladoOpen && !reporteResumenOpen) {
+    if (!reporteSuministrosOpen && !reporteServiciosOpen && !reporteDetalladoOpen && !reporteResumenOpen && !reportePdfOpen) {
       setReporteHeight(null);
       setReporteLoading(true);
     } else {
       setReporteLoading(true);
       setReporteHeight(null);
     }
-  }, [reporteSuministrosOpen, reporteServiciosOpen, reporteDetalladoOpen, reporteResumenOpen]);
+  }, [reporteSuministrosOpen, reporteServiciosOpen, reporteDetalladoOpen, reporteResumenOpen, reportePdfOpen]);
 
   // Escuchar mensaje de altura de los reportes
   useEffect(() => {
@@ -2152,15 +2153,30 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  // Cerrar reportes al presionar la tecla Escape
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setReporteSuministrosOpen(false);
+        setReporteServiciosOpen(false);
+        setReporteDetalladoOpen(false);
+        setReporteResumenOpen(false);
+        setReportePdfOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Fallback de carga por seguridad (1.5 segundos)
   useEffect(() => {
-    if (reporteSuministrosOpen || reporteServiciosOpen || reporteDetalladoOpen || reporteResumenOpen) {
+    if (reporteSuministrosOpen || reporteServiciosOpen || reporteDetalladoOpen || reporteResumenOpen || reportePdfOpen) {
       const timer = setTimeout(() => {
         setReporteLoading(false);
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [reporteSuministrosOpen, reporteServiciosOpen, reporteDetalladoOpen, reporteResumenOpen]);
+  }, [reporteSuministrosOpen, reporteServiciosOpen, reporteDetalladoOpen, reporteResumenOpen, reportePdfOpen]);
 
   // Efecto para cerrar el menú si se hace clic fuera de él (Cierre Orgánico)
   useEffect(() => {
@@ -2723,6 +2739,27 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   const [generalConditions, setGeneralConditions] = useState('');
   const [currentStatus, setCurrentStatus] = useState('');
 
+  // Estados para descuento comercial
+  const [descuentoAplicar, setDescuentoAplicar] = useState(false);
+  const [descuentoAfecto, setDescuentoAfecto] = useState("t");
+  const [descuentoPorcentaje, setDescuentoPorcentaje] = useState("");
+  const [descuentoImporte, setDescuentoImporte] = useState("");
+  const [descuentoTotales, setDescuentoTotales] = useState({ total: 0, suministros: 0, servicios: 0, des_m: 0 });
+  const [loadingDescuentoTotales, setLoadingDescuentoTotales] = useState(false);
+  const [descuentoError, setDescuentoError] = useState("");
+  const [savingDescuento, setSavingDescuento] = useState(false);
+  const [originalDescuento, setOriginalDescuento] = useState({
+    aplicar: false,
+    afecto: "t",
+    porcentaje: "",
+    importe: ""
+  });
+
+  const isDescuentoDirty = descuentoAplicar !== originalDescuento.aplicar ||
+    descuentoAfecto !== originalDescuento.afecto ||
+    String(descuentoPorcentaje) !== String(originalDescuento.porcentaje) ||
+    String(descuentoImporte) !== String(originalDescuento.importe);
+
   const [gruposExpandidos, setGruposExpandidos] = useState({});
 
   const toggleGrupo = (grupoId) => {
@@ -2890,10 +2927,10 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
           id_cliente: clienteId || ""
         }
       });
-      if (res.ok && res.codigo) {
+      if (res.ok) {
         setData(prev => {
           if (!prev) return prev;
-          return { ...prev, codigo: res.codigo };
+          return { ...prev, codigo: res.codigo || "" };
         });
       }
     } catch (err) {
@@ -3066,8 +3103,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   // ==============================
   // CONTROL DE EDICIÓN POR ENVÍO
   // ==============================
-
-  // Track if changes have been made in header fields
   // Track if changes have been made in header fields
   const isHeaderDirty = useMemo(() => {
     if (!data || !originalData) return false;
@@ -3108,7 +3143,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
 
   const isCondicionesDirty = generalConditions !== loadedConditionsRef.current;
 
-  const isDirty = isHeaderDirty || isSuministrosDirty || isServiciosDirty || isCondicionesDirty;
+  const isDirty = isHeaderDirty || isSuministrosDirty || isServiciosDirty || isCondicionesDirty || isDescuentoDirty;
 
   const [savingHeader, setSavingHeader] = useState(false);
 
@@ -3174,7 +3209,31 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
         promises.push(saveServicios());
       }
 
+      if (isDescuentoDirty) {
+        if (descuentoError) {
+          throw new Error(`Error en Descuento Comercial: ${descuentoError}`);
+        }
+        const discountPayload = {
+          aplicar: descuentoAplicar,
+          afecto: descuentoAfecto,
+          porcentaje: descuentoPorcentaje ? Number(descuentoPorcentaje) : null,
+          importe: descuentoImporte ? Number(descuentoImporte) : null
+        };
+        const discountPromise = api.post(`/cotizaciones/${numReg}/descuento/`, discountPayload).then(() => {
+          setOriginalDescuento({
+            aplicar: descuentoAplicar,
+            afecto: descuentoAfecto,
+            porcentaje: descuentoPorcentaje,
+            importe: descuentoImporte
+          });
+        });
+        promises.push(discountPromise);
+      }
+
       await Promise.all(promises);
+
+      // Cargar la información fresca (incluidos totales de la cotización y descuento recalculados)
+      await loadAllData();
 
       toast.success("Cambios guardados correctamente");
       queryClient.invalidateQueries({ queryKey: ["cotizaciones"] });
@@ -3188,7 +3247,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
       queryClient.invalidateQueries({ queryKey: ["cotizacion-detalle", numReg] });
     } catch (err) {
       console.error("Error al guardar cambios:", err);
-      const errMsg = err.response?.data?.error || "Error al guardar cambios de la cotización";
+      const errMsg = err.response?.data?.error || err.message || "Error al guardar cambios de la cotización";
       toast.error(errMsg);
     } finally {
       setSavingHeader(false);
@@ -3219,6 +3278,145 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
 
       return newState;
     });
+  };
+
+  const fetchDescuento = async () => {
+    if (!numReg) return;
+    try {
+      const res = await api.get(`/cotizaciones/${numReg}/descuento/`);
+      const aplicar = res.data.aplicar ?? false;
+      const afecto = res.data.afecto ?? "t";
+      const porcentaje = res.data.porcentaje !== null && res.data.porcentaje !== undefined ? String(res.data.porcentaje) : "";
+      const importe = res.data.importe !== null && res.data.importe !== undefined ? String(res.data.importe) : "";
+
+      setDescuentoAplicar(aplicar);
+      setDescuentoAfecto(afecto);
+      setDescuentoPorcentaje(porcentaje);
+      setDescuentoImporte(importe);
+      setOriginalDescuento({ aplicar, afecto, porcentaje, importe });
+      setDescuentoError("");
+    } catch {
+      console.warn("⚠️ No hay descuento guardado aún");
+    }
+
+    setLoadingDescuentoTotales(true);
+    try {
+      const resTot = await api.get(`/cotizaciones/${numReg}/totales-descuento/`);
+      setDescuentoTotales(resTot.data);
+    } catch (err) {
+      console.error("Error al obtener totales de descuento:", err);
+    } finally {
+      setLoadingDescuentoTotales(false);
+    }
+  };
+
+  const getBaseAfecta = () => {
+    if (descuentoAfecto === "t") return descuentoTotales.total;
+    if (descuentoAfecto === "su") return descuentoTotales.suministros;
+    if (descuentoAfecto === "ser") return descuentoTotales.servicios;
+    return 0;
+  };
+
+  const handleDescuentoImporteChange = (value) => {
+    const base = getBaseAfecta();
+    setDescuentoImporte(value);
+    if (!base || !value) {
+      setDescuentoPorcentaje("");
+      setDescuentoError("");
+      return;
+    }
+    const valNum = Number(value);
+    if (valNum > base) setDescuentoError("El importe no puede superar el total base");
+    else setDescuentoError("");
+    setDescuentoPorcentaje(((valNum / base) * 100).toFixed(2));
+  };
+
+  const handleDescuentoPorcentajeChange = (value) => {
+    const base = getBaseAfecta();
+    setDescuentoPorcentaje(value);
+    if (!base || !value) {
+      setDescuentoImporte("");
+      setDescuentoError("");
+      return;
+    }
+    const valNum = Number(value);
+    if (valNum > 100) setDescuentoError("El porcentaje no puede superar 100%");
+    else setDescuentoError("");
+    setDescuentoImporte(((base * valNum) / 100).toFixed(2));
+  };
+
+  // Recalcular importe o porcentaje cuando cambie descuentoAfecto
+  useEffect(() => {
+    if (!descuentoImporte && !descuentoPorcentaje) return;
+    if (descuentoImporte) handleDescuentoImporteChange(descuentoImporte);
+    else if (descuentoPorcentaje) handleDescuentoPorcentajeChange(descuentoPorcentaje);
+  }, [descuentoAfecto]);
+
+  const handleGuardarDescuento = async () => {
+    if (descuentoError) return;
+    setSavingDescuento(true);
+    try {
+      const payload = {
+        aplicar: descuentoAplicar,
+        afecto: descuentoAfecto,
+        porcentaje: descuentoPorcentaje ? Number(descuentoPorcentaje) : null,
+        importe: descuentoImporte ? Number(descuentoImporte) : null
+      };
+      await api.post(`/cotizaciones/${numReg}/descuento/`, payload);
+      toast.success("Descuento guardado y aplicado correctamente");
+      
+      // Invalidate queries to refresh totals in parent views
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones"] });
+      queryClient.invalidateQueries({ queryKey: ["oportunidades"] });
+      queryClient.invalidateQueries({ queryKey: ["aperturas"] });
+      queryClient.invalidateQueries({ queryKey: ["cotizacion", numReg] });
+      queryClient.invalidateQueries({ queryKey: ["cotizacion-detalle", numReg] });
+
+      // Reload main page data
+      await loadAllData();
+    } catch (err) {
+      console.error("Error al guardar descuento:", err);
+      toast.error("Error al guardar el descuento");
+    } finally {
+      setSavingDescuento(false);
+    }
+  };
+
+  const handleResetDescuento = async () => {
+    if (isReadOnly) return;
+    setSavingDescuento(true);
+    try {
+      const payload = {
+        aplicar: false,
+        afecto: "t",
+        porcentaje: null,
+        importe: null
+      };
+      await api.post(`/cotizaciones/${numReg}/descuento/`, payload);
+      toast.success("Descuento eliminado correctamente");
+
+      // Reset local fields
+      setDescuentoAplicar(false);
+      setDescuentoAfecto("t");
+      setDescuentoPorcentaje("");
+      setDescuentoImporte("");
+      setDescuentoError("");
+
+      // Invalidate queries
+      queryClient.invalidateQueries({ queryKey: ["cotizaciones"] });
+      queryClient.invalidateQueries({ queryKey: ["oportunidades"] });
+      queryClient.invalidateQueries({ queryKey: ["aperturas"] });
+      queryClient.invalidateQueries({ queryKey: ["cotizacion", numReg] });
+      queryClient.invalidateQueries({ queryKey: ["cotizacion-detalle", numReg] });
+
+      // Reload main page data
+      await loadAllData();
+    } catch (err) {
+      console.error("Error al resetear descuento:", err);
+      toast.error("Error al eliminar el descuento");
+    } finally {
+      setSavingDescuento(false);
+    }
   };
 
   useEffect(() => {
@@ -3256,6 +3454,9 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
       // 3. Servicios (simulado o endpoint real si existe)
       // const srvRes = await api.get(`cotizaciones/cotizacion/${numReg}/servicios/`);
       // setGruposServicios(mapServiciosBackendToState(srvRes.data));
+
+      // 4. Descuento
+      await fetchDescuento();
 
     } catch (err) {
       console.error("Error loading data:", err);
@@ -5343,7 +5544,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
         <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Error de Carga</h3>
         <p className="text-sm text-gray-500 mt-2">No se pudo encontrar la información solicitada o el servidor no respondió correctamente.</p>
         <button
-          onClick={() => navigate('/sigecom/comercial')}
+          onClick={() => navigate(esOportunidad ? '/sigecom/comercial/oportunidades' : '/sigecom/comercial/cotizaciones')}
           className="mt-6 px-6 py-2.5 bg-gray-900 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-800 transition-all"
         >
           Volver al Listado
@@ -5364,7 +5565,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
             <div className="flex items-center">
               {/* Botón Atrás */}
               <button
-                onClick={() => navigate('/sigecom/comercial')}
+                onClick={() => navigate(esOportunidad ? '/sigecom/comercial/oportunidades' : '/sigecom/comercial/cotizaciones')}
                 className="mr-5 p-2.5 bg-gray-50 rounded-xl text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all border border-gray-100 group"
               >
                 <Icon name="arrow-left" className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />
@@ -5706,16 +5907,16 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                     {/* Opción 3: Formato Word/PDF*/}
                     <button
                       onClick={() => {
-                        toast.success("Se harán reportes WORD y PDF (API pendiente)");
+                        setReportePdfOpen(true);
                         setReporteMenuOpen(false);
                       }}
                       className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
                     >
                       <div className="p-1 bg-slate-50 rounded-lg text-slate-400">
-                        <Icon name="file-doc" className="h-3.5 w-3.5" />
+                        <LucideIcons.FileDown className="h-3.5 w-3.5" />
                       </div>
                       <div>
-                        <p className="font-bold leading-none text-slate-600">Exportar Word / PDF</p>
+                        <p className="font-bold leading-none text-slate-600">Reporte PDF / Word</p>
                         <span className="text-[9px] text-slate-400 font-medium">Formatos de descarga</span>
                       </div>
                     </button>
@@ -6881,9 +7082,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
           )}
         </div>
 
-
-
-        {/* DATOS COTIZACION CLASSIC */}
+        {/* DATOS COTIZACION */}
         {!esOportunidad && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 font-sans relative z-10 focus-within:z-30">
             <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center rounded-t-2xl">
@@ -7261,9 +7460,198 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                 </div>
               </div>
 
+              {/* Total Cotización (col-span-2) */}
+              <div className="pt-3 border-t border-gray-100 grid grid-cols-2 gap-3">
+                <div className="col-span-2 bg-slate-900 text-white p-3.5 rounded-xl flex items-center justify-between shadow-sm">
+                  <div className="flex flex-col">
+                    <span className="text-[8px] font-black text-indigo-350 uppercase tracking-widest leading-none mb-1">
+                      Total Cotización
+                    </span>
+                    <span className="text-xs font-black uppercase text-indigo-150 leading-none">
+                      Importe Global
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-black text-white">
+                      {formatMoneySymbol(data?.total_cotizacion || 0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
             </div>
           </div>
         )}
+
+        {/* DESCUENTO COMERCIAL */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+            <h3 className="font-black text-gray-900 flex items-center text-[11px] uppercase tracking-wider">
+              <Icon name="percent" className="h-3.5 w-3.5 mr-2 text-indigo-500" strokeWidth={2.5} /> Descuento Comercial
+            </h3>
+            <div className="flex items-center gap-3">
+              {loadingDescuentoTotales && (
+                <div className="animate-spin h-3 w-3 border-2 border-teal-500 border-t-transparent rounded-full" />
+              )}
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  disabled={savingDescuento}
+                  onClick={handleResetDescuento}
+                  className="group flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-rose-500 uppercase tracking-widest transition-all disabled:opacity-50"
+                  title="Limpiar descuento"
+                >
+                  <Icon name="rotate-ccw" className="h-3.5 w-3.5 group-hover:rotate-[-45deg] transition-transform" />
+                  <span>Limpiar</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="p-4 space-y-4">
+            
+            {/* Grid de 2 columnas para la configuración del descuento */}
+            <div className="grid grid-cols-2 gap-3 pb-1">
+              
+              {/* Aplicar Descuento */}
+              <CompactField label="Aplicar Descuento" className="group relative justify-center">
+                <div className="flex items-center min-h-[18px]">
+                  <input
+                    type="checkbox"
+                    disabled={isReadOnly}
+                    checked={descuentoAplicar}
+                    onChange={(e) => setDescuentoAplicar(e.target.checked)}
+                    className="w-4 h-4 text-teal-650 border-gray-300 rounded focus:ring-teal-500/20 transition-all cursor-pointer disabled:cursor-not-allowed"
+                  />
+                </div>
+              </CompactField>
+
+              {/* Afecto a */}
+              <CompactField label="Afecto a" className="group relative">
+                <div className="relative">
+                  <select
+                    disabled={isReadOnly}
+                    value={descuentoAfecto}
+                    onChange={(e) => setDescuentoAfecto(e.target.value)}
+                    className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 cursor-pointer w-full appearance-none pr-4 uppercase"
+                  >
+                    <option value="t">TOTAL GENERAL</option>
+                    <option value="su">SUMINISTROS</option>
+                    <option value="ser">SERVICIOS</option>
+                  </select>
+                  {!isReadOnly && (
+                    <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      <Icon name="chevron-down" className="h-2 w-2 text-gray-400" />
+                    </div>
+                  )}
+                </div>
+              </CompactField>
+
+              {/* Porcentaje */}
+              <CompactField label="Porcentaje" className="group relative">
+                <div className="relative flex items-center w-full">
+                  <input
+                    type="number"
+                    step="0.01"
+                    disabled={isReadOnly}
+                    value={descuentoPorcentaje}
+                    onChange={(e) => handleDecimalChange(e, handleDescuentoPorcentajeChange)}
+                    placeholder="0.00"
+                    className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 outline-none w-full pr-4 font-mono"
+                  />
+                  <span className="absolute right-0 text-[10px] font-bold text-gray-400">%</span>
+                </div>
+              </CompactField>
+
+              {/* Importe */}
+              <CompactField label="Importe" className="group relative">
+                <div className="relative flex items-center w-full">
+                  <input
+                    type="number"
+                    step="0.01"
+                    disabled={isReadOnly}
+                    value={descuentoImporte}
+                    onChange={(e) => handleDecimalChange(e, handleDescuentoImporteChange)}
+                    placeholder="0.00"
+                    className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 outline-none w-full pr-6 font-mono"
+                  />
+                  <span className="absolute right-0 text-[10px] font-bold text-gray-400">
+                    {data?.tipo_moneda === 'S' || data?.tipo_moneda === 'PEN' ? 'S/' : '$'}
+                  </span>
+                </div>
+              </CompactField>
+
+            </div>
+
+            {descuentoError && (
+              <p className="text-red-500 text-[9px] font-black uppercase tracking-tighter bg-red-50 p-2 rounded-lg border border-red-100">
+                {descuentoError}
+              </p>
+            )}
+
+            {/* SECCIÓN 2: DASHBOARD */}
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              
+              {/* Resumen de Base */}
+              <div className="bg-gray-50/80 p-3 rounded-xl border border-gray-100 space-y-2">
+                <div className="flex items-center gap-1.5 pb-1 border-b border-gray-200/50">
+                  <Icon name="calculator" className="h-3 w-3 text-teal-650" />
+                  <span className="text-[9px] font-black text-slate-700 uppercase tracking-wider">Base de Cálculo</span>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-[9px] font-bold">
+                    <span className="text-slate-500">Total Original:</span>
+                    <span className="text-slate-900 font-mono text-[9.5px]">
+                      {formatMoneySymbol((Number(descuentoTotales.total || 0) + Number(descuentoTotales.des_m || 0)))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[9px]">
+                    <span className="text-slate-500">Suministros:</span>
+                    <span className="text-slate-770 font-mono">
+                      {formatMoneySymbol(Number(descuentoTotales.suministros || 0))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[9px]">
+                    <span className="text-slate-500">Servicios:</span>
+                    <span className="text-slate-770 font-mono">
+                      {formatMoneySymbol(Number(descuentoTotales.servicios || 0))}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Resultado Final */}
+              <div className={cn(
+                "p-3 rounded-xl border space-y-2 transition-all duration-300",
+                descuentoAplicar
+                  ? "bg-teal-50/30 border-teal-150"
+                  : "bg-gray-50/40 border-gray-100 opacity-60"
+              )}>
+                <div className="flex items-center gap-1.5 pb-1 border-b border-teal-200/20">
+                  <Icon name="trending-up" className={cn("h-3 w-3", descuentoAplicar ? "text-teal-650" : "text-gray-400")} />
+                  <span className={cn("text-[9px] font-black uppercase tracking-wider", descuentoAplicar ? "text-teal-700" : "text-slate-500")}>Resultado Final</span>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-[9px] font-bold">
+                    <span className="text-slate-500">Descuento:</span>
+                    <span className="font-black text-red-650 italic">
+                      {descuentoAplicar ? `- ${formatMoneySymbol(Number(descuentoImporte || 0))}` : '0.00'}
+                    </span>
+                  </div>
+                  <div className="pt-1 border-t border-slate-200/50">
+                    <div className="flex justify-between items-center text-[9.5px] font-black">
+                      <span className={descuentoAplicar ? "text-teal-700" : "text-slate-650"}>Total Final:</span>
+                      <span className={cn("font-mono", descuentoAplicar ? "text-teal-700 text-[10px]" : "text-slate-800")}>
+                        {formatMoneySymbol((Number(descuentoTotales.total || 0) + Number(descuentoTotales.des_m || 0) - (descuentoAplicar ? Number(descuentoImporte || 0) : 0)))}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
 
         {/* DOCUMENTOS ADJUNTOS */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
@@ -7824,192 +8212,275 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
 
       {/* REPORTE DE SUMINISTROS */}
       {reporteSuministrosOpen && createPortal(
-        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4 transition-all">
-          {reporteLoading ? (
-            <div className="bg-white rounded-2xl shadow-2xl p-6 flex flex-col items-center justify-center border border-slate-200 w-80 h-40 animate-in fade-in zoom-in-95 duration-150">
-              <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
+        <div 
+          onClick={() => setReporteSuministrosOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 transition-all"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150 transition-all duration-300"
+            style={{
+              height: reporteHeight ? `${Math.min(window.innerHeight * 0.88, reporteHeight + 160)}px` : '350px'
+            }}
+          >
+            {/* Cabecera del Modal */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div>
+                <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
+                  Previsualización del Reporte Oficial
+                </h3>
+                <p className="text-[11px] text-slate-500 font-bold mt-0.5 uppercase tracking-wider">
+                  Módulo Suministros • Cotización N° {numReg}
+                </p>
+              </div>
+              
+              {/* Botón Cerrar */}
+              <button 
+                onClick={() => setReporteSuministrosOpen(false)}
+                className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100 border border-slate-200/60"
+                title="Cerrar Previsualización"
+              >
+                <LucideIcons.X className="h-4 w-4" />
+              </button>
             </div>
-          ) : (
-            <div 
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 border border-slate-200"
-              style={{
-                height: reporteHeight ? `${Math.min(window.innerHeight * 0.9, reporteHeight + 90)}px` : '88vh'
-              }}
-            >
-              {/* Cabecera del Modal */}
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
-                <div>
-                  <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
-                    Previsualización del Reporte Oficial
-                  </h3>
-                  <p className="text-[11px] text-slate-500 font-bold mt-0.5 uppercase tracking-wider">
-                    Módulo Suministros • Cotización N° {numReg}
-                  </p>
+
+            {/* Cuerpo del Modal con Iframe */}
+            <div className="flex-1 bg-slate-50 p-4 overflow-hidden relative flex items-center justify-center">
+              {reporteLoading && (
+                <div className="absolute inset-0 bg-white flex flex-col items-center justify-center z-10">
+                  <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
                 </div>
-                
-                {/* Botón Cerrar */}
-                <button 
-                  onClick={() => setReporteSuministrosOpen(false)}
-                  className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100 border border-slate-200/60"
-                  title="Cerrar Previsualización"
-                >
-                  <LucideIcons.X className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* Cuerpo del Modal con Iframe */}
-              <div className="flex-1 bg-slate-50 p-4 overflow-hidden">
-                <iframe 
-                  src={`${api.defaults.baseURL}/cotizaciones/reporte-suministros-html/${numReg}/`}
-                  className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
-                  title="Reporte de Suministros Oficial"
-                />
-              </div>
-
+              )}
+              <iframe 
+                src={`${api.defaults.baseURL}/cotizaciones/reporte-suministros-html/${numReg}/`}
+                className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
+                title="Reporte de Suministros Oficial"
+                scrolling={reporteHeight && (reporteHeight + 160 < window.innerHeight * 0.88) ? "no" : "auto"}
+                style={{ overflow: reporteHeight && (reporteHeight + 160 < window.innerHeight * 0.88) ? 'hidden' : 'auto' }}
+              />
             </div>
-          )}
+          </div>
         </div>,
         document.body
       )}
 
       {/* REPORTE DE SERVICIOS */}
       {reporteServiciosOpen && createPortal(
-        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4 transition-all">
-          {reporteLoading ? (
-            <div className="bg-white rounded-2xl shadow-2xl p-6 flex flex-col items-center justify-center border border-slate-200 w-80 h-40 animate-in fade-in zoom-in-95 duration-150">
-              <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
+        <div 
+          onClick={() => setReporteServiciosOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 transition-all"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150 transition-all duration-300"
+            style={{
+              height: reporteHeight ? `${Math.min(window.innerHeight * 0.88, reporteHeight + 160)}px` : '350px'
+            }}
+          >
+            {/* Cabecera del Modal */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div>
+                <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
+                  Previsualización del Reporte de Servicios
+                </h3>
+                <p className="text-[11px] text-slate-500 font-bold mt-0.5 uppercase tracking-wider">
+                  Módulo Servicios • Cotización N° {numReg}
+                </p>
+              </div>
+              
+              {/* Botón Cerrar */}
+              <button 
+                onClick={() => setReporteServiciosOpen(false)}
+                className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100 border border-slate-200/60"
+                title="Cerrar Previsualización"
+              >
+                <LucideIcons.X className="h-4 w-4" />
+              </button>
             </div>
-          ) : (
-            <div 
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 border border-slate-200"
-              style={{
-                height: reporteHeight ? `${Math.min(window.innerHeight * 0.9, reporteHeight + 90)}px` : '88vh'
-              }}
-            >
-              {/* Cabecera del Modal */}
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
-                <div>
-                  <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
-                    Previsualización del Reporte de Servicios
-                  </h3>
-                  <p className="text-[11px] text-slate-500 font-bold mt-0.5 uppercase tracking-wider">
-                    Módulo Servicios • Cotización N° {numReg}
-                  </p>
+
+            {/* Cuerpo del Modal con el Iframe apuntando al endpoint de Servicios */}
+            <div className="flex-1 bg-slate-50 p-4 overflow-hidden relative flex items-center justify-center">
+              {reporteLoading && (
+                <div className="absolute inset-0 bg-white flex flex-col items-center justify-center z-10">
+                  <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
                 </div>
-                
-                {/* Botón Cerrar */}
-                <button 
-                  onClick={() => setReporteServiciosOpen(false)}
-                  className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100 border border-slate-200/60"
-                  title="Cerrar Previsualización"
-                >
-                  <LucideIcons.X className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* Cuerpo del Modal con el Iframe apuntando al endpoint de Servicios */}
-              <div className="flex-1 bg-slate-50 p-4 overflow-hidden">
-                <iframe 
-                  src={`${api.defaults.baseURL}/cotizaciones/reporte-servicios-html/${numReg}/`}
-                  className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
-                  title="Reporte de Servicios Oficial"
-                />
-              </div>
-
+              )}
+              <iframe 
+                src={`${api.defaults.baseURL}/cotizaciones/reporte-servicios-html/${numReg}/`}
+                className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
+                title="Reporte de Servicios Oficial"
+                scrolling={reporteHeight && (reporteHeight + 160 < window.innerHeight * 0.88) ? "no" : "auto"}
+                style={{ overflow: reporteHeight && (reporteHeight + 160 < window.innerHeight * 0.88) ? 'hidden' : 'auto' }}
+              />
             </div>
-          )}
+          </div>
         </div>,
         document.body
       )}
 
       {/*  REPORTE DETALLADO */}
       {reporteDetalladoOpen && createPortal(
-        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4">
-          {reporteLoading ? (
-            <div className="bg-white rounded-2xl shadow-2xl p-6 flex flex-col items-center justify-center border border-slate-200 w-80 h-40 animate-in fade-in zoom-in-95 duration-150">
-              <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
+        <div 
+          onClick={() => setReporteDetalladoOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 transition-all"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150 transition-all duration-300"
+            style={{
+              height: reporteHeight ? `${Math.min(window.innerHeight * 0.88, reporteHeight + 140)}px` : '350px'
+            }}
+          >
+            {/* Cabecera del Modal */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div>
+                <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
+                  Reporte de Cotización Detallado
+                </h3>
+              </div>
+              <button 
+                onClick={() => setReporteDetalladoOpen(false)}
+                className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100"
+              >
+                <LucideIcons.X className="h-4 w-4" />
+              </button>
             </div>
-          ) : (
-            <div 
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150"
-              style={{
-                height: reporteHeight ? `${Math.min(window.innerHeight * 0.9, reporteHeight + 90)}px` : '88vh'
-              }}
-            >
-              {/* Cabecera del Modal */}
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
-                <div>
-                  <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
-                    Reporte de Cotización Detallado
-                  </h3>
+
+            {/* CUERPO: El iframe usa exactamente tu PATH de Django */}
+            <div className="flex-1 bg-slate-50 p-4 overflow-hidden relative flex items-center justify-center">
+              {reporteLoading && (
+                <div className="absolute inset-0 bg-white flex flex-col items-center justify-center z-10">
+                  <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
                 </div>
-                <button 
-                  onClick={() => setReporteDetalladoOpen(false)}
-                  className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100"
-                >
-                  <LucideIcons.X className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* CUERPO: El iframe usa exactamente tu PATH de Django */}
-              <div className="flex-1 bg-slate-50 p-4 overflow-hidden">
-                <iframe 
-                  src={`${api.defaults.baseURL}/cotizaciones/reporte-detallado/${numReg}/`}
-                  className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
-                  title="Reporte Cliente Detallado"
-                />
-              </div>
-
+              )}
+              <iframe 
+                src={`${api.defaults.baseURL}/cotizaciones/reporte-detallado/${numReg}/`}
+                className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
+                title="Reporte Cliente Detallado"
+                scrolling={reporteHeight && (reporteHeight + 140 < window.innerHeight * 0.88) ? "no" : "auto"}
+                style={{ overflow: reporteHeight && (reporteHeight + 140 < window.innerHeight * 0.88) ? 'hidden' : 'auto' }}
+              />
             </div>
-          )}
+          </div>
         </div>,
         document.body
       )}
 
       {/*  REPORTE RESUMEN */}
       {reporteResumenOpen && createPortal(
-        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4">
-          {reporteLoading ? (
-            <div className="bg-white rounded-2xl shadow-2xl p-6 flex flex-col items-center justify-center border border-slate-200 w-80 h-40 animate-in fade-in zoom-in-95 duration-150">
-              <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
+        <div 
+          onClick={() => setReporteResumenOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 transition-all"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150 transition-all duration-300"
+            style={{
+              height: reporteHeight ? `${Math.min(window.innerHeight * 0.88, reporteHeight + 140)}px` : '350px'
+            }}
+          >
+            {/* Cabecera del Modal */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div>
+                <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
+                  Reporte de Cotización Resumen
+                </h3>
+              </div>
+              <button 
+                onClick={() => setReporteResumenOpen(false)}
+                className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100"
+              >
+                <LucideIcons.X className="h-4 w-4" />
+              </button>
             </div>
-          ) : (
-            <div 
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150"
-              style={{
-                height: reporteHeight ? `${Math.min(window.innerHeight * 0.9, reporteHeight + 90)}px` : '88vh'
-              }}
-            >
-              {/* Cabecera del Modal */}
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
-                <div>
-                  <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
-                    Reporte de Cotización Resumen
-                  </h3>
+
+            {/* CUERPO: El iframe usa exactamente tu PATH de Django */}
+            <div className="flex-1 bg-slate-50 p-4 overflow-hidden relative flex items-center justify-center">
+              {reporteLoading && (
+                <div className="absolute inset-0 bg-white flex flex-col items-center justify-center z-10">
+                  <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
                 </div>
+              )}
+              <iframe 
+                src={`${api.defaults.baseURL}/cotizaciones/reporte-resumen/${numReg}/`}
+                className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
+                title="Reporte Cliente Resumen"
+                scrolling={reporteHeight && (reporteHeight + 140 < window.innerHeight * 0.88) ? "no" : "auto"}
+                style={{ overflow: reporteHeight && (reporteHeight + 140 < window.innerHeight * 0.88) ? 'hidden' : 'auto' }}
+              />
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* REPORTE PDF PREVIEW & WORD DOWNLOAD */}
+      {reportePdfOpen && createPortal(
+        <div 
+          onClick={() => setReportePdfOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 transition-all"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150 transition-all duration-300"
+            style={{
+              height: '88vh'
+            }}
+          >
+            {/* Cabecera del Modal */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div>
+                <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
+                  Previsualización de Propuesta Económica
+                </h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => window.open(`${api.defaults.baseURL}/cotizaciones/${numReg}/pdf/`, '_blank')}
+                  className="flex items-center px-3.5 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-[10px] font-black text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-sm transition-all uppercase group"
+                >
+                  <Icon name="file-text" className="h-3.5 w-3.5 mr-1.5 text-emerald-600 group-hover:scale-110 transition-transform" />
+                  Descargar PDF
+                </button>
+
+                <button
+                  onClick={() => window.open(`${api.defaults.baseURL}/cotizaciones/cotizacion/word/${numReg}/`, '_blank')}
+                  className="flex items-center px-3.5 py-2 bg-blue-50 border border-blue-200 rounded-xl text-[10px] font-black text-blue-700 hover:bg-blue-100 hover:border-blue-300 hover:shadow-sm transition-all uppercase group"
+                >
+                  <LucideIcons.FileDown className="h-3.5 w-3.5 mr-1.5 text-blue-600 group-hover:scale-110 transition-transform" />
+                  Descargar Word
+                </button>
+
                 <button 
-                  onClick={() => setReporteResumenOpen(false)}
-                  className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100"
+                  onClick={() => setReportePdfOpen(false)}
+                  className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100 ml-2"
                 >
                   <LucideIcons.X className="h-4 w-4" />
                 </button>
               </div>
-
-              {/* CUERPO: El iframe usa exactamente tu PATH de Django */}
-              <div className="flex-1 bg-slate-50 p-4 overflow-hidden">
-                <iframe 
-                  src={`${api.defaults.baseURL}/cotizaciones/reporte-resumen/${numReg}/`}
-                  className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
-                  title="Reporte Cliente Resumen"
-                />
-              </div>
-
             </div>
-          )}
+
+            {/* CUERPO: El iframe usa exactamente tu PATH de Django */}
+            <div className="flex-1 bg-slate-50 p-4 overflow-hidden relative flex items-center justify-center">
+              {reporteLoading && (
+                <div className="absolute inset-0 bg-white flex flex-col items-center justify-center z-10">
+                  <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
+                </div>
+              )}
+              <iframe 
+                src={`${api.defaults.baseURL}/cotizaciones/${numReg}/pdf-preview/`}
+                className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
+                title="Previsualización de Cotización PDF"
+                scrolling="auto"
+                style={{ overflow: 'auto' }}
+              />
+            </div>
+          </div>
         </div>,
         document.body
       )}

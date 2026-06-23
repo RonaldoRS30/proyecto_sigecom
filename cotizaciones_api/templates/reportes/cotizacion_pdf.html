@@ -895,6 +895,9 @@
                         <div class="line"><strong>• Pago:</strong> {{ cabecera.forma_pago }}</div>
                         <div class="line"><strong>• IGV:</strong> {% if cabecera.incluye_igv %}Incluye IGV{% else %}No incluye IGV{% endif %}</div>
                         <div class="line"><strong>• Validez:</strong> {{ cabecera.validez.cantidad }} {{ cabecera.validez.tipo }}</div>
+                        {% if cabecera.lugar_entrega %}
+                        <div class="line"><strong>• Lugar de Entrega:</strong> {{ cabecera.lugar_entrega }}</div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -1117,31 +1120,4 @@
         {% endif %}
     </div>
 </div>
-
-<div class="no-print-controls">
-    <button class="word-blue" onclick="descargarWordReal()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M15.2,20H13.8L12,13.2L10.2,20H8.8L6.6,11H8.1L9.5,17.8L11.3,11H12.7L14.5,17.8L15.9,11H17.4L15.2,20M13,9V3.5L18.5,9H13Z" />
-        </svg>
-        Descargar Word Editable
-    </button>
-</div>
-
-<script>
-    function descargarWordReal() {
-        // Django traducirá esto a la ruta real, ej: /api/cotizacion/word/2026000069/
-        const url = "{% url 'descargar_cotizacion_word' cabecera.num_reg %}";
-
-        const link = document.createElement('a');
-        link.href = url;
-        
-        // Forzamos que el navegador lo trate como descarga
-        link.setAttribute('download', "{{ cabecera.numero }}_{{ cabecera.referencia }}.docx");
-        
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
-</script>
-
 </html>

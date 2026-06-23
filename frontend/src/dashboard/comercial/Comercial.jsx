@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Search, FileText, Filter, MoreHorizontal, LayoutDashboard, ClipboardCheck, TrendingUp, FolderCheck, CalendarRange, ArrowUpRight } from "lucide-react";
+import { Plus, Search, FileText, Filter, MoreHorizontal, LayoutDashboard, ClipboardCheck, TrendingUp, FolderCheck, CalendarRange, ArrowUpRight, X } from "lucide-react";
 import api from "@/services/api";
 import { useAuth } from "@/context/AuthContext";
 import { ERPTable, StatusBadge, ERPButton, ERPInput, FilterDropdown } from "@/components/ui/ERPComponents";
@@ -130,6 +131,59 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
   const [globalSearch, setGlobalSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("TODAS");
   const [showNewModal, setShowNewModal] = useState(false);
+
+  // ESTADOS Y EFECTOS PARA REPORTE DASHBOARD EN MODAL
+  const [reporteDashboardOpen, setReporteDashboardOpen] = useState(false);
+  const [reporteHeight, setReporteHeight] = useState(null);
+  const [reporteLoading, setReporteLoading] = useState(true);
+  const [reporteUrl, setReporteUrl] = useState("");
+
+  // Resetear estados al abrir/cerrar modal de reporte
+  useEffect(() => {
+    if (!reporteDashboardOpen) {
+      setReporteHeight(null);
+      setReporteLoading(true);
+    } else {
+      setReporteLoading(true);
+      setReporteHeight(null);
+    }
+  }, [reporteDashboardOpen]);
+
+  // Escuchar mensaje de altura de los reportes
+  useEffect(() => {
+    const handleMessage = (e) => {
+      if (e.data && e.data.type === 'set-iframe-height') {
+        const h = Number(e.data.height);
+        if (h > 0) {
+          setReporteHeight(h);
+          setReporteLoading(false);
+        }
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  // Cerrar reporte al presionar la tecla Escape
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setReporteDashboardOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Fallback de carga por seguridad (1.5 segundos)
+  useEffect(() => {
+    if (reporteDashboardOpen) {
+      const timer = setTimeout(() => {
+        setReporteLoading(false);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [reporteDashboardOpen]);
   const [selectedAnno, setSelectedAnno] = useState(new Date().getFullYear());
   const [selectedMes, setSelectedMes] = useState("%"); // "%" para mostrar todo el año
 
@@ -267,12 +321,25 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
 
   const filteredData = useMemo(() => {
     let result = cotizaciones.filter((item) => {
+      const searchLower = globalSearch.toLowerCase().trim();
+      const formattedTotal = Number(item.total_cotizacion || 0).toLocaleString('en-US', { minimumFractionDigits: 2 });
+      const formattedDate = formatDate(item.fecha);
+      const formattedEnvio = item.estado_envio === 2 ? "enviado" : "pendiente";
+
       const matchesSearch =
-        item.num_reg?.toString().includes(globalSearch) ||
-        item.codigo?.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        item.cliente?.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        item.cliente_nombre?.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        item.referencia?.toLowerCase().includes(globalSearch.toLowerCase());
+        !searchLower ||
+        item.num_reg?.toString().includes(searchLower) ||
+        item.codigo?.toLowerCase().includes(searchLower) ||
+        item.cliente?.toLowerCase().includes(searchLower) ||
+        item.cliente_nombre?.toLowerCase().includes(searchLower) ||
+        item.referencia?.toLowerCase().includes(searchLower) ||
+        item.representante_nombre?.toLowerCase().includes(searchLower) ||
+        item.area_nombre?.toLowerCase().includes(searchLower) ||
+        item.estado_nombre?.toLowerCase().includes(searchLower) ||
+        formattedEnvio.includes(searchLower) ||
+        formattedDate.includes(searchLower) ||
+        item.total_cotizacion?.toString().includes(searchLower) ||
+        formattedTotal.includes(searchLower);
 
       const matchesStatus = statusFilter === "TODAS" ||
         item.estado_nombre?.toUpperCase() === statusFilter;
@@ -296,26 +363,45 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
   }, [cotizaciones, globalSearch, statusFilter, sortConfig]);
 
   const filteredOportunidades = useMemo(() => {
+    const searchLower = globalSearch.toLowerCase().trim();
+    const MAPPING_ESTADOS = { 1: "pendiente", 2: "no cotizado", 3: "rechazado", 4: "cotizado" };
     return oportunidades.filter((item) => {
+      const statusText = MAPPING_ESTADOS[item.estado_oportunidad] || "pendiente";
       return (
-        item.id_registro?.toString().includes(globalSearch) ||
-        item.codigo?.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        item.cliente_nombre?.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        item.referencia?.toLowerCase().includes(globalSearch.toLowerCase())
+        !searchLower ||
+        item.id_registro?.toString().includes(searchLower) ||
+        item.codigo?.toLowerCase().includes(searchLower) ||
+        item.cliente_nombre?.toLowerCase().includes(searchLower) ||
+        item.representante_nombre?.toLowerCase().includes(searchLower) ||
+        item.referencia?.toLowerCase().includes(searchLower) ||
+        formatDate(item.recepcion_solicitud).includes(searchLower) ||
+        (item.visita_tecnica && formatDate(item.visita_tecnica).includes(searchLower)) ||
+        (item.fecha_limite && formatDate(item.fecha_limite).includes(searchLower)) ||
+        (item.emision_cotizacion && formatDate(item.emision_cotizacion).includes(searchLower)) ||
+        statusText.includes(searchLower) ||
+        item.comentario?.toLowerCase().includes(searchLower)
       );
     });
   }, [oportunidades, globalSearch]);
 
   const filteredAperturas = useMemo(() => {
+    const searchLower = globalSearch.toLowerCase().trim();
     return (dataAperturas?.tabla || []).filter((item) => {
       const codigo = item.cotizacion_codigo || item.id_registro?.codigo || "";
       const referencia = item.cotizacion_referencia || item.id_registro?.referencia || "";
+      const area = item.id_registro?.area_nombre || "";
+      const formattedTotal = Number(item.total_orden || 0).toLocaleString('en-US', { minimumFractionDigits: 2 });
       return (
-        item.cotizacion_id?.toString().includes(globalSearch) ||
-        codigo.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        item.numero_orden?.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        item.cliente_nombre?.toLowerCase().includes(globalSearch.toLowerCase()) ||
-        referencia.toLowerCase().includes(globalSearch.toLowerCase())
+        !searchLower ||
+        item.cotizacion_id?.toString().includes(searchLower) ||
+        codigo.toLowerCase().includes(searchLower) ||
+        item.numero_orden?.toLowerCase().includes(searchLower) ||
+        item.cliente_nombre?.toLowerCase().includes(searchLower) ||
+        referencia.toLowerCase().includes(searchLower) ||
+        area.toLowerCase().includes(searchLower) ||
+        formatDate(item.fecha_orden).includes(searchLower) ||
+        item.total_orden?.toString().includes(searchLower) ||
+        formattedTotal.includes(searchLower)
       );
     });
   }, [dataAperturas?.tabla, globalSearch]);
@@ -550,7 +636,7 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
     
     // Global search and field if active
     if (globalSearch) {
-      params.append("campo", "referencia");
+      params.append("campo", "all");
       params.append("valor", globalSearch);
     }
     
@@ -558,8 +644,8 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
     const baseUrl = API_URL.endsWith("/") ? API_URL.slice(0, -1) : API_URL;
     const reportUrl = `${baseUrl}/cotizaciones/reportes/reporte_cotizaciones_dashboard_html/?${params.toString()}`;
     
-    const specs = "width=1100,height=850,scrollbars=yes,resizable=yes";
-    window.open(reportUrl, "reporte_dashboard", specs);
+    setReporteUrl(reportUrl);
+    setReporteDashboardOpen(true);
   };
 
   return (
@@ -1425,6 +1511,55 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
         tipo="N"
         dashboard="C"
       />
+
+      {/* MODAL DE PREVISUALIZACIÓN DE REPORTE DASHBOARD */}
+      {reporteDashboardOpen && createPortal(
+        <div 
+          onClick={() => setReporteDashboardOpen(false)}
+          className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 transition-all"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150 transition-all duration-300"
+            style={{
+              height: reporteHeight ? `${Math.min(window.innerHeight * 0.88, reporteHeight + 140)}px` : '350px'
+            }}
+          >
+            {/* Cabecera del Modal */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div>
+                <h3 className="text-[13px] font-black text-slate-900 uppercase tracking-widest">
+                  Reporte de Cotizaciones
+                </h3>
+              </div>
+              <button 
+                onClick={() => setReporteDashboardOpen(false)}
+                className="p-2 hover:bg-slate-200 rounded-xl transition-all text-slate-400 hover:text-slate-600 bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Cuerpo del Modal con Iframe */}
+            <div className="flex-1 bg-slate-50 p-4 overflow-hidden relative flex items-center justify-center">
+              {reporteLoading && (
+                <div className="absolute inset-0 bg-white flex flex-col items-center justify-center z-10">
+                  <div className="h-8 w-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-4">Preparando reporte...</span>
+                </div>
+              )}
+              <iframe 
+                src={reporteUrl}
+                className="w-full h-full bg-white rounded-xl border border-slate-200 shadow-sm"
+                title="Reporte Cotizaciones Dashboard"
+                scrolling={reporteHeight && (reporteHeight + 140 < window.innerHeight * 0.88) ? "no" : "auto"}
+                style={{ overflow: reporteHeight && (reporteHeight + 140 < window.innerHeight * 0.88) ? 'hidden' : 'auto' }}
+              />
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
