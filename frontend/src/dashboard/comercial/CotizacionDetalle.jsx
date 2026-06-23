@@ -2930,7 +2930,8 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
       if (res.ok) {
         setData(prev => {
           if (!prev) return prev;
-          return { ...prev, codigo: res.codigo || "" };
+          const newCode = res.codigo || "";
+          return { ...prev, codigo: newCode, numero: newCode };
         });
       }
     } catch (err) {
@@ -2943,7 +2944,11 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
     if (data && (data.id_area !== originalData?.id_area || data.id_tipo !== originalData?.id_tipo || data.id_cliente !== originalData?.id_cliente)) {
       updatePreviewCode(data.id_area, data.id_tipo, data.id_cliente);
     } else if (data && originalData && data.id_area === originalData.id_area && data.id_tipo === originalData.id_tipo && data.id_cliente === originalData.id_cliente) {
-      setData(prev => ({ ...prev, codigo: originalData.codigo }));
+      setData(prev => ({
+        ...prev,
+        codigo: originalData.codigo || "",
+        numero: originalData.numero || originalData.codigo || ""
+      }));
     }
   }, [data?.id_area, data?.id_tipo, data?.id_cliente]);
 
