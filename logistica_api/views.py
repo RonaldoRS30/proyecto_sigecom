@@ -1257,163 +1257,197 @@ from django.db.models import Max
 from .models import TipoCambio, LogisticaDashboard, LogisticaDashboardDetalle
 from datetime import datetime
 
-@api_view(['POST'])
+def _calcular_totales_items(items, moneda, tc):
+    total_soles = 0
+    total_dolares = 0
+    for item in items:
+        total = float(item.get(“total”) or 0)
+        if moneda == “Soles”:
+            total_soles += total
+            total_dolares += total / tc if tc > 0 else 0
+        elif moneda == “Dolares”:
+            total_dolares += total
+            total_soles += total * tc
+    return round(total_soles, 2), round(total_dolares, 2)
+
+def _insertar_detalles(num_reg, items, moneda, tc):
+    for index, item in enumerate(items, start=1):
+        total = float(item.get(“total”) or 0)
+        if moneda == “Soles”:
+            soles = total
+            dolares = total / tc if tc > 0 else 0
+        elif moneda == “Dolares”:
+            dolares = total
+            soles = total * tc
+        else:
+            soles = dolares = 0
+        LogisticaDashboardDetalle.objects.create(
+            num_reg=num_reg,
+            num=index,
+            cod=item.get(“codigo”) or None,
+            nom=item.get(“descripcion”) or None,
+            um=item.get(“um”) or None,
+            can=int(float(item.get(“cant”) or 0)),
+            val=float(item.get(“valor”) or 0),
+            tot=round(total, 2),
+            sol=round(soles, 2),
+            dol=round(dolares, 2),
+            obs=item.get(“obs”) or None,
+        )
+
+def _resolver_tc(fecha, tc_enviado):
+    tc = float(tc_enviado or 0)
+    if tc <= 0:
+        tcambio = TipoCambio.objects.filter(fec=fecha, activo=’1’).order_by(‘-hor’).first()
+        if tcambio:
+            tc = float(tcambio.com or 0)
+    return tc
+
+@api_view([‘POST’])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def logistica_movimiento(request):
     try:
         data = request.data
-        print("ðŸ”µ REQUEST:", data)
 
-        # ==========================
-        # VALIDACIONES INICIALES
-        # ==========================
-        ope = data.get("ope")
-        if ope not in ["E", "S"]:
-            return Response({"error": "OperaciÃ³n invÃ¡lida"}, status=400)
+        ope = data.get(“ope”)
+        if ope not in [“E”, “S”]:
+            return Response({“error”: “Operación inválida”}, status=400)
 
-        items = data.get("items", [])
+        items = data.get(“items”, [])
         if not items:
-            return Response({"error": "No hay items para insertar"}, status=400)
+            return Response({“error”: “No hay items para insertar”}, status=400)
 
-        moneda = data.get("moneda")
-
-        # ==========================
-        # FECHA / MES / AÃ‘O
-        # ==========================
-        fecha_str = data.get("fecha")
+        fecha_str = data.get(“fecha”)
         if not fecha_str:
-            return Response({"error": "Fecha requerida"}, status=400)
+            return Response({“error”: “Fecha requerida”}, status=400)
 
-        fecha = datetime.strptime(fecha_str, "%Y-%m-%d").date()
-        mes = str(fecha.month).zfill(2)
-        anno = str(fecha.year)
+        fecha = datetime.strptime(fecha_str, “%Y-%m-%d”).date()
+        moneda = data.get(“moneda”, “Soles”)
+        tc = _resolver_tc(fecha, data.get(“tc”))
 
-        # ==========================
-        # TIPO DE CAMBIO
-        # ==========================
-        tc = float(data.get("tc") or 0)
+        if moneda == “Dolares” and tc <= 0:
+            return Response({“error”: “Tipo de cambio inválido para moneda Dólares”}, status=400)
 
-        # ðŸ”¥ Si no viene TC, buscar en cont_tcambio
-        if tc <= 0:
-            tcambio = (
-                TipoCambio.objects
-                .filter(fec=fecha, activo='1')
-                .order_by('-hor')
-                .first()
-            )
+        total_soles, total_dolares = _calcular_totales_items(items, moneda, tc)
 
-            if tcambio:
-                tc = float(tcambio.com or 0)
-                print(f"ðŸ’± TC obtenido de BD: {tc}")
-            else:
-                return Response(
-                    {"error": f"No existe tipo de cambio para la fecha {fecha}"},
-                    status=400
-                )
+        alm_val = str(data.get(“almacen”)).strip() if data.get(“almacen”) else None
+        cor_val = str(data.get(“cor_id”)).strip()   if data.get(“cor_id”)  else None
 
-        # ValidaciÃ³n final
-        if moneda == "Dolares" and tc <= 0:
-            return Response({"error": "Tipo de cambio invÃ¡lido"}, status=400)
+        reg = getattr(request.user, ‘usuario’, None) or str(request.user)
 
-        # ==========================
-        # CALCULAR TOTALES CABECERA
-        # ==========================
-        total_soles = 0
-        total_dolares = 0
-
-        for item in items:
-            total = float(item.get("total") or 0)
-
-            if moneda == "Soles":
-                total_soles += total
-                total_dolares += total / tc if tc > 0 else 0
-
-            elif moneda == "Dolares":
-                total_dolares += total
-                total_soles += total * tc
-
-        # ==========================
-        # CREAR CABECERA
-        # ==========================
         cabecera = LogisticaDashboard.objects.create(
             ope=ope,
-            fec=fecha,  # âœ… corregido
-            oco=data.get("orden_compra"),
-            nfa=data.get("numero_doc"),
-            ngu=data.get("nro_guia"),
-            cor=data.get("numero_doc"),
-            dor=data.get("razon_social"),
-            alm=data.get("almacen"),
+            fec=fecha,
+            oco=data.get(“orden_compra”) or None,
+            nfa=data.get(“numero_doc”) or None,
+            ngu=data.get(“nro_guia”) or None,
+            cor=cor_val,
+            dor=data.get(“razon_social”) or None,
+            alm=alm_val,
             tmo=moneda,
             tc=tc,
-            mes=mes,
-            anno=anno,
-            reg=data.get("reg"),
-            obs=data.get("obs_doc"),
-            nom1=data.get("responsable"),
-            nom2=data.get("nom2"),
-            sol=round(total_soles, 2),
-            dol=round(total_dolares, 2),
-            tip=data.get("tipo_movimiento"),
-            mov=data.get("referencia"),
-            est="0",
+            reg=reg,
+            nom1=data.get(“responsable”) or None,
+            nom2=data.get(“obs_doc”) or None,
+            sol=total_soles,
+            dol=total_dolares,
+            mov=data.get(“referencia”) or None,
+            est=”0”,
         )
 
-        num_reg = cabecera.num_reg
-        print(f"âœ… CABECERA CREADA: {num_reg}")
-
-        # ==========================
-        # INSERTAR DETALLE
-        # ==========================
-        print("ðŸŸ¡ INSERTANDO DETALLE...")
-
-        for index, item in enumerate(items, start=1):
-            total = float(item.get("total") or 0)
-
-            if moneda == "Soles":
-                soles = total
-                dolares = total / tc if tc > 0 else 0
-
-            elif moneda == "Dolares":
-                dolares = total
-                soles = total * tc
-
-            else:
-                soles = 0
-                dolares = 0
-
-            print(f"ðŸ‘‰ ITEM {index}: total={total}, S/={soles}, $={dolares}")
-
-            LogisticaDashboardDetalle.objects.create(
-                num_reg=num_reg,
-                num=index,
-                ope=ope,
-                cod=item.get("codigo"),
-                nom=item.get("descripcion"),
-                um=item.get("um"),
-                can=float(item.get("cant") or 0),
-                val=float(item.get("valor") or 0),
-                tot=round(total, 2),
-                sol=round(soles, 2),
-                dol=round(dolares, 2),
-                obs=item.get("orden_compra"),
-            )
-
-        print("âœ… TODO INSERTADO CORRECTAMENTE")
+        _insertar_detalles(cabecera.num_reg, items, moneda, tc)
 
         return Response({
-            "message": "Movimiento registrado correctamente",
-            "num_reg": num_reg,
-            "ope": ope,
-            "total_soles": round(total_soles, 2),
-            "total_dolares": round(total_dolares, 2),
+            “message”: “Movimiento registrado correctamente”,
+            “num_reg”: cabecera.num_reg,
+            “ope”: ope,
+            “total_soles”: total_soles,
+            “total_dolares”: total_dolares,
         })
 
     except Exception as e:
         import traceback
-        print("❌ ERROR:", traceback.format_exc())
-        return Response({"error": str(e)}, status=500)
+        logger.error(“Error en logistica_movimiento POST: %s”, traceback.format_exc())
+        return Response({“error”: str(e)}, status=500)
+
+
+@api_view([‘PUT’, ‘PATCH’])
+@permission_classes([IsAuthenticated])
+@transaction.atomic
+def logistica_movimiento_update(request, num_reg):
+    try:
+        cabecera = LogisticaDashboard.objects.filter(num_reg=num_reg).first()
+        if not cabecera:
+            return Response({“error”: f”Movimiento {num_reg} no encontrado”}, status=404)
+
+        if cabecera.est == “2”:
+            return Response({“error”: “No se puede editar un movimiento anulado”}, status=400)
+
+        data = request.data
+        items = data.get(“items”, [])
+        if not items:
+            return Response({“error”: “No hay items”}, status=400)
+
+        fecha_str = data.get(“fecha”)
+        if not fecha_str:
+            return Response({“error”: “Fecha requerida”}, status=400)
+
+        fecha = datetime.strptime(fecha_str, “%Y-%m-%d”).date()
+        moneda = data.get(“moneda”, “Soles”)
+        tc = _resolver_tc(fecha, data.get(“tc”))
+
+        total_soles, total_dolares = _calcular_totales_items(items, moneda, tc)
+
+        alm_val = str(data.get(“almacen”)).strip() if data.get(“almacen”) else None
+        cor_val = str(data.get(“cor_id”)).strip()   if data.get(“cor_id”)  else None
+
+        cabecera.fec  = fecha
+        cabecera.oco  = data.get(“orden_compra”) or None
+        cabecera.nfa  = data.get(“numero_doc”)   or None
+        cabecera.ngu  = data.get(“nro_guia”)     or None
+        cabecera.cor  = cor_val
+        cabecera.dor  = data.get(“razon_social”) or None
+        cabecera.alm  = alm_val
+        cabecera.tmo  = moneda
+        cabecera.tc   = tc
+        cabecera.nom1 = data.get(“responsable”)  or None
+        cabecera.nom2 = data.get(“obs_doc”)      or None
+        cabecera.sol  = total_soles
+        cabecera.dol  = total_dolares
+        cabecera.mov  = data.get(“referencia”)   or None
+        cabecera.save()
+
+        LogisticaDashboardDetalle.objects.filter(num_reg=num_reg).delete()
+        _insertar_detalles(num_reg, items, moneda, tc)
+
+        return Response({
+            “message”: “Movimiento actualizado correctamente”,
+            “num_reg”: num_reg,
+            “total_soles”: total_soles,
+            “total_dolares”: total_dolares,
+        })
+
+    except Exception as e:
+        import traceback
+        logger.error(“Error en logistica_movimiento_update: %s”, traceback.format_exc())
+        return Response({“error”: str(e)}, status=500)
+
+
+@api_view([‘PATCH’])
+@permission_classes([IsAuthenticated])
+def logistica_movimiento_anular(request, num_reg):
+    try:
+        cabecera = LogisticaDashboard.objects.filter(num_reg=num_reg).first()
+        if not cabecera:
+            return Response({“error”: f”Movimiento {num_reg} no encontrado”}, status=404)
+        if cabecera.est == “2”:
+            return Response({“error”: “El movimiento ya está anulado”}, status=400)
+        cabecera.est = “2”
+        cabecera.save()
+        return Response({“message”: “Movimiento anulado correctamente”, “num_reg”: num_reg})
+    except Exception as e:
+        return Response({“error”: str(e)}, status=500)
 
 from openpyxl import Workbook
 from django.http import HttpResponse
@@ -2543,6 +2577,13 @@ def html_to_text(html):
 ##===============##
 ##   ALMACENES   ##
 ##===============##
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def lista_almacenes_new(request):
+    almacenes = sis_alm_tab_almacen.objects.filter(activo="1").order_by("cod")
+    return Response([{"idalmacen": a.cod, "nombre": a.nom} for a in almacenes])
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
