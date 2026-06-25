@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Search, FileText, Filter, MoreHorizontal, LayoutDashboard, ClipboardCheck, TrendingUp, FolderCheck, CalendarRange, ArrowUpRight, X } from "lucide-react";
+import { Plus, Search, FileText, Filter, MoreHorizontal, LayoutDashboard, ClipboardCheck, TrendingUp, FolderCheck, CalendarRange, ArrowUpRight, X, Trash2, Brush } from "lucide-react";
 import api from "@/services/api";
 import { useAuth } from "@/context/AuthContext";
 import { ERPTable, StatusBadge, ERPButton, ERPInput, FilterDropdown } from "@/components/ui/ERPComponents";
@@ -11,6 +11,17 @@ import { formatDate } from "@/utils/formatters";
 import TablaCotizaciones from "./tablas/TablaCotizaciones";
 import TablaOportunidades from "./tablas/TablaOportunidades";
 import TablaApertura from "./tablas/TablaAperturas";
+
+const getSessionValue = (key, defaultValue) => {
+  try {
+    const val = sessionStorage.getItem(key);
+    if (val === null) return defaultValue;
+    return JSON.parse(val);
+  } catch (e) {
+    console.error("Error reading sessionStorage key:", key, e);
+    return defaultValue;
+  }
+};
 
 const fetchCotizaciones = async ({ queryKey }) => {
   const [
@@ -128,8 +139,8 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
   }, [defaultTab]);
 
   // ESTADOS DE FILTROS
-  const [globalSearch, setGlobalSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("TODAS");
+  const [globalSearch, setGlobalSearch] = useState(() => getSessionValue("comercial_filter_globalSearch", ""));
+  const [statusFilter, setStatusFilter] = useState(() => getSessionValue("comercial_filter_statusFilter", "TODAS"));
   const [showNewModal, setShowNewModal] = useState(false);
 
   // ESTADOS Y EFECTOS PARA REPORTE DASHBOARD EN MODAL
@@ -184,33 +195,33 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
       return () => clearTimeout(timer);
     }
   }, [reporteDashboardOpen]);
-  const [selectedAnno, setSelectedAnno] = useState(new Date().getFullYear());
-  const [selectedMes, setSelectedMes] = useState("%"); // "%" para mostrar todo el año
+  const [selectedAnno, setSelectedAnno] = useState(() => getSessionValue("comercial_filter_selectedAnno", new Date().getFullYear()));
+  const [selectedMes, setSelectedMes] = useState(() => getSessionValue("comercial_filter_selectedMes", "%")); // "%" para mostrar todo el año
 
   // ESTADO PARA PANEL DE FILTROS
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const filterPanelRef = useRef(null); // Para cerrar al hacer clic fuera
-  const [envioFilter, setEnvioFilter] = useState("%");
-  const [probabilidadFilter, setProbabilidadFilter] = useState("%");
-  const [responsableTipo, setResponsableTipo] = useState("COMERCIAL");
-  const [comercialSearch, setComercialSearch] = useState("%");
-  const [tecnicoSearch, setTecnicoSearch] = useState("%");
-  const [inputBusqueda, setInputBusqueda] = useState("");
-  const [responsableNombre, setResponsableNombre] = useState("%");
-  const [suministrosValor, setSuministrosValor] = useState("");
-  const [suministrosUnidad, setSuministrosUnidad] = useState("D");
-  const [serviciosValor, setServiciosValor] = useState("");
-  const [serviciosUnidad, setServiciosUnidad] = useState("D");
-  const [ofertaValor, setOfertaValor] = useState("");
-  const [ofertaUnidad, setOfertaUnidad] = useState("D");
-  const [activeFilterTab, setActiveFilterTab] = useState("RANGO");
+  const [envioFilter, setEnvioFilter] = useState(() => getSessionValue("comercial_filter_envioFilter", "%"));
+  const [probabilidadFilter, setProbabilidadFilter] = useState(() => getSessionValue("comercial_filter_probabilidadFilter", "%"));
+  const [responsableTipo, setResponsableTipo] = useState(() => getSessionValue("comercial_filter_responsableTipo", "COMERCIAL"));
+  const [comercialSearch, setComercialSearch] = useState(() => getSessionValue("comercial_filter_comercialSearch", "%"));
+  const [tecnicoSearch, setTecnicoSearch] = useState(() => getSessionValue("comercial_filter_tecnicoSearch", "%"));
+  const [inputBusqueda, setInputBusqueda] = useState(() => getSessionValue("comercial_filter_inputBusqueda", ""));
+  const [responsableNombre, setResponsableNombre] = useState(() => getSessionValue("comercial_filter_responsableNombre", "%"));
+  const [suministrosValor, setSuministrosValor] = useState(() => getSessionValue("comercial_filter_suministrosValor", ""));
+  const [suministrosUnidad, setSuministrosUnidad] = useState(() => getSessionValue("comercial_filter_suministrosUnidad", "D"));
+  const [serviciosValor, setServiciosValor] = useState(() => getSessionValue("comercial_filter_serviciosValor", ""));
+  const [serviciosUnidad, setServiciosUnidad] = useState(() => getSessionValue("comercial_filter_serviciosUnidad", "D"));
+  const [ofertaValor, setOfertaValor] = useState(() => getSessionValue("comercial_filter_ofertaValor", ""));
+  const [ofertaUnidad, setOfertaUnidad] = useState(() => getSessionValue("comercial_filter_ofertaUnidad", "D"));
+  const [activeFilterTab, setActiveFilterTab] = useState(() => getSessionValue("comercial_filter_activeFilterTab", "RANGO"));
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   // NUEVOS ESTADOS PARA FILTROS POR RANGO DE PERIODOS
-  const [annoDesde, setAnnoDesde] = useState("");
-  const [annoHasta, setAnnoHasta] = useState("");
-  const [mesDesde, setMesDesde] = useState("");
-  const [mesHasta, setMesHasta] = useState("");
+  const [annoDesde, setAnnoDesde] = useState(() => getSessionValue("comercial_filter_annoDesde", ""));
+  const [annoHasta, setAnnoHasta] = useState(() => getSessionValue("comercial_filter_annoHasta", ""));
+  const [mesDesde, setMesDesde] = useState(() => getSessionValue("comercial_filter_mesDesde", ""));
+  const [mesHasta, setMesHasta] = useState(() => getSessionValue("comercial_filter_mesHasta", ""));
 
   // QUERY PARA OBTENER LOS PERIODOS REGISTRADOS DINÁMICAMENTE
   const { data: dataPeriodos } = useQuery({
@@ -222,8 +233,8 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
   const [sortConfig, setSortConfig] = useState({ key: 'fecha', direction: 'desc' });
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
-  const [currentPageOportunidades, setCurrentPageOportunidades] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => getSessionValue("comercial_filter_currentPage", 1));
+  const [currentPageOportunidades, setCurrentPageOportunidades] = useState(() => getSessionValue("comercial_filter_currentPageOportunidades", 1));
   const [pageSize, setPageSize] = useState(10);
 
   // 1. QUERY DE COTIZACIONES (Existente)
@@ -237,11 +248,10 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
       annoDesde, annoHasta, mesDesde, mesHasta
     ],
     queryFn: fetchCotizaciones,
-    enabled: currentTab === "cotizaciones", // Solo se ejecuta si estamos en este tab
   });
 
   // 2. NUEVA QUERY DE OPORTUNIDADES
-  const [estadoOportunidad, setEstadoOportunidad] = useState("%"); 
+  const [estadoOportunidad, setEstadoOportunidad] = useState(() => getSessionValue("comercial_filter_estadoOportunidad", "%")); 
 
   const { 
     data: dataOportunidades, 
@@ -252,11 +262,152 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
   });
 
   // 3. APERTURAS
-  const [currentPageApertura, setCurrentPageApertura] = useState(1);
-  const [estadoOrdenFilter, setEstadoOrdenFilter] = useState("%");
-  const [prioFilter, setPrioFilter] = useState("%");
-  const [plazoValor, setPlazoValor] = useState("");
-  const [plazoUnidad, setPlazoUnidad] = useState("D");
+  const [currentPageApertura, setCurrentPageApertura] = useState(() => getSessionValue("comercial_filter_currentPageApertura", 1));
+  const [estadoOrdenFilter, setEstadoOrdenFilter] = useState(() => getSessionValue("comercial_filter_estadoOrdenFilter", "%"));
+  const [prioFilter, setPrioFilter] = useState(() => getSessionValue("comercial_filter_prioFilter", "%"));
+  const [plazoValor, setPlazoValor] = useState(() => getSessionValue("comercial_filter_plazoValor", ""));
+  const [plazoUnidad, setPlazoUnidad] = useState(() => getSessionValue("comercial_filter_plazoUnidad", "D"));
+
+  // Sincronización automática de filtros y paginación con sessionStorage
+  useEffect(() => {
+    sessionStorage.setItem("comercial_filter_currentTab", JSON.stringify(currentTab));
+    sessionStorage.setItem("comercial_filter_globalSearch", JSON.stringify(globalSearch));
+    sessionStorage.setItem("comercial_filter_statusFilter", JSON.stringify(statusFilter));
+    sessionStorage.setItem("comercial_filter_selectedAnno", JSON.stringify(selectedAnno));
+    sessionStorage.setItem("comercial_filter_selectedMes", JSON.stringify(selectedMes));
+    sessionStorage.setItem("comercial_filter_envioFilter", JSON.stringify(envioFilter));
+    sessionStorage.setItem("comercial_filter_probabilidadFilter", JSON.stringify(probabilidadFilter));
+    sessionStorage.setItem("comercial_filter_responsableTipo", JSON.stringify(responsableTipo));
+    sessionStorage.setItem("comercial_filter_comercialSearch", JSON.stringify(comercialSearch));
+    sessionStorage.setItem("comercial_filter_tecnicoSearch", JSON.stringify(tecnicoSearch));
+    sessionStorage.setItem("comercial_filter_inputBusqueda", JSON.stringify(inputBusqueda));
+    sessionStorage.setItem("comercial_filter_responsableNombre", JSON.stringify(responsableNombre));
+    sessionStorage.setItem("comercial_filter_suministrosValor", JSON.stringify(suministrosValor));
+    sessionStorage.setItem("comercial_filter_suministrosUnidad", JSON.stringify(suministrosUnidad));
+    sessionStorage.setItem("comercial_filter_serviciosValor", JSON.stringify(serviciosValor));
+    sessionStorage.setItem("comercial_filter_serviciosUnidad", JSON.stringify(serviciosUnidad));
+    sessionStorage.setItem("comercial_filter_ofertaValor", JSON.stringify(ofertaValor));
+    sessionStorage.setItem("comercial_filter_ofertaUnidad", JSON.stringify(ofertaUnidad));
+    sessionStorage.setItem("comercial_filter_activeFilterTab", JSON.stringify(activeFilterTab));
+    sessionStorage.setItem("comercial_filter_annoDesde", JSON.stringify(annoDesde));
+    sessionStorage.setItem("comercial_filter_annoHasta", JSON.stringify(annoHasta));
+    sessionStorage.setItem("comercial_filter_mesDesde", JSON.stringify(mesDesde));
+    sessionStorage.setItem("comercial_filter_mesHasta", JSON.stringify(mesHasta));
+    sessionStorage.setItem("comercial_filter_currentPage", JSON.stringify(currentPage));
+    sessionStorage.setItem("comercial_filter_currentPageOportunidades", JSON.stringify(currentPageOportunidades));
+    sessionStorage.setItem("comercial_filter_estadoOportunidad", JSON.stringify(estadoOportunidad));
+    sessionStorage.setItem("comercial_filter_currentPageApertura", JSON.stringify(currentPageApertura));
+    sessionStorage.setItem("comercial_filter_estadoOrdenFilter", JSON.stringify(estadoOrdenFilter));
+    sessionStorage.setItem("comercial_filter_prioFilter", JSON.stringify(prioFilter));
+    sessionStorage.setItem("comercial_filter_plazoValor", JSON.stringify(plazoValor));
+    sessionStorage.setItem("comercial_filter_plazoUnidad", JSON.stringify(plazoUnidad));
+  }, [
+    currentTab, globalSearch, statusFilter, selectedAnno, selectedMes,
+    envioFilter, probabilidadFilter, responsableTipo, comercialSearch, tecnicoSearch,
+    inputBusqueda, responsableNombre, suministrosValor, suministrosUnidad, serviciosValor, serviciosUnidad,
+    ofertaValor, ofertaUnidad, activeFilterTab, annoDesde, annoHasta,
+    mesDesde, mesHasta, currentPage, currentPageOportunidades, estadoOportunidad,
+    currentPageApertura, estadoOrdenFilter, prioFilter, plazoValor, plazoUnidad
+  ]);
+
+  const hasAnyActiveFilterOrSearch = useMemo(() => {
+    return (
+      globalSearch !== "" ||
+      statusFilter !== "TODAS" ||
+      selectedAnno !== new Date().getFullYear() ||
+      selectedMes !== "%" ||
+      envioFilter !== "%" ||
+      probabilidadFilter !== "%" ||
+      responsableTipo !== "COMERCIAL" ||
+      comercialSearch !== "%" ||
+      tecnicoSearch !== "%" ||
+      responsableNombre !== "%" ||
+      suministrosValor !== "" ||
+      serviciosValor !== "" ||
+      ofertaValor !== "" ||
+      annoDesde !== "" ||
+      annoHasta !== "" ||
+      mesDesde !== "" ||
+      mesHasta !== "" ||
+      estadoOportunidad !== "%" ||
+      estadoOrdenFilter !== "%" ||
+      prioFilter !== "%" ||
+      plazoValor !== ""
+    );
+  }, [
+    globalSearch, statusFilter, selectedAnno, selectedMes, envioFilter,
+    probabilidadFilter, responsableTipo, comercialSearch, tecnicoSearch,
+    responsableNombre, suministrosValor, serviciosValor, ofertaValor,
+    annoDesde, annoHasta, mesDesde, mesHasta, estadoOportunidad,
+    estadoOrdenFilter, prioFilter, plazoValor
+  ]);
+
+  const handleClearAllFilters = () => {
+    setGlobalSearch("");
+    setStatusFilter("TODAS");
+    setSelectedAnno(new Date().getFullYear());
+    setSelectedMes("%");
+    setEnvioFilter("%");
+    setProbabilidadFilter("%");
+    setResponsableTipo("COMERCIAL");
+    setComercialSearch("%");
+    setTecnicoSearch("%");
+    setInputBusqueda("");
+    setResponsableNombre("%");
+    setSuministrosValor("");
+    setSuministrosUnidad("D");
+    setServiciosValor("");
+    setServiciosUnidad("D");
+    setOfertaValor("");
+    setOfertaUnidad("D");
+    setActiveFilterTab("RANGO");
+    setAnnoDesde("");
+    setAnnoHasta("");
+    setMesDesde("");
+    setMesHasta("");
+    setCurrentPage(1);
+    setCurrentPageOportunidades(1);
+    setEstadoOportunidad("%");
+    setCurrentPageApertura(1);
+    setEstadoOrdenFilter("%");
+    setPrioFilter("%");
+    setPlazoValor("");
+    setPlazoUnidad("D");
+
+    const keysToClear = [
+      "comercial_filter_globalSearch",
+      "comercial_filter_statusFilter",
+      "comercial_filter_selectedAnno",
+      "comercial_filter_selectedMes",
+      "comercial_filter_envioFilter",
+      "comercial_filter_probabilidadFilter",
+      "comercial_filter_responsableTipo",
+      "comercial_filter_comercialSearch",
+      "comercial_filter_tecnicoSearch",
+      "comercial_filter_inputBusqueda",
+      "comercial_filter_responsableNombre",
+      "comercial_filter_suministrosValor",
+      "comercial_filter_suministrosUnidad",
+      "comercial_filter_serviciosValor",
+      "comercial_filter_serviciosUnidad",
+      "comercial_filter_ofertaValor",
+      "comercial_filter_ofertaUnidad",
+      "comercial_filter_activeFilterTab",
+      "comercial_filter_annoDesde",
+      "comercial_filter_annoHasta",
+      "comercial_filter_mesDesde",
+      "comercial_filter_mesHasta",
+      "comercial_filter_currentPage",
+      "comercial_filter_currentPageOportunidades",
+      "comercial_filter_estadoOportunidad",
+      "comercial_filter_currentPageApertura",
+      "comercial_filter_estadoOrdenFilter",
+      "comercial_filter_prioFilter",
+      "comercial_filter_plazoValor",
+      "comercial_filter_plazoUnidad"
+    ];
+    keysToClear.forEach(key => sessionStorage.removeItem(key));
+  };
 
   // ── QUERY DE APERTURAS ADMINISTRATIVAS SIMPLIFICADA ──
   const { 
@@ -297,7 +448,10 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
       }
       
       const rowHeight = 50;     // Altura de fila de tabla compacta
-      const chromeHeight = 435; // Altura acumulada de cabeceras, KPIs, filtros, paddings y footer
+      // Altura acumulada de cabeceras, KPIs, filtros, paddings y footer.
+      // Se adapta dinámicamente si es un monitor (vh grande) o una laptop (vh < 850)
+      // para optimizar el espacio sin dejar áreas blancas o desbordar la ventana.
+      const chromeHeight = vh < 850 ? 340 : 435;
       
       const availableHeight = vh - chromeHeight;
       const computedRows = Math.floor(availableHeight / rowHeight);
@@ -422,7 +576,12 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
 
   const totalPages = Math.ceil(filteredData.length / pageSize);
 
+  const isMountedRef = useRef(false);
   useEffect(() => {
+    if (!isMountedRef.current) {
+      isMountedRef.current = true;
+      return;
+    }
     setCurrentPage(1); // Reset to page 1 on filter/search change
     setCurrentPageOportunidades(1);
     setCurrentPageApertura(1);
@@ -868,7 +1027,7 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
         </button>
       </div>
 
-      {/* Search and Filter Bar - Estilo JIRA Centralizado */}
+      {/* FILTROS */}
       <div className="flex flex-col lg:flex-row justify-between items-center gap-3 bg-white p-1.5 rounded-2xl border border-gray-200 shadow-sm">
 
         <div className="flex flex-row items-center gap-2 w-full lg:max-w-3xl flex-wrap sm:flex-nowrap">
@@ -1415,6 +1574,17 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
               </div>
             )}
           </div>
+
+          {/* 5. BOTÓN DE LIMPIAR TODO (ROJO MINIMALISTA A LA DERECHA DE FILTROS) */}
+          {hasAnyActiveFilterOrSearch && (
+            <button
+              onClick={handleClearAllFilters}
+              className="flex items-center justify-center px-3.5 py-2 border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 rounded-xl transition-all shadow-sm shrink-0 animate-in zoom-in"
+              title="Limpiar todos los filtros"
+            >
+              <Brush className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
 
         {/* 3. Filtros de Estado */}
@@ -1461,7 +1631,7 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         {currentTab === "cotizaciones" && (
           <TablaCotizaciones
-            data={filteredData} // Tus datos filtrados en tiempo real
+            data={filteredData}
             isLoading={isLoading}
             headers={headers}
             sortConfig={sortConfig}
@@ -1476,23 +1646,23 @@ export default function Comercial({ defaultTab = "cotizaciones" }) {
 
         {currentTab === "oportunidades" && (
           <TablaOportunidades
-            data={filteredOportunidades} // Lista filtrada client-side por buscador
-            isLoading={isLoadingOportunidades}   // Su propio loading spinner aislado
-            currentPage={currentPageOportunidades} // Paginación independiente
+            data={filteredOportunidades}
+            isLoading={isLoadingOportunidades}
+            currentPage={currentPageOportunidades}
             pageSize={pageSize}
             onPageChange={setCurrentPageOportunidades}
-            onRowClick={(id) => navigate(`/sigecom/comercial/oportunidades/${id}`)} // Detalle plural
+            onRowClick={(id) => navigate(`/sigecom/comercial/oportunidades/${id}`)}
           />
         )}
 
         {currentTab === "aperturas" && (
           <TablaApertura
-            data={filteredAperturas}            // Lista filtrada client-side por buscador
-            isLoading={isLoadingAperturas}              // Loader animado aislado
-            currentPage={currentPageApertura}            // Estado de paginación independiente
-            pageSize={pageSize}                         // Tamaño de página configurado en el componente principal (10)
-            onPageChange={setCurrentPageApertura}        // Callback para cambiar de página localmente
-            onRowClick={(cotizacionId) => navigate(`/sigecom/comercial/aperturas/${cotizacionId}`)} // Detalle plural
+            data={filteredAperturas}
+            isLoading={isLoadingAperturas}
+            currentPage={currentPageApertura}
+            pageSize={pageSize}
+            onPageChange={setCurrentPageApertura}
+            onRowClick={(cotizacionId) => navigate(`/sigecom/comercial/aperturas/${cotizacionId}`)}
           />
         )}
 

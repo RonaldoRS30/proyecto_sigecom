@@ -13,6 +13,7 @@ const Icon = ({ name, className }) => {
 const NAV_ITEMS = [
   { path: "/sigecom/home", label: "Dashboard", icon: "LayoutDashboard" },
   { path: "/sigecom/comercial", label: "Comercial", icon: "FileText" },
+  { path: "/sigecom/logistica", label: "Logística", icon: "ClipboardList" },
   { path: "/sigecom/proyectos", label: "Proyectos", icon: "Briefcase" },
   { path: "/sigecom/compras", label: "Compras", icon: "ShoppingCart" },
   { path: "/sigecom/almacen", label: "Almacén", icon: "Package" },
@@ -27,6 +28,23 @@ export default function DashboardLayout() {
   const { authUser: user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const [breadcrumbOverride, setBreadcrumbOverride] = useState(null);
+
+  useEffect(() => {
+    // Clear override whenever location changes
+    setBreadcrumbOverride(null);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const handleOverride = (e) => {
+      const { path, label } = e.detail || {};
+      if (path === location.pathname) {
+        setBreadcrumbOverride(label);
+      }
+    };
+    window.addEventListener("sigecom-breadcrumb-label", handleOverride);
+    return () => window.removeEventListener("sigecom-breadcrumb-label", handleOverride);
+  }, [location.pathname]);
 
   useEffect(() => {
     setIsMobileOpen(false);
@@ -43,7 +61,10 @@ export default function DashboardLayout() {
     return parts.map((part, index) => {
       const path = `/${parts.slice(0, index + 1).join("/")}`;
       const isLast = index === parts.length - 1;
-      const label = part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, " ");
+      let label = part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, " ");
+      if (isLast && breadcrumbOverride && path === location.pathname) {
+        label = breadcrumbOverride;
+      }
       return { path, label, isLast };
     });
   };

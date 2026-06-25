@@ -38,7 +38,7 @@ const TablaOportunidades = ({
         <div className="flex flex-col gap-2">
             {paginatedItems.map((item) => (
                 <div
-                    key={item.id_registro || item.codigo}
+                    key={item.id_registro}
                     onClick={() => onRowClick(item.id_registro)}
                     className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm hover:border-indigo-100 active:scale-[0.99] transition-all cursor-pointer flex flex-col gap-2"
                 >
@@ -101,7 +101,7 @@ const TablaOportunidades = ({
             >
                 {paginatedItems.map((item) => (
                     <tr
-                        key={item.id_registro || item.codigo}
+                        key={item.id_registro}
                         onClick={() => onRowClick(item.id_registro)}
                         className="group hover:bg-gray-50/80 transition-colors cursor-pointer border-b last:border-0 border-gray-100 h-[50px]"
                     >

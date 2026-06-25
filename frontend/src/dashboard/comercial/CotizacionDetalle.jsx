@@ -227,6 +227,228 @@ const handleDecimalChange = (e, callback) => {
     callback(val);
   }
 };
+const highlightText = (text, search) => {
+  if (!search || !search.trim()) return <span>{text}</span>;
+  const regex = new RegExp(`(${search.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
+  const parts = text.split(regex);
+  return (
+    <span>
+      {parts.map((part, i) => 
+        regex.test(part) ? (
+          <mark key={i} className="bg-teal-500/20 text-teal-900 rounded-[3px] px-0.5 font-bold">{part}</mark>
+        ) : (
+          part
+        )
+      )}
+    </span>
+  );
+};
+
+const NotasAutocomplete = ({ notasComunes = [], onSelect }) => {
+  const [query, setQuery] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
+  const [isFocused, setIsFocused] = useState(false);
+
+  const containerRef = useRef(null);
+  const inputRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const updateCoords = () => {
+    if (inputRef.current) {
+      const rect = inputRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom,
+        left: rect.left,
+        width: rect.width
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!showDropdown) return;
+    
+    let active = true;
+    const tick = () => {
+      if (!active) return;
+      updateCoords();
+      requestAnimationFrame(tick);
+    };
+    
+    requestAnimationFrame(tick);
+    return () => {
+      active = false;
+    };
+  }, [showDropdown]);
+
+  useEffect(() => {
+    if (showDropdown && highlightIndex >= 0 && dropdownRef.current) {
+      const container = dropdownRef.current;
+      const items = container.querySelectorAll(".cursor-pointer");
+      const activeItem = items[highlightIndex];
+      if (activeItem) {
+        const containerTop = container.scrollTop;
+        const containerBottom = containerTop + container.clientHeight;
+        const elemTop = activeItem.offsetTop;
+        const elemBottom = elemTop + activeItem.offsetHeight;
+
+        if (elemTop < containerTop) {
+          container.scrollTop = elemTop;
+        } else if (elemBottom > containerBottom) {
+          container.scrollTop = elemBottom - container.clientHeight;
+        }
+      }
+    }
+  }, [highlightIndex, showDropdown]);
+
+  const filteredNotas = useMemo(() => {
+    if (!query.trim()) return notasComunes;
+    const q = query.toLowerCase();
+    return notasComunes.filter(n => 
+      n.descripcion && n.descripcion.toLowerCase().includes(q)
+    );
+  }, [query, notasComunes]);
+
+  useEffect(() => {
+    if (filteredNotas.length > 0) {
+      setHighlightIndex(0);
+    } else {
+      setHighlightIndex(-1);
+    }
+  }, [filteredNotas]);
+
+  const handleFocus = () => {
+    setShowDropdown(true);
+    setIsFocused(true);
+  };
+
+  const handleBlur = () => {
+    setTimeout(() => {
+      setIsFocused(false);
+      setShowDropdown(false);
+      setQuery("");
+      setHighlightIndex(-1);
+    }, 200);
+  };
+
+  const handleSelectOption = (nota) => {
+    onSelect(nota.descripcion);
+    setQuery("");
+    setShowDropdown(false);
+    setHighlightIndex(-1);
+    if (inputRef.current) {
+      inputRef.current.blur();
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIndex((prev) => (prev + 1 < filteredNotas.length ? prev + 1 : 0));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIndex((prev) => (prev - 1 >= 0 ? prev - 1 : filteredNotas.length - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (highlightIndex >= 0 && filteredNotas[highlightIndex]) {
+        handleSelectOption(filteredNotas[highlightIndex]);
+      } else {
+        setShowDropdown(false);
+        setHighlightIndex(-1);
+      }
+    } else if (e.key === "Tab" || e.key === "Escape") {
+      setShowDropdown(false);
+      setHighlightIndex(-1);
+    }
+  };
+
+  const highlightMatch = (text, queryText) => {
+    if (!queryText.trim()) return text;
+    const parts = text.split(new RegExp(`(${queryText.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')})`, 'gi'));
+    return (
+      <>
+        {parts.map((part, i) => 
+          part.toLowerCase() === queryText.toLowerCase() 
+            ? <span key={i} className="bg-yellow-100 text-slate-900 font-extrabold">{part}</span> 
+            : part
+        )}
+      </>
+    );
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex items-center bg-white border border-teal-200 rounded-full px-3 py-1 hover:border-teal-400 focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-500/25 transition-all duration-200"
+    >
+      <Icon name="bookmark" className="h-3.5 w-3.5 mr-1.5 text-teal-600 flex-shrink-0" />
+      <input
+        ref={inputRef}
+        type="text"
+        className="w-full bg-transparent border-none outline-none text-[11px] font-bold text-slate-700 uppercase tracking-tight placeholder:text-slate-400 placeholder:normal-case focus:ring-0 p-0"
+        value={query}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={isFocused ? "Buscar nota..." : "AGREGAR NOTAS..."}
+      />
+      <button
+        type="button"
+        className="ml-1 p-0.5 rounded text-slate-400 hover:text-teal-600 transition-colors flex-shrink-0"
+        onClick={() => {
+          if (showDropdown) {
+            inputRef.current?.blur();
+          } else {
+            inputRef.current?.focus();
+          }
+        }}
+      >
+        <Icon
+          name={showDropdown ? "chevron-up" : "chevron-down"}
+          className="h-3.5 w-3.5 text-slate-400"
+        />
+      </button>
+
+      {showDropdown && filteredNotas.length > 0 && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: "fixed",
+            top: `${coords.top + 4}px`,
+            left: `${coords.left}px`,
+            width: `${Math.max(350, coords.width)}px`,
+            zIndex: 99999,
+            pointerEvents: "auto",
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          onWheel={(e) => e.stopPropagation()}
+          className="bg-white/95 backdrop-blur-md border border-slate-150 rounded-2xl shadow-xl shadow-slate-200/40 max-h-60 overflow-y-auto p-1.5 animate-in fade-in slide-in-from-top-2 duration-200 text-left font-sans pointer-events-auto"
+        >
+          {filteredNotas.map((nota, index) => (
+            <div
+              key={nota.id_nota || nota.codigo || index}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleSelectOption(nota);
+              }}
+              className={`px-3 py-2 text-[10px] cursor-pointer rounded-xl mb-0.5 last:mb-0 transition-all duration-150 border-l-2
+                ${highlightIndex === index 
+                  ? "bg-teal-50/80 text-teal-950 border-teal-500 font-semibold shadow-sm" 
+                  : "hover:bg-slate-50/80 text-slate-700 border-transparent"}`}
+            >
+              <div className="font-semibold uppercase whitespace-normal leading-relaxed text-slate-700">
+                {highlightMatch(nota.descripcion, query)}
+              </div>
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+};
 
 const EditableGroupRow = ({
   tipo,
@@ -759,18 +981,55 @@ const EditableGroupRow = ({
                   isDetailExpanded ? "overflow-visible" : "overflow-hidden"
                 )}>
                   {/* Collapsible Header */}
-                  <button
-                    type="button"
+                  <div
                     onClick={() => setIsDetailExpanded(!isDetailExpanded)}
-                    className="w-full px-4 py-2.5 flex justify-between items-center bg-slate-50 border-b border-gray-150 hover:bg-slate-100/50 transition-colors"
+                    className="w-full px-4 py-2.5 flex justify-between items-center bg-slate-50 border-b border-gray-150 hover:bg-slate-100/50 transition-colors cursor-pointer"
                   >
-                    <div className="flex items-center gap-2 text-teal-800">
-                      <Icon name="file-text" className="h-4 w-4 text-[#0d767e]" />
-                      <span className="text-[11px] font-black uppercase tracking-wider text-slate-700">
-                        Detalle del Servicio (Hoja de Descripción)
-                      </span>
+                    <div className="flex items-center gap-4 text-teal-800 flex-grow mr-4">
+                      <div className="flex items-center gap-2">
+                        <Icon name="file-text" className="h-4 w-4 text-[#0d767e]" />
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 whitespace-nowrap">
+                          Detalle del Servicio
+                        </span>
+                      </div>
+                      
+                      {/* Integrated Toolbar */}
+                      {isDetailExpanded && (
+                        <div 
+                          id="srv-quill-toolbar"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center bg-transparent border-none p-0 ql-toolbar ql-snow"
+                        >
+                          <span className="ql-formats">
+                            <button className="ql-bold" title="Negrita" />
+                            <button className="ql-italic" title="Cursiva" />
+                          </span>
+                          <span className="ql-formats">
+                            <button className="ql-list" value="ordered" title="Numeración" />
+                            <button className="ql-list" value="bullet" title="Viñetas" />
+                          </span>
+                          <span className="ql-formats">
+                            <button className="ql-indent" value="-1" title="Disminuir Sangría" />
+                            <button className="ql-indent" value="+1" title="Aumentar Sangría" />
+                          </span>
+                          <span className="ql-formats">
+                            <button className="ql-blockquote" title="Cita" />
+                          </span>
+
+                          {notasComunes && notasComunes.length > 0 && (
+                            <span className="ql-formats select-none pointer-events-auto !mr-0">
+                              <div className="w-64">
+                                <NotasAutocomplete
+                                  notasComunes={notasComunes}
+                                  onSelect={handleInsertNota}
+                                />
+                              </div>
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                       {tempData.detalle && tempData.detalle.replace(/<[^>]*>/g, '').trim().length > 0 ? (
                         <span className="text-[9px] font-black text-[#0d767e] bg-teal-50 border border-teal-150 px-2 py-0.5 rounded-full uppercase">
                           Con Contenido
@@ -780,12 +1039,18 @@ const EditableGroupRow = ({
                           Vacío
                         </span>
                       )}
-                      <Icon
-                        name={isDetailExpanded ? "chevron-up" : "chevron-down"}
-                        className="h-4 w-4 text-slate-500 transition-transform duration-300"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => setIsDetailExpanded(!isDetailExpanded)}
+                        className="p-1 hover:bg-slate-200/60 rounded-md transition-colors"
+                      >
+                        <Icon
+                          name={isDetailExpanded ? "chevron-up" : "chevron-down"}
+                          className="h-4 w-4 text-slate-500"
+                        />
+                      </button>
                     </div>
-                  </button>
+                  </div>
 
                   {/* Quill Editor Block */}
                   <AnimatePresence initial={false}>
@@ -799,15 +1064,22 @@ const EditableGroupRow = ({
                       >
                         <div className="quill-modern-container border border-slate-200 rounded-xl shadow-sm bg-white text-left overflow-visible">
                           <style>{`
-                            .quill-modern-container .ql-toolbar.ql-snow {
+                            #srv-quill-toolbar.ql-toolbar.ql-snow {
                               display: flex !important;
                               align-items: center !important;
                               border: none !important;
-                              border-bottom: 1px solid #e2e8f0 !important;
-                              background: #f8fafc !important;
-                              padding: 6px 12px !important;
-                              border-top-left-radius: 12px !important;
-                              border-top-right-radius: 12px !important;
+                              background: transparent !important;
+                              padding: 0 !important;
+                            }
+                            #srv-quill-toolbar.ql-toolbar.ql-snow .ql-formats {
+                              margin-right: 6px !important;
+                              display: flex !important;
+                              align-items: center !important;
+                            }
+                            #srv-quill-toolbar.ql-toolbar.ql-snow button {
+                              width: 26px !important;
+                              height: 26px !important;
+                              padding: 3px !important;
                             }
                             .quill-modern-container .ql-container.ql-snow {
                               border: none !important;
@@ -819,43 +1091,6 @@ const EditableGroupRow = ({
                               counter-reset: none !important;
                             }
                           `}</style>
-                          <div id="srv-quill-toolbar">
-                            <span className="ql-formats">
-                              <button className="ql-bold" title="Negrita" />
-                              <button className="ql-italic" title="Cursiva" />
-                            </span>
-                            <span className="ql-formats">
-                              <button className="ql-list" value="ordered" title="Numeración" />
-                              <button className="ql-list" value="bullet" title="Viñetas" />
-                            </span>
-                            <span className="ql-formats">
-                              <button className="ql-indent" value="-1" title="Disminuir Sangría" />
-                              <button className="ql-indent" value="+1" title="Aumentar Sangría" />
-                            </span>
-                            <span className="ql-formats">
-                              <button className="ql-blockquote" title="Cita" />
-                            </span>
-
-                            {notasComunes && notasComunes.length > 0 && (
-                              <span className="ql-formats select-none pointer-events-auto !mr-0">
-                                <div className="w-64">
-                                  <SelectField
-                                    value=""
-                                    onChange={(e) => {
-                                      handleInsertNota(e.target.value);
-                                    }}
-                                    options={[
-                                      { value: "", nombre: "AGREGAR NOTAS DE CONDICIONES..." },
-                                      ...notasComunes.map(nota => ({
-                                        value: nota.descripcion,
-                                        nombre: nota.descripcion
-                                      }))
-                                    ]}
-                                  />
-                                </div>
-                              </span>
-                            )}
-                          </div>
                           <ReactQuill
                             ref={quillSrvRef}
                             value={tempData.detalle || ""}
@@ -909,15 +1144,15 @@ const EditableGroupRow = ({
                       <table className="min-w-full table-fixed divide-y divide-slate-100">
                         <thead className="bg-slate-100/50 border-b border-slate-200">
                           <tr>
-                            <th className="w-[14%] px-3 py-2 text-left text-[10px] font-black text-slate-755 uppercase tracking-wider">Código Personal</th>
-                            <th className="w-[25%] px-3 py-2 text-left text-[10px] font-black text-slate-755 uppercase tracking-wider">Descripción</th>
+                            <th className="w-[14%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Código Personal</th>
+                            <th className="w-[25%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Descripción</th>
                             <th className="w-[5%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Cantidad</th>
                             <th className="w-[5%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Días</th>
                             <th className="w-[5%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Horas</th>
-                            <th className="w-[8%] px-3 py-2 text-right text-[10px] font-black text-slate-755 uppercase tracking-wider">Costo H/D</th>
+                            <th className="w-[8%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Costo H/D</th>
                             <th className="w-[10%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Utilidad</th>
-                            <th className="w-[8%] px-3 py-2 text-right text-[10px] font-black text-slate-755 uppercase tracking-wider">Cotizado H/D</th>
-                            <th className="w-[16%] px-3 py-2 text-right text-[10px] font-black text-slate-755 uppercase tracking-wider">Cotizado Total</th>
+                            <th className="w-[8%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Cotizado H/D</th>
+                            <th className="w-[16%] px-3 py-2 text-center text-[10px] font-black text-slate-755 uppercase tracking-wider">Cotizado Total</th>
                             <th className="w-[4%] px-3 py-2"></th>
                           </tr>
                         </thead>
@@ -1189,12 +1424,12 @@ const EditableGroupRow = ({
                       <table className="min-w-full table-fixed divide-y divide-slate-100">
                         <thead className="bg-slate-100/50 border-b border-slate-200">
                           <tr>
-                            <th className="w-[15%] px-3 py-2 text-left text-[10px] font-black text-slate-750 uppercase tracking-wider">Código Gasto</th>
-                            <th className="w-[35%] px-3 py-2 text-left text-[10px] font-black text-slate-750 uppercase tracking-wider">Descripción</th>
+                            <th className="w-[15%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Código Gasto</th>
+                            <th className="w-[35%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Descripción</th>
                             <th className="w-[10%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Cantidad</th>
                             <th className="w-[10%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Días</th>
-                            <th className="w-[12%] px-3 py-2 text-right text-[10px] font-black text-slate-750 uppercase tracking-wider">Precio</th>
-                            <th className="w-[13%] px-3 py-2 text-right text-[10px] font-black text-slate-750 uppercase tracking-wider">Total</th>
+                            <th className="w-[12%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Precio</th>
+                            <th className="w-[13%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Total</th>
                             <th className="w-[5%] px-3 py-2"></th>
                           </tr>
                         </thead>
@@ -1389,13 +1624,13 @@ const EditableGroupRow = ({
                       <table className="min-w-full table-fixed divide-y divide-slate-100">
                         <thead className="bg-slate-100/50 border-b border-slate-200">
                           <tr>
-                            <th className="w-[15%] px-3 py-2 text-left text-[10px] font-black text-slate-750 uppercase tracking-wider">Código Gasto</th>
-                            <th className="w-[32%] px-3 py-2 text-left text-[10px] font-black text-slate-750 uppercase tracking-wider">Descripción</th>
+                            <th className="w-[15%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Código Gasto</th>
+                            <th className="w-[32%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Descripción</th>
                             <th className="w-[6%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Cantidad</th>
-                            <th className="w-[8%] px-3 py-2 text-right text-[10px] font-black text-slate-750 uppercase tracking-wider">Precio</th>
+                            <th className="w-[8%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Precio</th>
                             <th className="w-[10%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Utilidad</th>
-                            <th className="w-[10%] px-3 py-2 text-right text-[10px] font-black text-slate-750 uppercase tracking-wider">Venta Precio</th>
-                            <th className="w-[14%] px-3 py-2 text-right text-[10px] font-black text-slate-750 uppercase tracking-wider">Venta Total</th>
+                            <th className="w-[10%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Venta Precio</th>
+                            <th className="w-[14%] px-3 py-2 text-center text-[10px] font-black text-slate-750 uppercase tracking-wider">Venta Total</th>
                             <th className="w-[5%] px-3 py-2"></th>
                           </tr>
                         </thead>
@@ -2025,6 +2260,19 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   });
   const [data, setData] = useState(null);
   const [originalData, setOriginalData] = useState(null);
+
+  useEffect(() => {
+    const codeToShow = data?.codigo || data?.numero;
+    if (codeToShow) {
+      window.dispatchEvent(new CustomEvent("sigecom-breadcrumb-label", {
+        detail: {
+          path: window.location.pathname,
+          label: codeToShow
+        }
+      }));
+    }
+  }, [data?.codigo, data?.numero]);
+
   const [loading, setLoading] = useState(true);
   const isReadOnly = Number(data?.estado_envio ?? 0) === 2;
   const isVenta = data?.id_tipo === "V";
@@ -2738,6 +2986,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   const [expandedCategories, setExpandedCategories] = useState(['Suministros', 'Servicios', 'Condiciones', 'Cliente']);
   const [generalConditions, setGeneralConditions] = useState('');
   const [currentStatus, setCurrentStatus] = useState('');
+  const [searchQueryNotas, setSearchQueryNotas] = useState('');
 
   // Estados para descuento comercial
   const [descuentoAplicar, setDescuentoAplicar] = useState(false);
@@ -5858,76 +6107,78 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                 </button>
               )}
               {/* MENÚ DESPLEGABLE DE REPORTES */}
-              <div className="relative" ref={dropdownRef}>
-                <button
-                  onClick={() => setReporteMenuOpen(!reporteMenuOpen)}
-                  className="flex items-center px-4 py-2 bg-sky-50/70 border border-sky-200 rounded-xl text-[10px] font-black text-sky-700 hover:bg-sky-100/70 hover:border-sky-300 hover:shadow-sm transition-all h-[42px] uppercase group"
-                >
-                  <Icon name="file-text" className="h-3.5 w-3.5 mr-2 text-sky-600 group-hover:scale-110 transition-transform" />
-                  <span>Reporte</span>
-                  <Icon name="chevron-down" className={`ml-1.5 h-3 w-3 transition-transform duration-200 ${reporteMenuOpen ? "rotate-180" : ""}`} />
-                </button>
+              {!esOportunidad && (
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setReporteMenuOpen(!reporteMenuOpen)}
+                    className="flex items-center px-4 py-2 bg-sky-50/70 border border-sky-200 rounded-xl text-[10px] font-black text-sky-700 hover:bg-sky-100/70 hover:border-sky-300 hover:shadow-sm transition-all h-[42px] uppercase group"
+                  >
+                    <Icon name="file-text" className="h-3.5 w-3.5 mr-2 text-sky-600 group-hover:scale-110 transition-transform" />
+                    <span>Reporte</span>
+                    <Icon name="chevron-down" className={`ml-1.5 h-3 w-3 transition-transform duration-200 ${reporteMenuOpen ? "rotate-180" : ""}`} />
+                  </button>
 
-                {/* Tarjeta Flotante de Opciones */}
-                {reporteMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-50 py-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
-                    <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
-                      <span className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Opciones de Cliente</span>
+                  {/* Tarjeta Flotante de Opciones */}
+                  {reporteMenuOpen && (
+                    <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-50 py-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
+                      <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
+                        <span className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Opciones de Cliente</span>
+                      </div>
+
+                      {/* Opción 1: Reporte Detallado */}
+                      <button
+                        onClick={() => {
+                          handleReporteDetallado(setReporteDetalladoOpen);
+                          setReporteMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+                      >
+                        <div className="p-1 bg-indigo-50 rounded-lg text-indigo-600">
+                          <Icon name="list-ordered" className="h-3.5 w-3.5" />
+                        </div>
+                        <div>
+                          <p className="font-bold leading-none">Reporte Detallado</p>
+                          <span className="text-[9px] text-slate-400 font-medium">Desglose completo</span>
+                        </div>
+                      </button>
+
+                      {/* Opción 2: Reporte Resumen */}
+                      <button
+                        onClick={() => {
+                          handleReporteResumen(setReporteResumenOpen);
+                          setReporteMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+                      >
+                        <div className="p-1 bg-amber-50 rounded-lg text-amber-600">
+                          <Icon name="file-spreadsheet" className="h-3.5 w-3.5" />
+                        </div>
+                        <div>
+                          <p className="font-bold leading-none">Reporte Resumen</p>
+                          <span className="text-[9px] text-slate-400 font-medium">Totales generales</span>
+                        </div>
+                      </button>
+
+                      {/* Opción 3: Formato Word/PDF*/}
+                      <button
+                        onClick={() => {
+                          setReportePdfOpen(true);
+                          setReporteMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                      >
+                        <div className="p-1 bg-slate-50 rounded-lg text-slate-400">
+                          <LucideIcons.FileDown className="h-3.5 w-3.5" />
+                        </div>
+                        <div>
+                          <p className="font-bold leading-none text-slate-600">Reporte PDF / Word</p>
+                          <span className="text-[9px] text-slate-400 font-medium">Formatos de descarga</span>
+                        </div>
+                      </button>
                     </div>
-
-                    {/* Opción 1: Reporte Detallado */}
-                    <button
-                      onClick={() => {
-                        handleReporteDetallado(setReporteDetalladoOpen);
-                        setReporteMenuOpen(false);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-                    >
-                      <div className="p-1 bg-indigo-50 rounded-lg text-indigo-600">
-                        <Icon name="list-ordered" className="h-3.5 w-3.5" />
-                      </div>
-                      <div>
-                        <p className="font-bold leading-none">Reporte Detallado</p>
-                        <span className="text-[9px] text-slate-400 font-medium">Desglose completo</span>
-                      </div>
-                    </button>
-
-                    {/* Opción 2: Reporte Resumen */}
-                    <button
-                      onClick={() => {
-                        handleReporteResumen(setReporteResumenOpen);
-                        setReporteMenuOpen(false);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-                    >
-                      <div className="p-1 bg-amber-50 rounded-lg text-amber-600">
-                        <Icon name="file-spreadsheet" className="h-3.5 w-3.5" />
-                      </div>
-                      <div>
-                        <p className="font-bold leading-none">Reporte Resumen</p>
-                        <span className="text-[9px] text-slate-400 font-medium">Totales generales</span>
-                      </div>
-                    </button>
-
-                    {/* Opción 3: Formato Word/PDF*/}
-                    <button
-                      onClick={() => {
-                        setReportePdfOpen(true);
-                        setReporteMenuOpen(false);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[11px] font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
-                    >
-                      <div className="p-1 bg-slate-50 rounded-lg text-slate-400">
-                        <LucideIcons.FileDown className="h-3.5 w-3.5" />
-                      </div>
-                      <div>
-                        <p className="font-bold leading-none text-slate-600">Reporte PDF / Word</p>
-                        <span className="text-[9px] text-slate-400 font-medium">Formatos de descarga</span>
-                      </div>
-                    </button>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -6693,43 +6944,77 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                       {loadingNotas && <div className="animate-spin h-3 w-3 border-2 border-indigo-500 border-t-transparent rounded-full" />}
                     </div>
 
+                    {/* Buscador de Notas */}
+                    <div className="px-4 py-2 border-b border-gray-200/60 bg-white/40 shrink-0">
+                      <div className="relative flex items-center">
+                        <input
+                          type="text"
+                          placeholder="Buscar nota..."
+                          value={searchQueryNotas}
+                          onChange={(e) => setSearchQueryNotas(e.target.value)}
+                          className="w-full text-[10px] pl-7 pr-7 py-1.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all font-semibold"
+                        />
+                        <Icon name="search" className="absolute left-2.5 h-3 w-3 text-gray-400" />
+                        {searchQueryNotas && (
+                          <button
+                            type="button"
+                            onClick={() => setSearchQueryNotas("")}
+                            className="absolute right-2.5 hover:text-rose-500 text-gray-400"
+                          >
+                            <Icon name="x" className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
                     {/* Área de scroll de Notas */}
                     <div className="flex-1 overflow-y-auto p-4 space-y-2.5 custom-scrollbar bg-gray-50/30">
-                      {notasComunes.map((nota) => (
-                        <div
-                          key={nota.id_nota || nota.codigo}
-                          onClick={() => {
-                            if (isReadOnly) return;
-                            const quill = quillRef.current.getEditor();
-                            const range = quill.getSelection() || { index: quill.getLength() };
-                            const textoInsertar = nota.descripcion || '';
-                            quill.insertText(range.index, `${textoInsertar}\n`, { bold: false });
-                            quill.formatLine(range.index, textoInsertar.length, 'list', 'bullet');
-                            quill.setSelection(range.index + textoInsertar.length + 1);
-                          }}
-                          className={cn(
-                            "flex items-start p-3 bg-white border border-gray-200 rounded-xl transition-all group",
-                            isReadOnly
-                              ? "cursor-not-allowed opacity-70"
-                              : "cursor-pointer hover:border-indigo-400 hover:shadow-md hover:-translate-y-0.5"
-                          )}
-                        >
-                          {!isReadOnly && (
-                            <div className="mt-0.5 h-4 w-4 rounded-lg border border-gray-200 flex items-center justify-center group-hover:border-indigo-500 group-hover:bg-indigo-600 transition-all">
-                              <Icon name="plus" className="h-2.5 w-2.5 text-gray-400 group-hover:text-white transition-colors" />
+                      {(() => {
+                        const filtered = notasComunes.filter((nota) =>
+                          (nota.descripcion || "")
+                            .toLowerCase()
+                            .includes(searchQueryNotas.toLowerCase())
+                        );
+                        if (filtered.length === 0 && !loadingNotas) {
+                          return (
+                            <div className="flex flex-col items-center justify-center py-10 opacity-30">
+                              <Icon name="inbox" className="h-8 w-8 mb-2" />
+                              <span className="text-[10px] font-bold uppercase">
+                                {searchQueryNotas ? "Sin resultados" : "Sin notas"}
+                              </span>
                             </div>
-                          )}
-                          <span className="ml-3 text-[11px] font-semibold text-slate-600 group-hover:text-slate-900 leading-tight">
-                            {nota.descripcion}
-                          </span>
-                        </div>
-                      ))}
-                      {notasComunes.length === 0 && !loadingNotas && (
-                        <div className="flex flex-col items-center justify-center py-10 opacity-30">
-                          <Icon name="inbox" className="h-8 w-8 mb-2" />
-                          <span className="text-[10px] font-bold uppercase">Sin notas</span>
-                        </div>
-                      )}
+                          );
+                        }
+                        return filtered.map((nota) => (
+                          <div
+                            key={nota.id_nota || nota.codigo}
+                            onClick={() => {
+                              if (isReadOnly) return;
+                              const quill = quillRef.current.getEditor();
+                              const range = quill.getSelection() || { index: quill.getLength() };
+                              const textoInsertar = nota.descripcion || '';
+                              quill.insertText(range.index, `${textoInsertar}\n`, { bold: false });
+                              quill.formatLine(range.index, textoInsertar.length, 'list', 'bullet');
+                              quill.setSelection(range.index + textoInsertar.length + 1);
+                            }}
+                            className={cn(
+                              "flex items-start p-3 bg-white border border-gray-200 rounded-xl transition-all group",
+                              isReadOnly
+                                ? "cursor-not-allowed opacity-70"
+                                : "cursor-pointer hover:border-indigo-400 hover:shadow-md hover:-translate-y-0.5"
+                            )}
+                          >
+                            {!isReadOnly && (
+                              <div className="mt-0.5 h-4 w-4 rounded-lg border border-gray-200 flex items-center justify-center group-hover:border-indigo-500 group-hover:bg-indigo-600 transition-all">
+                                <Icon name="plus" className="h-2.5 w-2.5 text-gray-400 group-hover:text-white transition-colors" />
+                              </div>
+                            )}
+                            <span className="ml-3 text-[11px] font-semibold text-slate-600 group-hover:text-slate-900 leading-tight">
+                              {nota.descripcion}
+                            </span>
+                          </div>
+                        ));
+                      })()}
                     </div>
 
                     {/* Footer del Panel Izquierdo */}
@@ -7489,174 +7774,176 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
         )}
 
         {/* DESCUENTO COMERCIAL */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-            <h3 className="font-black text-gray-900 flex items-center text-[11px] uppercase tracking-wider">
-              <Icon name="percent" className="h-3.5 w-3.5 mr-2 text-indigo-500" strokeWidth={2.5} /> Descuento Comercial
-            </h3>
-            <div className="flex items-center gap-3">
-              {loadingDescuentoTotales && (
-                <div className="animate-spin h-3 w-3 border-2 border-teal-500 border-t-transparent rounded-full" />
-              )}
-              {!isReadOnly && (
-                <button
-                  type="button"
-                  disabled={savingDescuento}
-                  onClick={handleResetDescuento}
-                  className="group flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-rose-500 uppercase tracking-widest transition-all disabled:opacity-50"
-                  title="Limpiar descuento"
-                >
-                  <Icon name="rotate-ccw" className="h-3.5 w-3.5 group-hover:rotate-[-45deg] transition-transform" />
-                  <span>Limpiar</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="p-4 space-y-4">
-            
-            {/* Grid de 2 columnas para la configuración del descuento */}
-            <div className="grid grid-cols-2 gap-3 pb-1">
-              
-              {/* Aplicar Descuento */}
-              <CompactField label="Aplicar Descuento" className="group relative justify-center">
-                <div className="flex items-center min-h-[18px]">
-                  <input
-                    type="checkbox"
-                    disabled={isReadOnly}
-                    checked={descuentoAplicar}
-                    onChange={(e) => setDescuentoAplicar(e.target.checked)}
-                    className="w-4 h-4 text-teal-650 border-gray-300 rounded focus:ring-teal-500/20 transition-all cursor-pointer disabled:cursor-not-allowed"
-                  />
-                </div>
-              </CompactField>
-
-              {/* Afecto a */}
-              <CompactField label="Afecto a" className="group relative">
-                <div className="relative">
-                  <select
-                    disabled={isReadOnly}
-                    value={descuentoAfecto}
-                    onChange={(e) => setDescuentoAfecto(e.target.value)}
-                    className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 cursor-pointer w-full appearance-none pr-4 uppercase"
+        {!esOportunidad && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+              <h3 className="font-black text-gray-900 flex items-center text-[11px] uppercase tracking-wider">
+                <Icon name="percent" className="h-3.5 w-3.5 mr-2 text-indigo-500" strokeWidth={2.5} /> Descuento Comercial
+              </h3>
+              <div className="flex items-center gap-3">
+                {loadingDescuentoTotales && (
+                  <div className="animate-spin h-3 w-3 border-2 border-teal-500 border-t-transparent rounded-full" />
+                )}
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    disabled={savingDescuento}
+                    onClick={handleResetDescuento}
+                    className="group flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-rose-500 uppercase tracking-widest transition-all disabled:opacity-50"
+                    title="Limpiar descuento"
                   >
-                    <option value="t">TOTAL GENERAL</option>
-                    <option value="su">SUMINISTROS</option>
-                    <option value="ser">SERVICIOS</option>
-                  </select>
-                  {!isReadOnly && (
-                    <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      <Icon name="chevron-down" className="h-2 w-2 text-gray-400" />
-                    </div>
-                  )}
-                </div>
-              </CompactField>
-
-              {/* Porcentaje */}
-              <CompactField label="Porcentaje" className="group relative">
-                <div className="relative flex items-center w-full">
-                  <input
-                    type="number"
-                    step="0.01"
-                    disabled={isReadOnly}
-                    value={descuentoPorcentaje}
-                    onChange={(e) => handleDecimalChange(e, handleDescuentoPorcentajeChange)}
-                    placeholder="0.00"
-                    className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 outline-none w-full pr-4 font-mono"
-                  />
-                  <span className="absolute right-0 text-[10px] font-bold text-gray-400">%</span>
-                </div>
-              </CompactField>
-
-              {/* Importe */}
-              <CompactField label="Importe" className="group relative">
-                <div className="relative flex items-center w-full">
-                  <input
-                    type="number"
-                    step="0.01"
-                    disabled={isReadOnly}
-                    value={descuentoImporte}
-                    onChange={(e) => handleDecimalChange(e, handleDescuentoImporteChange)}
-                    placeholder="0.00"
-                    className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 outline-none w-full pr-6 font-mono"
-                  />
-                  <span className="absolute right-0 text-[10px] font-bold text-gray-400">
-                    {data?.tipo_moneda === 'S' || data?.tipo_moneda === 'PEN' ? 'S/' : '$'}
-                  </span>
-                </div>
-              </CompactField>
-
+                    <Icon name="rotate-ccw" className="h-3.5 w-3.5 group-hover:rotate-[-45deg] transition-transform" />
+                    <span>Limpiar</span>
+                  </button>
+                )}
+              </div>
             </div>
 
-            {descuentoError && (
-              <p className="text-red-500 text-[9px] font-black uppercase tracking-tighter bg-red-50 p-2 rounded-lg border border-red-100">
-                {descuentoError}
-              </p>
-            )}
-
-            {/* SECCIÓN 2: DASHBOARD */}
-            <div className="grid grid-cols-2 gap-3 pt-1">
+            <div className="p-4 space-y-4">
               
-              {/* Resumen de Base */}
-              <div className="bg-gray-50/80 p-3 rounded-xl border border-gray-100 space-y-2">
-                <div className="flex items-center gap-1.5 pb-1 border-b border-gray-200/50">
-                  <Icon name="calculator" className="h-3 w-3 text-teal-650" />
-                  <span className="text-[9px] font-black text-slate-700 uppercase tracking-wider">Base de Cálculo</span>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-[9px] font-bold">
-                    <span className="text-slate-500">Total Original:</span>
-                    <span className="text-slate-900 font-mono text-[9.5px]">
-                      {formatMoneySymbol((Number(descuentoTotales.total || 0) + Number(descuentoTotales.des_m || 0)))}
+              {/* Grid de 2 columnas para la configuración del descuento */}
+              <div className="grid grid-cols-2 gap-3 pb-1">
+                
+                {/* Aplicar Descuento */}
+                <CompactField label="Aplicar Descuento" className="group relative justify-center">
+                  <div className="flex items-center min-h-[18px]">
+                    <input
+                      type="checkbox"
+                      disabled={isReadOnly}
+                      checked={descuentoAplicar}
+                      onChange={(e) => setDescuentoAplicar(e.target.checked)}
+                      className="w-4 h-4 text-teal-650 border-gray-300 rounded focus:ring-teal-500/20 transition-all cursor-pointer disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </CompactField>
+
+                {/* Afecto a */}
+                <CompactField label="Afecto a" className="group relative">
+                  <div className="relative">
+                    <select
+                      disabled={isReadOnly}
+                      value={descuentoAfecto}
+                      onChange={(e) => setDescuentoAfecto(e.target.value)}
+                      className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 cursor-pointer w-full appearance-none pr-4 uppercase"
+                    >
+                      <option value="t">TOTAL GENERAL</option>
+                      <option value="su">SUMINISTROS</option>
+                      <option value="ser">SERVICIOS</option>
+                    </select>
+                    {!isReadOnly && (
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                        <Icon name="chevron-down" className="h-2 w-2 text-gray-400" />
+                      </div>
+                    )}
+                  </div>
+                </CompactField>
+
+                {/* Porcentaje */}
+                <CompactField label="Porcentaje" className="group relative">
+                  <div className="relative flex items-center w-full">
+                    <input
+                      type="number"
+                      step="0.01"
+                      disabled={isReadOnly}
+                      value={descuentoPorcentaje}
+                      onChange={(e) => handleDecimalChange(e, handleDescuentoPorcentajeChange)}
+                      placeholder="0.00"
+                      className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 outline-none w-full pr-4 font-mono"
+                    />
+                    <span className="absolute right-0 text-[10px] font-bold text-gray-400">%</span>
+                  </div>
+                </CompactField>
+
+                {/* Importe */}
+                <CompactField label="Importe" className="group relative">
+                  <div className="relative flex items-center w-full">
+                    <input
+                      type="number"
+                      step="0.01"
+                      disabled={isReadOnly}
+                      value={descuentoImporte}
+                      onChange={(e) => handleDecimalChange(e, handleDescuentoImporteChange)}
+                      placeholder="0.00"
+                      className="bg-transparent border-none p-0 h-auto font-black text-[10px] text-gray-900 focus:ring-0 outline-none w-full pr-6 font-mono"
+                    />
+                    <span className="absolute right-0 text-[10px] font-bold text-gray-400">
+                      {data?.tipo_moneda === 'S' || data?.tipo_moneda === 'PEN' ? 'S/' : '$'}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center text-[9px]">
-                    <span className="text-slate-500">Suministros:</span>
-                    <span className="text-slate-770 font-mono">
-                      {formatMoneySymbol(Number(descuentoTotales.suministros || 0))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-[9px]">
-                    <span className="text-slate-500">Servicios:</span>
-                    <span className="text-slate-770 font-mono">
-                      {formatMoneySymbol(Number(descuentoTotales.servicios || 0))}
-                    </span>
-                  </div>
-                </div>
+                </CompactField>
+
               </div>
 
-              {/* Resultado Final */}
-              <div className={cn(
-                "p-3 rounded-xl border space-y-2 transition-all duration-300",
-                descuentoAplicar
-                  ? "bg-teal-50/30 border-teal-150"
-                  : "bg-gray-50/40 border-gray-100 opacity-60"
-              )}>
-                <div className="flex items-center gap-1.5 pb-1 border-b border-teal-200/20">
-                  <Icon name="trending-up" className={cn("h-3 w-3", descuentoAplicar ? "text-teal-650" : "text-gray-400")} />
-                  <span className={cn("text-[9px] font-black uppercase tracking-wider", descuentoAplicar ? "text-teal-700" : "text-slate-500")}>Resultado Final</span>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-[9px] font-bold">
-                    <span className="text-slate-500">Descuento:</span>
-                    <span className="font-black text-red-650 italic">
-                      {descuentoAplicar ? `- ${formatMoneySymbol(Number(descuentoImporte || 0))}` : '0.00'}
-                    </span>
+              {descuentoError && (
+                <p className="text-red-500 text-[9px] font-black uppercase tracking-tighter bg-red-50 p-2 rounded-lg border border-red-100">
+                  {descuentoError}
+                </p>
+              )}
+
+              {/* SECCIÓN 2: DASHBOARD */}
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                
+                {/* Resumen de Base */}
+                <div className="bg-gray-50/80 p-3 rounded-xl border border-gray-100 space-y-2">
+                  <div className="flex items-center gap-1.5 pb-1 border-b border-gray-200/50">
+                    <Icon name="calculator" className="h-3 w-3 text-teal-650" />
+                    <span className="text-[9px] font-black text-slate-700 uppercase tracking-wider">Base de Cálculo</span>
                   </div>
-                  <div className="pt-1 border-t border-slate-200/50">
-                    <div className="flex justify-between items-center text-[9.5px] font-black">
-                      <span className={descuentoAplicar ? "text-teal-700" : "text-slate-650"}>Total Final:</span>
-                      <span className={cn("font-mono", descuentoAplicar ? "text-teal-700 text-[10px]" : "text-slate-800")}>
-                        {formatMoneySymbol((Number(descuentoTotales.total || 0) + Number(descuentoTotales.des_m || 0) - (descuentoAplicar ? Number(descuentoImporte || 0) : 0)))}
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center text-[9px] font-bold">
+                      <span className="text-slate-500">Total Original:</span>
+                      <span className="text-slate-900 font-mono text-[9.5px]">
+                        {formatMoneySymbol((Number(descuentoTotales.total || 0) + Number(descuentoTotales.des_m || 0)))}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-[9px]">
+                      <span className="text-slate-500">Suministros:</span>
+                      <span className="text-slate-770 font-mono">
+                        {formatMoneySymbol(Number(descuentoTotales.suministros || 0))}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-[9px]">
+                      <span className="text-slate-500">Servicios:</span>
+                      <span className="text-slate-770 font-mono">
+                        {formatMoneySymbol(Number(descuentoTotales.servicios || 0))}
                       </span>
                     </div>
                   </div>
                 </div>
-              </div>
 
+                {/* Resultado Final */}
+                <div className={cn(
+                  "p-3 rounded-xl border space-y-2 transition-all duration-300",
+                  descuentoAplicar
+                    ? "bg-teal-50/30 border-teal-150"
+                    : "bg-gray-50/40 border-gray-100 opacity-60"
+                )}>
+                  <div className="flex items-center gap-1.5 pb-1 border-b border-teal-200/20">
+                    <Icon name="trending-up" className={cn("h-3 w-3", descuentoAplicar ? "text-teal-650" : "text-gray-400")} />
+                    <span className={cn("text-[9px] font-black uppercase tracking-wider", descuentoAplicar ? "text-teal-700" : "text-slate-500")}>Resultado Final</span>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center text-[9px] font-bold">
+                      <span className="text-slate-500">Descuento:</span>
+                      <span className="font-black text-red-650 italic">
+                        {descuentoAplicar ? `- ${formatMoneySymbol(Number(descuentoImporte || 0))}` : '0.00'}
+                      </span>
+                    </div>
+                    <div className="pt-1 border-t border-slate-200/50">
+                      <div className="flex justify-between items-center text-[9.5px] font-black">
+                        <span className={descuentoAplicar ? "text-teal-700" : "text-slate-650"}>Total Final:</span>
+                        <span className={cn("font-mono", descuentoAplicar ? "text-teal-700 text-[10px]" : "text-slate-800")}>
+                          {formatMoneySymbol((Number(descuentoTotales.total || 0) + Number(descuentoTotales.des_m || 0) - (descuentoAplicar ? Number(descuentoImporte || 0) : 0)))}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* DOCUMENTOS ADJUNTOS */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
@@ -7946,7 +8233,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                 <div className="absolute left-[5px] top-2 bottom-0 w-[2px] bg-gradient-to-b from-indigo-200 via-slate-100 to-transparent"></div>
 
                 {/* Mapeo de Hitos */}
-                {history.map((n, idx) => {
+                {[...history].reverse().map((n, idx) => {
                   const type = getHistoryType(n.detalle);
                   const typeConfig = {
                     CREACION: { color: 'indigo', icon: 'star', label: 'Apertura de Registro' },

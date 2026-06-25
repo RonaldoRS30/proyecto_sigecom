@@ -618,21 +618,125 @@ def cotizacion_detalle(request, id_registro):
                     status=400
                 )
             
-            old_area = cot.id_area
-            old_tipo = cot.id_tipo_id
-            old_cliente = cot.id_cliente_id
+            # ── GUARDAR SNAPSHOTS ANTES DEL GUARDADO ──
+            fields_to_track = {
+                'referencia': ('Referencia', str),
+                'forma_pago': ('Forma de pago', str),
+                'lugar': ('Lugar de entrega', str),
+                'tipo_moneda': ('Moneda', lambda x: 'Dólares' if x == 'D' else 'Soles'),
+                'tipo_cambio': ('Tipo de cambio', str),
+                'igv': ('IGV', lambda x: 'Incluye' if x == 'I' else ('Sí' if x == 'S' else 'No Incluye')),
+                'entrega_suministros': ('Tiempo de entrega (Suministros)', str),
+                'entrega_servicios': ('Tiempo de entrega (Servicios)', str),
+                'validez_oferta': ('Validez de oferta', str),
+                'probabilidad': ('Probabilidad', lambda x: 'Baja' if x == 1 else ('Media' if x == 2 else ('Alta' if x == 3 else 'Muy Alta' if x == 4 else str(x)))),
+                'comentario': ('Comentario', str),
+                'representante_nombre': ('Nombre del representante', str),
+            }
+
+            old_vals = {}
+            for field in fields_to_track:
+                old_vals[field] = getattr(cot, field)
+
+            old_area_id = cot.id_area
+            old_tipo_id = cot.id_tipo_id
+            old_cliente_id = cot.id_cliente_id
+            old_rep_id = cot.id_representante_id
+            old_comercial_id = cot.id_comercial_id
+            old_tecnico_id = cot.id_tecnico_id
+            old_est_id = cot.id_estado_id
+            old_estado_op = cot.estado_oportunidad
             old_codigo = cot.codigo
+
+            old_dates = {
+                'recepcion_solicitud': cot.recepcion_solicitud,
+                'fecha_limite': cot.fecha_limite,
+                'visita_tecnica': cot.visita_tecnica,
+                'emision_cotizacion': cot.emision_cotizacion
+            }
+
+            area_mapping = {1: "Industria", 2: "Minería", 3: "Mantenimiento", 4: "Petroquímica", 8: "Seguridad"}
+            old_area_name = area_mapping.get(old_area_id, "Vacío")
+            old_tipo_name = cot.id_tipo.nombre if cot.id_tipo else "Vacío"
+            old_cliente_name = cot.id_cliente.nombre if cot.id_cliente else "Vacío"
+            old_rep_name = cot.id_representante.nombre_representante if cot.id_representante else "Vacío"
+            old_comercial_name = cot.id_comercial.nombre_completo if cot.id_comercial else "Vacío"
+            old_tecnico_name = cot.id_tecnico.nombre_completo if cot.id_tecnico else "Vacío"
+            old_estado_name = cot.id_estado.nombre if cot.id_estado else "Vacío"
 
             serializer = CotizacionSerializer(cot, data=request.data, partial=True)
             if serializer.is_valid():
                 with transaction.atomic():
                     cot.refresh_from_db()
                     serializer.save()
+                    cot.refresh_from_db()
+
+                    # ── COMPARA Y REGISTRA EN TRAZABILIDAD ──
+                    cambios = []
                     
+                    for field, (label, formatter) in fields_to_track.items():
+                        new_val = getattr(cot, field)
+                        old_val = old_vals[field]
+                        if new_val != old_val:
+                            if not (new_val is None and old_val == "") and not (new_val == "" and old_val is None):
+                                formatted_old = formatter(old_val) if old_val is not None else "Vacío"
+                                formatted_new = formatter(new_val) if new_val is not None else "Vacío"
+                                if formatted_old != formatted_new:
+                                    cambios.append(f"{label} modificado de '{formatted_old}' a '{formatted_new}'")
+
+                    if cot.id_area != old_area_id:
+                        new_area_name = area_mapping.get(cot.id_area, "Vacío")
+                        cambios.append(f"Área modificada de '{old_area_name}' a '{new_area_name}'")
+                    if cot.id_tipo_id != old_tipo_id:
+                        new_tipo_name = cot.id_tipo.nombre if cot.id_tipo else "Vacío"
+                        cambios.append(f"Tipo modificado de '{old_tipo_name}' a '{new_tipo_name}'")
+                    if cot.id_cliente_id != old_cliente_id:
+                        new_cliente_name = cot.id_cliente.nombre if cot.id_cliente else "Vacío"
+                        cambios.append(f"Cliente modificado de '{old_cliente_name}' a '{new_cliente_name}'")
+                    if cot.id_representante_id != old_rep_id:
+                        new_rep_name = cot.id_representante.nombre_representante if cot.id_representante else "Vacío"
+                        cambios.append(f"Representante modificado de '{old_rep_name}' a '{new_rep_name}'")
+                    if cot.id_comercial_id != old_comercial_id:
+                        new_comercial_name = cot.id_comercial.nombre_completo if cot.id_comercial else "Vacío"
+                        cambios.append(f"Responsable Comercial modificado de '{old_comercial_name}' a '{new_comercial_name}'")
+                    if cot.id_tecnico_id != old_tecnico_id:
+                        new_tecnico_name = cot.id_tecnico.nombre_completo if cot.id_tecnico else "Vacío"
+                        cambios.append(f"Responsable Técnico modificado de '{old_tecnico_name}' a '{new_tecnico_name}'")
+                    if cot.id_estado_id != old_est_id:
+                        new_estado_name = cot.id_estado.nombre if cot.id_estado else "Vacío"
+                        cambios.append(f"Estado modificado de '{old_estado_name}' a '{new_estado_name}'")
+                    if cot.estado_oportunidad != old_estado_op:
+                        opp_states_map = {1: "Pendiente", 2: "No Cotizado", 3: "Rechazado", 4: "Cotizado"}
+                        old_opp = opp_states_map.get(old_estado_op, 'Desconocido')
+                        new_opp = opp_states_map.get(cot.estado_oportunidad, 'Desconocido')
+                        cambios.append(f"Estado de Oportunidad modificado de '{old_opp}' a '{new_opp}'")
+
+                    for date_field, label in [
+                        ('recepcion_solicitud', 'Fecha de recepción'),
+                        ('fecha_limite', 'Fecha límite'),
+                        ('visita_tecnica', 'Fecha de visita técnica'),
+                        ('emision_cotizacion', 'Fecha de emisión')
+                    ]:
+                        old_date = old_dates[date_field]
+                        new_date = getattr(cot, date_field)
+                        if old_date != new_date:
+                            old_d_str = old_date.strftime('%d/%m/%Y %H:%M') if old_date else "Vacío"
+                            new_d_str = new_date.strftime('%d/%m/%Y %H:%M') if new_date else "Vacío"
+                            if old_d_str != new_d_str:
+                                cambios.append(f"{label} modificada de '{old_d_str}' a '{new_d_str}'")
+
+                    for cambio in cambios:
+                        CotizacionSeguimiento.objects.create(
+                            id_registro=cot,
+                            detalle=f"Edición de datos: {cambio}",
+                            id_usuario=request.user,
+                            activo='1'
+                        )
+
                     # Si cambiaron campos clave (área, tipo, cliente), recalculamos el código
-                    if (cot.id_area != old_area or 
-                        cot.id_tipo_id != old_tipo or 
-                        cot.id_cliente_id != old_cliente):
+                    if (cot.id_area != old_area_id or 
+                        cot.id_tipo_id != old_tipo_id or 
+                        cot.id_cliente_id != old_cliente_id):
                         
                         cot.refresh_from_db(fields=['id_area', 'id_tipo', 'id_cliente', 'codigo'])
                         nuevo_codigo = calcular_codigo_dinamico(cot, cot.codigo)
@@ -817,8 +921,22 @@ def listar_suministros(request, id_registro):
 
             serializer = CotizacionSuministroSerializer(data=data)
             if serializer.is_valid():
-                serializer.save()
+                sumin = serializer.save()
                 actualizar_total_general_cotizacion(cot)
+                
+                # Registrar en la trazabilidad (Seguimiento)
+                if sumin.nivel == 0:
+                    detalle_log = f"Suministros: Se creó el grupo '{sumin.nombre_grupo or ''}'"
+                else:
+                    detalle_log = f"Suministros: Se creó la partida '{sumin.codigo_item or ''} - {sumin.descripcion or ''}'"
+                
+                CotizacionSeguimiento.objects.create(
+                    id_registro=cot,
+                    detalle=detalle_log,
+                    id_usuario=request.user,
+                    activo='1'
+                )
+                
                 return Response(serializer.data, status=201)
 
             print("ERROR SERIALIZER POST SUMINISTROS:", serializer.errors)
@@ -864,6 +982,17 @@ def listar_suministros(request, id_registro):
                 id_registro=id_registro
             )
 
+            # Guardamos snapshot antes de la edición
+            old_nombre_grupo = suministro.nombre_grupo
+            old_codigo_item = suministro.codigo_item
+            old_descripcion = suministro.descripcion
+            old_cantidad = suministro.cantidad
+            old_precio_venta = suministro.precio_venta
+            old_venta_total = suministro.venta_total
+            old_proveedor = suministro.proveedor
+            old_observacion = suministro.observacion
+            old_tipo_unidad = suministro.tipo_unidad
+
             data = request.data.copy()
             # Limpiamos data para evitar modificar las PKs por error
             data.pop("id_suministro", None)
@@ -876,8 +1005,42 @@ def listar_suministros(request, id_registro):
             )
 
             if serializer.is_valid():
-                serializer.save()
+                sumin_updated = serializer.save()
                 actualizar_total_general_cotizacion(cot)
+                
+                # Detectar cambios y registrar trazabilidad
+                cambios = []
+                if sumin_updated.nivel == 0:
+                    if old_nombre_grupo != sumin_updated.nombre_grupo:
+                        cambios.append(f"Nombre de grupo modificado de '{old_nombre_grupo or 'Vacío'}' a '{sumin_updated.nombre_grupo or 'Vacío'}'")
+                    detalle_prefijo = f"Suministros (Grupo):"
+                else:
+                    if old_codigo_item != sumin_updated.codigo_item:
+                        cambios.append(f"Código de item modificado de '{old_codigo_item or 'Vacío'}' a '{sumin_updated.codigo_item or 'Vacío'}'")
+                    if old_descripcion != sumin_updated.descripcion:
+                        cambios.append(f"Descripción modificada de '{old_descripcion or 'Vacío'}' a '{sumin_updated.descripcion or 'Vacío'}'")
+                    if old_cantidad != sumin_updated.cantidad:
+                        cambios.append(f"Cantidad modificada de '{old_cantidad or 0}' a '{sumin_updated.cantidad or 0}'")
+                    if old_precio_venta != sumin_updated.precio_venta:
+                        cambios.append(f"Precio de venta modificado de '{old_precio_venta or 0}' a '{sumin_updated.precio_venta or 0}'")
+                    if old_venta_total != sumin_updated.venta_total:
+                        cambios.append(f"Venta total modificada de '{old_venta_total or 0}' a '{sumin_updated.venta_total or 0}'")
+                    if old_proveedor != sumin_updated.proveedor:
+                        cambios.append(f"Proveedor modificado de '{old_proveedor or 'Vacío'}' a '{sumin_updated.proveedor or 'Vacío'}'")
+                    if old_observacion != sumin_updated.observacion:
+                        cambios.append(f"Observación modificada de '{old_observacion or 'Vacío'}' a '{sumin_updated.observacion or 'Vacío'}'")
+                    if old_tipo_unidad != sumin_updated.tipo_unidad:
+                        cambios.append(f"Unidad modificada de '{old_tipo_unidad or 'Vacío'}' a '{sumin_updated.tipo_unidad or 'Vacío'}'")
+                    detalle_prefijo = f"Suministros (Partida '{sumin_updated.codigo_item or ''} - {sumin_updated.descripcion or ''}'):"
+                
+                if cambios:
+                    CotizacionSeguimiento.objects.create(
+                        id_registro=cot,
+                        detalle=f"{detalle_prefijo} {', '.join(cambios)}",
+                        id_usuario=request.user,
+                        activo='1'
+                    )
+                
                 return Response(serializer.data)
 
             print("ERROR SERIALIZER PUT SUMINISTROS:", serializer.errors)
@@ -898,6 +1061,12 @@ def listar_suministros(request, id_registro):
                 id_registro=id_registro
             )
 
+            # Trazabilidad
+            if suministro.nivel == 0:
+                detalle_log = f"Suministros: Se eliminó el grupo '{suministro.nombre_grupo or ''}' y sus partidas asociadas"
+            else:
+                detalle_log = f"Suministros: Se eliminó la partida '{suministro.codigo_item or ''} - {suministro.descripcion or ''}'"
+
             # Si es cabecera de grupo (nivel=0), también eliminamos los items del grupo
             if suministro.nivel == 0:
                 CotizacionSuministro.objects.filter(
@@ -907,6 +1076,14 @@ def listar_suministros(request, id_registro):
 
             suministro.delete()
             actualizar_total_general_cotizacion(cot)
+
+            CotizacionSeguimiento.objects.create(
+                id_registro=cot,
+                detalle=detalle_log,
+                id_usuario=request.user,
+                activo='1'
+            )
+
             return Response({"message": "Suministro eliminado correctamente"}, status=200)
 
     except CotizacionSuministro.DoesNotExist:
@@ -1090,8 +1267,24 @@ def listar_servicios(request, id_registro):
 
             serializer = CotizacionServicioSerializer(data=data)
             if serializer.is_valid():
-                serializer.save()
+                serv = serializer.save()
                 actualizar_total_general_cotizacion(cot)
+                
+                # Registrar en la trazabilidad (Seguimiento)
+                if serv.nivel == 0:
+                    detalle_log = f"Servicios: Se creó el grupo '{serv.nombre_servicio or ''}'"
+                elif serv.nivel == 1:
+                    detalle_log = f"Servicios: Se creó el subgrupo '{serv.nombre_servicio or ''}'"
+                else:
+                    detalle_log = f"Servicios: Se creó la partida '{serv.codigo_item or ''} - {serv.descripcion_item or ''}'"
+                
+                CotizacionSeguimiento.objects.create(
+                    id_registro=cot,
+                    detalle=detalle_log,
+                    id_usuario=request.user,
+                    activo='1'
+                )
+                
                 return Response(serializer.data, status=201)
 
             print("SERIALIZER VALIDATION ERROR:", serializer.errors)
@@ -1131,6 +1324,17 @@ def listar_servicios(request, id_registro):
                 id_registro=id_registro
             )
 
+            # Snapshots antes de la edición
+            old_nombre_servicio = servicio_instancia.nombre_servicio
+            old_descripcion_servicio = servicio_instancia.descripcion_servicio
+            old_codigo_item = servicio_instancia.codigo_item
+            old_descripcion_item = servicio_instancia.descripcion_item
+            old_horas = servicio_instancia.horas
+            old_cantidad_hombres = servicio_instancia.cantidad_hombres
+            old_cantidad_dias = servicio_instancia.cantidad_dias
+            old_cotizado_hombre_dia = servicio_instancia.cotizado_hombre_dia
+            old_cotizado_total = servicio_instancia.cotizado_total
+
             data = request.data.copy()
             # Limpiamos para evitar inyectar IDs por error
             data.pop("id_servicio", None)
@@ -1143,8 +1347,46 @@ def listar_servicios(request, id_registro):
             )
 
             if serializer.is_valid():
-                serializer.save()
+                serv_updated = serializer.save()
                 actualizar_total_general_cotizacion(cot)
+                
+                # Detectar cambios
+                cambios = []
+                if serv_updated.nivel == 0:
+                    if old_nombre_servicio != serv_updated.nombre_servicio:
+                        cambios.append(f"Nombre de grupo modificado de '{old_nombre_servicio or 'Vacío'}' a '{serv_updated.nombre_servicio or 'Vacío'}'")
+                    if old_descripcion_servicio != serv_updated.descripcion_servicio:
+                        cambios.append(f"Descripción de grupo modificada de '{old_descripcion_servicio or 'Vacío'}' a '{serv_updated.descripcion_servicio or 'Vacío'}'")
+                    detalle_prefijo = f"Servicios (Grupo):"
+                elif serv_updated.nivel == 1:
+                    if old_nombre_servicio != serv_updated.nombre_servicio:
+                        cambios.append(f"Nombre de subgrupo modificado de '{old_nombre_servicio or 'Vacío'}' a '{serv_updated.nombre_servicio or 'Vacío'}'")
+                    detalle_prefijo = f"Servicios (Subgrupo):"
+                else:
+                    if old_codigo_item != serv_updated.codigo_item:
+                        cambios.append(f"Código modificado de '{old_codigo_item or 'Vacío'}' a '{serv_updated.codigo_item or 'Vacío'}'")
+                    if old_descripcion_item != serv_updated.descripcion_item:
+                        cambios.append(f"Descripción modificada de '{old_descripcion_item or 'Vacío'}' a '{serv_updated.descripcion_item or 'Vacío'}'")
+                    if old_horas != serv_updated.horas:
+                        cambios.append(f"Horas modificadas de '{old_horas or 0}' a '{serv_updated.horas or 0}'")
+                    if old_cantidad_hombres != serv_updated.cantidad_hombres:
+                        cambios.append(f"Cant. Hombres modificado de '{old_cantidad_hombres or 0}' a '{serv_updated.cantidad_hombres or 0}'")
+                    if old_cantidad_dias != serv_updated.cantidad_dias:
+                        cambios.append(f"Días modificado de '{old_cantidad_dias or 0}' a '{serv_updated.cantidad_dias or 0}'")
+                    if old_cotizado_hombre_dia != serv_updated.cotizado_hombre_dia:
+                        cambios.append(f"Hombre/Día modificado de '{old_cotizado_hombre_dia or 0}' a '{serv_updated.cotizado_hombre_dia or 0}'")
+                    if old_cotizado_total != serv_updated.cotizado_total:
+                        cambios.append(f"Cotizado Total modificado de '{old_cotizado_total or 0}' a '{serv_updated.cotizado_total or 0}'")
+                    detalle_prefijo = f"Servicios (Partida '{serv_updated.codigo_item or ''} - {serv_updated.descripcion_item or ''}'):"
+
+                if cambios:
+                    CotizacionSeguimiento.objects.create(
+                        id_registro=cot,
+                        detalle=f"{detalle_prefijo} {', '.join(cambios)}",
+                        id_usuario=request.user,
+                        activo='1'
+                    )
+                
                 return Response(serializer.data)
 
             return Response(serializer.errors, status=400)
@@ -1163,6 +1405,14 @@ def listar_servicios(request, id_registro):
                 id_servicio=item_id,
                 id_registro=id_registro
             )
+
+            # Trazabilidad antes de eliminar
+            if servicio.nivel == 0:
+                detalle_log = f"Servicios: Se eliminó el grupo '{servicio.nombre_servicio or ''}' y todos sus subgrupos/partidas asociados"
+            elif servicio.nivel == 1:
+                detalle_log = f"Servicios: Se eliminó el subgrupo '{servicio.nombre_servicio or ''}' y sus partidas asociadas"
+            else:
+                detalle_log = f"Servicios: Se eliminó la partida '{servicio.codigo_item or ''} - {servicio.descripcion_item or ''}'"
 
             # Si es cabecera (nivel=0), eliminamos todo el grupo de servicios
             if servicio.nivel == 0:
@@ -1184,6 +1434,14 @@ def listar_servicios(request, id_registro):
 
             servicio.delete()
             actualizar_total_general_cotizacion(cot)
+
+            CotizacionSeguimiento.objects.create(
+                id_registro=cot,
+                detalle=detalle_log,
+                id_usuario=request.user,
+                activo='1'
+            )
+
             return Response({"message": "Servicio eliminado correctamente"}, status=200)
 
     except CotizacionServicio.DoesNotExist:
@@ -2729,15 +2987,39 @@ def guardar_cotizacion(request):
         if data.get("coment"):
             data["comentario"] = data.get("coment")
         
-        comercial_user = Usuario.objects.filter(dni=data.get("codic")).first()
+        # Comercial
+        comercial_user = None
+        if data.get("codic"):
+            comercial_user = Usuario.objects.filter(dni=data.get("codic")).first()
         if not comercial_user and data.get("nombc"):
             comercial_user = Usuario.objects.filter(nombre_completo=data.get("nombc")).first()
-        data["id_comercial"] = comercial_user.pk if comercial_user else None
-        
-        tecnico_user = Usuario.objects.filter(dni=data.get("codit")).first()
+            
+        if comercial_user:
+            data["id_comercial"] = comercial_user.pk
+        elif "id_comercial" in data and data.get("id_comercial") not in [None, ""]:
+            try:
+                data["id_comercial"] = int(data.get("id_comercial"))
+            except ValueError:
+                data["id_comercial"] = None
+        else:
+            data["id_comercial"] = None
+
+        # Técnico
+        tecnico_user = None
+        if data.get("codit"):
+            tecnico_user = Usuario.objects.filter(dni=data.get("codit")).first()
         if not tecnico_user and data.get("nombt"):
             tecnico_user = Usuario.objects.filter(nombre_completo=data.get("nombt")).first()
-        data["id_tecnico"] = tecnico_user.pk if tecnico_user else None
+            
+        if tecnico_user:
+            data["id_tecnico"] = tecnico_user.pk
+        elif "id_tecnico" in data and data.get("id_tecnico") not in [None, ""]:
+            try:
+                data["id_tecnico"] = int(data.get("id_tecnico"))
+            except ValueError:
+                data["id_tecnico"] = None
+        else:
+            data["id_tecnico"] = None
         
         data["id_creador"] = request.user.pk
         
@@ -3165,9 +3447,18 @@ def condiciones_generales(request, id_registro):
             if isinstance(contenido, str):
                 contenido = contenido.strip()
 
+            old_desc = condicion_obj.descripcion or ""
             with transaction.atomic():
                 condicion_obj.descripcion = contenido
                 condicion_obj.save()
+
+                if old_desc != contenido:
+                    CotizacionSeguimiento.objects.create(
+                        id_registro=cot,
+                        detalle="Condiciones Generales: Se actualizaron las condiciones generales de la cotización.",
+                        id_usuario=request.user,
+                        activo='1'
+                    )
 
             return Response({
                 "status": "ok",
@@ -3868,7 +4159,7 @@ def build_cotizacion_pdf_context(num_reg):
     for g in suministros:
         indice.append({
             "numero": contador,
-            "titulo": f"Detalle: {g['titulo']}"
+            "titulo": f"Detalle Suministro: {g['titulo']}"
         })
         contador += 1
 
@@ -3876,7 +4167,7 @@ def build_cotizacion_pdf_context(num_reg):
     for s in servicios:
         indice.append({
             "numero": contador,
-            "titulo": f"Detalle: {s['titulo']}"
+            "titulo": f"Detalle Servicio: {s['titulo']}"
         })
         contador += 1
 
@@ -3893,7 +4184,7 @@ def build_cotizacion_pdf_context(num_reg):
         "presupuesto": 1,
     }
 
-    contador = 2
+    contador = 1
 
     # Suministros
     for g in suministros:
@@ -3976,6 +4267,103 @@ def cotizacion_reporte_html(request, num_reg):
     response['X-Frame-Options'] = 'ALLOWALL'
     return response
 
+from html.parser import HTMLParser
+
+class HTMLToRichTextParser(HTMLParser):
+    def __init__(self, rt_obj, default_color=None, default_size=None):
+        super().__init__()
+        self.rt = rt_obj
+        self.default_color = default_color
+        self.default_size = default_size
+        
+        self.bold_stack = 0
+        self.italic_stack = 0
+        self.underline_stack = 0
+        self.indent_level = 0
+        self.in_list = False
+        self.current_style_indent = 0
+        self.line_prefix_needed = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        
+        if tag in ('strong', 'b'):
+            self.bold_stack += 1
+        elif tag in ('em', 'i'):
+            self.italic_stack += 1
+        elif tag in ('u',):
+            self.underline_stack += 1
+        elif tag in ('ul', 'ol'):
+            self.indent_level += 1
+            self.in_list = True
+        elif tag == 'li':
+            # Check for Quill indent classes
+            cls = attrs_dict.get('class', '')
+            li_indent = 0
+            if 'ql-indent-' in cls:
+                match = re.search(r'ql-indent-(\d+)', cls)
+                if match:
+                    li_indent = int(match.group(1))
+            
+            # Print indent prefix
+            level = self.indent_level + li_indent
+            prefix = ""
+            if level > 1:
+                prefix = "    " * (level - 1)
+            prefix += " • "
+            self.rt.add(prefix, color=self.default_color, size=self.default_size)
+            self.line_prefix_needed = False
+        elif tag == 'p':
+            cls = attrs_dict.get('class', '')
+            p_indent = 0
+            if 'ql-indent-' in cls:
+                match = re.search(r'ql-indent-(\d+)', cls)
+                if match:
+                    p_indent = int(match.group(1))
+            
+            style = attrs_dict.get('style', '')
+            if 'padding-left' in style or 'margin-left' in style:
+                match = re.search(r'(?:padding|margin)-left:\s*(\d+)', style)
+                if match:
+                    p_indent += max(1, int(match.group(1)) // 30)
+            
+            if p_indent > 0:
+                prefix = "    " * p_indent
+                self.rt.add(prefix, color=self.default_color, size=self.default_size)
+            self.line_prefix_needed = False
+        elif tag == 'br':
+            self.rt.add('\n')
+
+    def handle_endtag(self, tag):
+        if tag in ('strong', 'b'):
+            self.bold_stack = max(0, self.bold_stack - 1)
+        elif tag in ('em', 'i'):
+            self.italic_stack = max(0, self.italic_stack - 1)
+        elif tag in ('u',):
+            self.underline_stack = max(0, self.underline_stack - 1)
+        elif tag in ('ul', 'ol'):
+            self.indent_level = max(0, self.indent_level - 1)
+            if self.indent_level == 0:
+                self.in_list = False
+        elif tag == 'li':
+            self.rt.add('\n')
+        elif tag == 'p':
+            self.rt.add('\n')
+
+    def handle_data(self, data):
+        clean_text = data.replace('\r', '').replace('\n', ' ')
+        if not clean_text:
+            return
+            
+        self.rt.add(
+            clean_text,
+            bold=self.bold_stack > 0,
+            italic=self.italic_stack > 0,
+            underline=self.underline_stack > 0,
+            color=self.default_color,
+            size=self.default_size
+        )
+
 def descargar_cotizacion_word(request, num_reg):
     # Asumimos que build_cotizacion_pdf_context ya trae toda la data necesaria
     context = build_cotizacion_pdf_context(num_reg)
@@ -3990,7 +4378,67 @@ def descargar_cotizacion_word(request, num_reg):
     template_path = os.path.join(settings.BASE_DIR, 'cotizaciones_api', 'templates', 'reportes', 'plantilla_word.docx')
     
     try:
-        doc = DocxTemplate(template_path)
+        import zipfile
+        import io
+        import re
+
+        with open(template_path, 'rb') as f:
+            template_bytes = f.read()
+
+        in_memory_zip = io.BytesIO(template_bytes)
+        out_memory_zip = io.BytesIO()
+
+        with zipfile.ZipFile(in_memory_zip, 'r') as z_in:
+            with zipfile.ZipFile(out_memory_zip, 'w', zipfile.ZIP_DEFLATED) as z_out:
+                for item in z_in.infolist():
+                    data = z_in.read(item.filename)
+                    if item.filename == 'word/document.xml':
+                        doc_xml = data.decode('utf-8')
+                        
+                        # 0. Remove numbering from PRESUPUESTO GENERAL above the table in document XML
+                        doc_xml = re.sub(
+                            r'\{\{\s*secciones\.presupuesto\s*\}\}(?:<[^>]+>)*\s*\.\-\s*(?:<[^>]+>)*PRESUPUESTO(?:<[^>]+>)*\s*GENERAL',
+                            'PRESUPUESTO GENERAL',
+                            doc_xml,
+                            flags=re.IGNORECASE
+                        )
+
+                        # 1. Add DETALLE SUMINISTRO and DETALLE SERVICIO labels based on loop iteration headers
+                        def patch_loop_detalle(xml, loop_iterable, replacement_label):
+                            pattern = r'\{%\s*for\s+\w+\s+in\s+' + loop_iterable + r'\s*%\}'
+                            match = re.search(pattern, xml)
+                            if match:
+                                start_pos = match.end()
+                                # Find the first occurrence of "DETALLE:" after this loop start
+                                detalle_match = re.search(r'DETALLE:', xml[start_pos:], re.IGNORECASE)
+                                if detalle_match:
+                                    pos = start_pos + detalle_match.start()
+                                    xml = xml[:pos] + replacement_label + xml[pos + len("DETALLE:"):]
+                            return xml
+
+                        doc_xml = patch_loop_detalle(doc_xml, 'suministros', 'DETALLE SUMINISTRO:')
+                        doc_xml = patch_loop_detalle(doc_xml, 'servicios', 'DETALLE SERVICIO:')
+                        
+                        # 2. Wrap discount row in conditional check
+                        doc_xml = re.sub(
+                            r'<w:tr\b[^>]*>(?:(?!</?w:tr\b).)*DESCUENTO:(?:(?!</?w:tr\b).)*</w:tr>',
+                            r'{% if totales.descuento and totales.descuento > 0 %}\g<0>{% endif %}',
+                            doc_xml,
+                            flags=re.DOTALL | re.IGNORECASE
+                        )
+                        
+                        # 3. Wrap item.numero print tags in conditional logic to avoid TypeError with 0/None
+                        doc_xml = re.sub(
+                            r'\{\{\s*([^}]+?item\.numero[^}]+?)\s*\}\}',
+                            r'{% if item.numero %}{{\1}}{% endif %}',
+                            doc_xml
+                        )
+                        
+                        data = doc_xml.encode('utf-8')
+                    z_out.writestr(item, data)
+
+        out_memory_zip.seek(0)
+        doc = DocxTemplate(out_memory_zip)
         moneda = context['totales'].get('moneda', 'Dólares')
 
         def formatear_moneda(valor):
@@ -4036,33 +4484,10 @@ def descargar_cotizacion_word(request, num_reg):
             detalle_raw = s.get('detalle', '') or ''
             rt = RichText()
             
-            # Decodificación y limpieza de bloques HTML
-            texto = unescape(detalle_raw).replace('&nbsp;', ' ')
-            bloques = re.split(r'(<li>|<p>|<ul>|</ul>|</p>|</li>)', texto)
+            parser = HTMLToRichTextParser(rt)
+            parser.feed(unescape(detalle_raw))
             
-            dentro_de_lista = False
-            for i, parte in enumerate(bloques):
-                if '<ul>' in parte:
-                    dentro_de_lista = True
-                    continue
-                if '</ul>' in parte:
-                    dentro_de_lista = False
-                    continue
-                    
-                contenido = re.sub(r'<[^>]+>', '', parte).strip()
-                if not contenido:
-                    continue
-                    
-                # Formateo de títulos (negrita) y viñetas
-                if contenido.endswith(':'):
-                    if len(rt.xml) > 0: rt.add('\n')
-                    rt.add(contenido, bold=True)
-                    rt.add('\n')
-                elif '<li>' in bloques[i-1]:
-                    rt.add(f" • {contenido}\n")
-                elif '<p>' in bloques[i-1] or not dentro_de_lista:
-                    rt.add(f"{contenido}\n")
-
+            s['detalle'] = rt
             s['detalle_f'] = rt
 
         # 2.5 Procesamiento de Condiciones Generales (Estilo para Cuadro Dinámico)
@@ -4073,37 +4498,10 @@ def descargar_cotizacion_word(request, num_reg):
         TAMANO_PRO = 18  # 9pt
 
         if cond_raw:
-            texto = unescape(cond_raw).replace('&nbsp;', ' ').replace('\xa0', ' ')
-            bloques = re.split(r'(<li>|<p>|<ul>|</ul>|</p>|</li>)', texto)
+            parser = HTMLToRichTextParser(rt_cond, default_color=COLOR_PRO, default_size=TAMANO_PRO)
+            parser.feed(unescape(cond_raw))
 
-            dentro_de_lista = False
-
-            for i, parte in enumerate(bloques):
-                if '<ul>' in parte:
-                    dentro_de_lista = True
-                    continue
-                if '</ul>' in parte:
-                    dentro_de_lista = False
-                    continue
-
-                contenido = re.sub(r'<[^>]+>', '', parte).strip()
-                if not contenido:
-                    continue
-
-                es_titulo = contenido.endswith(':') or (contenido.isupper() and len(contenido) > 3)
-
-                if es_titulo:
-                    if len(rt_cond.xml) > 0:
-                        rt_cond.add('\n')
-                    rt_cond.add(contenido, bold=True, color=COLOR_PRO, size=TAMANO_PRO)
-                    rt_cond.add('\n')
-
-                elif i > 0 and '<li>' in bloques[i-1]:
-                    rt_cond.add(f" • {contenido}\n", color=COLOR_PRO, size=TAMANO_PRO)
-
-                else:
-                    rt_cond.add(f"{contenido}\n", color=COLOR_PRO, size=TAMANO_PRO)
-
+        context['condiciones_generales']['condiciones'] = rt_cond
         context['condiciones_generales']['texto_f'] = rt_cond
 
         # 3. Procesamiento de totales finales
@@ -4397,7 +4795,7 @@ def crear_nueva_version_cotizacion(request, id_registro):
             # Añadimos un hito de auditoría indicando la creación de la nueva versión
             nuevo_hito_auditoria = CotizacionSeguimiento(
                 id_registro_id=nueva_coti.id_registro,
-                detalle=f"Nueva versión generada correctamente a partir del registro base ID: {base.id_registro}",
+                detalle=f"Nueva versión {nueva_coti.codigo} generada a partir del registro base {base.codigo}",
                 id_usuario=request.user,
                 activo='1'
             )
@@ -4408,6 +4806,14 @@ def crear_nueva_version_cotizacion(request, id_registro):
                     CotizacionSeguimiento.objects.bulk_create(nuevos_seguimientos)
                 except IntegrityError as e:
                     raise IntegrityError(f"Error de duplicidad en lote del modelo [CotizacionSeguimiento]: {str(e)}")
+
+            # Registrar en la trazabilidad de la cotización base
+            CotizacionSeguimiento.objects.create(
+                id_registro=base,
+                detalle=f"Se generó una nueva versión de esta cotización con código {nueva_coti.codigo}",
+                id_usuario=request.user,
+                activo='1'
+            )
 
         # Si todo corre perfecto en el bloque atómico:
         return Response({
@@ -4608,7 +5014,7 @@ def generar_copiar_cotizacion(request, id_registro):
             # Hito de auditoría
             nuevo_hito_auditoria = CotizacionSeguimiento(
                 id_registro_id=nueva_coti.id_registro,
-                detalle=f"Copia generada correctamente a partir del registro ID: {base.id_registro}",
+                detalle=f"Copia {nueva_coti.codigo or '(Sin Código)'} generada a partir del registro base {base.codigo or '(Sin Código)'}",
                 id_usuario=request.user,
                 activo='1'
             )
@@ -4616,6 +5022,14 @@ def generar_copiar_cotizacion(request, id_registro):
 
             if nuevos_seguimientos:
                 CotizacionSeguimiento.objects.bulk_create(nuevos_seguimientos)
+
+            # Registrar en la trazabilidad de la cotización base
+            CotizacionSeguimiento.objects.create(
+                id_registro=base,
+                detalle=f"Se generó una copia de esta cotización con código {nueva_coti.codigo or '(Sin Código)'}",
+                id_usuario=request.user,
+                activo='1'
+            )
 
         return Response({
             "ok": True,
@@ -4714,6 +5128,14 @@ def pasar_a_cotizacion(request, id_registro):
             cotizacion.codigo = calcular_codigo_dinamico(cotizacion, cotizacion.codigo)
             cotizacion.save()
             
+            # Registrar en la trazabilidad (Seguimiento)
+            CotizacionSeguimiento.objects.create(
+                id_registro=cotizacion,
+                detalle="Transición: Oportunidad -> Cotización",
+                id_usuario=request.user,
+                activo='1'
+            )
+            
         return Response({
             "message": "Pasado a cotización con éxito", 
             "codigo": cotizacion.codigo,
@@ -4759,6 +5181,14 @@ def pasar_a_apertura(request, id_registro):
                     presupuesto=cotizacion.total_cotizacion or 0,
                     responsables=""
                 )
+            
+            # Registrar en la trazabilidad (Seguimiento)
+            CotizacionSeguimiento.objects.create(
+                id_registro=cotizacion,
+                detalle="Transición: Cotización -> Apertura (Adjudicado)",
+                id_usuario=request.user,
+                activo='1'
+            )
                 
         return Response({
             "message": "Pasado a apertura con éxito",

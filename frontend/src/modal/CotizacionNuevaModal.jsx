@@ -530,9 +530,11 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
               codco: usuario.dni || "",
               nombc: usuario.nombre_completo || "",
               telec: usuario.telefono || "",
-              mov1c: usuario.movil1 || "",
-              mov2c: usuario.movil2 || "",
-              mailc: usuario.email_usu || "",
+              mov1c: usuario.movil_coorporativo || usuario.movil1 || "",
+              mov2c: usuario.movil_personal || usuario.movil2 || "",
+              mailc: usuario.correo || usuario.email_usu || "",
+              usuario: usuario.usuario || "",
+              id: usuario.id_usuario || null,
             };
           }
 
@@ -540,17 +542,29 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
             setNuevoNumOportunidad(numRegData.num_reg);
           }
 
+          const IDsPermitidos = ["eduardo.bonilla", "claudia.carbonel", "luisa.oncebay", "diego.rengifo"];
+          const isAllowedComercial = usuario && IDsPermitidos.includes(usuario.usuario);
+
           // Integramos los defaults del usuario sin machacar lo que el usuario esté escribiendo
           setData(prev => ({
             ...prev,
             regus: usuario?.usuario ?? prev.regus ?? "",
-            nombc: usuario?.nombre_completo ?? prev.nombc ?? "",
-            telec: usuario?.telefono ?? prev.telec ?? "",
-            mov1c: usuario?.movil1 ?? prev.mov1c ?? "",
-            mov2c: usuario?.movil2 ?? prev.mov2c ?? "",
-            mov3c: usuario?.movil3 ?? prev.mov3c ?? "",
-            mailc: usuario?.email_usu ?? prev.mailc ?? "",
+            nombc: isAllowedComercial ? (usuario?.nombre_completo ?? prev.nombc ?? "") : "",
+            telec: isAllowedComercial ? (usuario?.telefono ?? prev.telec ?? "") : "",
+            mov1c: isAllowedComercial ? (usuario?.movil_coorporativo ?? usuario?.movil1 ?? prev.mov1c ?? "") : "",
+            mov2c: isAllowedComercial ? (usuario?.movil_personal ?? usuario?.movil2 ?? prev.mov2c ?? "") : "",
+            mov3c: isAllowedComercial ? (usuario?.movil3 ?? prev.mov3c ?? "") : "",
+            mailc: isAllowedComercial ? (usuario?.correo ?? usuario?.email_usu ?? prev.mailc ?? "") : "",
+            codic: isAllowedComercial ? (usuario?.dni ?? prev.codic ?? "") : "",
+            codco: isAllowedComercial ? (usuario?.dni ?? prev.codco ?? "") : "",
+            id_comercial: isAllowedComercial ? (usuario?.id_usuario ?? prev.id_comercial ?? null) : null,
           }));
+
+          if (isAllowedComercial && usuario?.nombre_completo) {
+            setComercialQuery(usuario.nombre_completo);
+          } else {
+            setComercialQuery("");
+          }
         } catch (err) {
           console.error("Error al cargar datos iniciales del backend:", err);
         }
@@ -633,6 +647,19 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
 
         try {
           const { data: usuario } = await api.get("users/usuario-actual/");
+          if (usuario) {
+            defaultComercialRef.current = {
+              codic: usuario.dni || "",
+              codco: usuario.dni || "",
+              nombc: usuario.nombre_completo || "",
+              telec: usuario.telefono || "",
+              mov1c: usuario.movil_coorporativo || usuario.movil1 || "",
+              mov2c: usuario.movil_personal || usuario.movil2 || "",
+              mailc: usuario.correo || usuario.email_usu || "",
+              usuario: usuario.usuario || "",
+              id: usuario.id_usuario || null,
+            };
+          }
           setData(prev => ({
             ...prev,
             regus: prev.regus || usuario?.usuario || "",
@@ -846,34 +873,59 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
   const handleKeyDownNavigation = (e) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
 
-    const tabIndex = Number(e.target.getAttribute("tabindex"));
-    if (!tabIndex || tabIndex <= 0) return;
+    const currentTab = Number(e.target.getAttribute("tabindex"));
+    if (!currentTab || currentTab <= 0) return;
 
-    if (e.key === "ArrowRight") {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
-        const isAtEnd = e.target.selectionStart === e.target.value.length;
-        if (!isAtEnd) return;
-      }
-      e.preventDefault();
-      const nextEl = document.querySelector(`[tabindex="${tabIndex + 1}"]`);
-      if (nextEl) {
-        nextEl.focus();
-        if (nextEl.tagName === "INPUT" && nextEl.select) {
-          nextEl.select();
+    // Check cursor position for text-like elements to avoid disrupting standard cursor movement
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+      try {
+        const start = e.target.selectionStart;
+        if (start !== null) {
+          if (e.key === "ArrowRight") {
+            const isAtEnd = e.target.selectionEnd === e.target.value.length;
+            if (!isAtEnd) return;
+          } else if (e.key === "ArrowLeft") {
+            const isAtStart = start === 0;
+            if (!isAtStart) return;
+          }
         }
+      } catch (err) {
+        // Safe to ignore if input type does not support selectionStart
+      }
+    }
+
+    // Find all focusable elements with tabindex in the modal
+    const focusableElements = Array.from(document.querySelectorAll("[tabindex]"))
+      .map((el) => ({ el, index: Number(el.getAttribute("tabindex")) }))
+      .filter(
+        (item) =>
+          item.index > 0 &&
+          !item.el.disabled &&
+          item.el.getAttribute("aria-disabled") !== "true"
+      );
+
+    // Sort by index ascending
+    focusableElements.sort((a, b) => a.index - b.index);
+
+    const currentIndex = focusableElements.findIndex((item) => item.el === e.target);
+    if (currentIndex === -1) return;
+
+    let targetItem = null;
+    if (e.key === "ArrowRight") {
+      if (currentIndex < focusableElements.length - 1) {
+        targetItem = focusableElements[currentIndex + 1];
       }
     } else if (e.key === "ArrowLeft") {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
-        const isAtStart = e.target.selectionStart === 0;
-        if (!isAtStart) return;
+      if (currentIndex > 0) {
+        targetItem = focusableElements[currentIndex - 1];
       }
+    }
+
+    if (targetItem) {
       e.preventDefault();
-      const prevEl = document.querySelector(`[tabindex="${tabIndex - 1}"]`);
-      if (prevEl) {
-        prevEl.focus();
-        if (prevEl.tagName === "INPUT" && prevEl.select) {
-          prevEl.select();
-        }
+      targetItem.el.focus();
+      if (targetItem.el.tagName === "INPUT" && targetItem.el.select) {
+        targetItem.el.select();
       }
     }
   };
@@ -927,6 +979,20 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
         const validVal = detalles.validez_oferta !== undefined && detalles.validez_oferta !== null ? Number(detalles.validez_oferta) : 0;
         const acuS = getUnitCodeFromName(detalles.unidad_validez_nombre);
 
+        const hasComercial = detalles.comercial_dni && detalles.comercial_nombre;
+        const defCom = defaultComercialRef.current || {};
+        const IDsPermitidos = ["eduardo.bonilla", "claudia.carbonel", "luisa.oncebay", "diego.rengifo"];
+        const isAllowedComercial = defCom.usuario && IDsPermitidos.includes(defCom.usuario);
+
+        const comercialCodic = hasComercial ? (detalles.comercial_dni || "") : (isAllowedComercial ? (defCom.codic || "") : "");
+        const comercialCodco = hasComercial ? (detalles.comercial_dni || "") : (isAllowedComercial ? (defCom.codco || "") : "");
+        const comercialNombc = hasComercial ? (detalles.comercial_nombre || "") : (isAllowedComercial ? (defCom.nombc || "") : "");
+        const comercialTelec = hasComercial ? (detalles.comercial_telefono || "") : (isAllowedComercial ? (defCom.telec || "") : "");
+        const comercialMov1c = hasComercial ? (detalles.comercial_movil_corporativo || "") : (isAllowedComercial ? (defCom.mov1c || "") : "");
+        const comercialMov2c = hasComercial ? (detalles.comercial_movil_personal || "") : (isAllowedComercial ? (defCom.mov2c || "") : "");
+        const comercialMailc = hasComercial ? (detalles.comercial_correo || "") : (isAllowedComercial ? (defCom.mailc || "") : "");
+        const comercialId = hasComercial ? (detalles.id_comercial || null) : (isAllowedComercial ? (defCom.id || null) : null);
+
         setData(prev => ({
           ...prev,
           valid: validVal,
@@ -960,13 +1026,14 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
           des_p: detalles.descuento_porcentaje || 0,
 
           // Responsable Comercial
-          codic: detalles.comercial_dni || "",
-          codco: detalles.comercial_dni || "",
-          nombc: detalles.comercial_nombre || "",
-          telec: detalles.comercial_telefono || "",
-          mov1c: detalles.comercial_movil_corporativo || "",
-          mov2c: detalles.comercial_movil_personal || "",
-          mailc: detalles.comercial_correo || "",
+          codic: comercialCodic,
+          codco: comercialCodco,
+          nombc: comercialNombc,
+          telec: comercialTelec,
+          mov1c: comercialMov1c,
+          mov2c: comercialMov2c,
+          mailc: comercialMailc,
+          id_comercial: comercialId,
 
           // Responsable Técnico
           codit: detalles.tecnico_dni || "",
@@ -975,10 +1042,11 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
           mov1t: detalles.tecnico_movil_corporativo || "",
           mov2t: detalles.tecnico_movil_personal || "",
           mailt: detalles.tecnico_correo || "",
+          id_tecnico: detalles.id_tecnico || null,
         }));
 
         // Sincronizar las queries para que los inputs muestren los nombres correspondientes
-        setComercialQuery(detalles.comercial_nombre || "");
+        setComercialQuery(comercialNombc);
         setTecnicoQuery(detalles.tecnico_nombre || "");
 
         if (detalles.condiciones_generales) {
@@ -999,6 +1067,18 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
 
   const resetCamposAutocompletar = () => {
     const defCom = defaultComercialRef.current || {};
+    const IDsPermitidos = ["eduardo.bonilla", "claudia.carbonel", "luisa.oncebay", "diego.rengifo"];
+    const isAllowedComercial = defCom.usuario && IDsPermitidos.includes(defCom.usuario);
+
+    const comercialCodic = isAllowedComercial ? (defCom.codic || "") : "";
+    const comercialCodco = isAllowedComercial ? (defCom.codco || "") : "";
+    const comercialNombc = isAllowedComercial ? (defCom.nombc || "") : "";
+    const comercialTelec = isAllowedComercial ? (defCom.telec || "") : "";
+    const comercialMov1c = isAllowedComercial ? (defCom.mov1c || "") : "";
+    const comercialMov2c = isAllowedComercial ? (defCom.mov2c || "") : "";
+    const comercialMailc = isAllowedComercial ? (defCom.mailc || "") : "";
+    const comercialId = isAllowedComercial ? (defCom.id || null) : null;
+
     setData(prev => ({
       ...prev,
       plazo: 0,
@@ -1026,14 +1106,15 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
       des_m: 0,
       des_p: 0,
 
-      // Responsable Comercial (revertir al default actual)
-      codic: defCom.codic || "",
-      codco: defCom.codco || "",
-      nombc: defCom.nombc || "",
-      telec: defCom.telec || "",
-      mov1c: defCom.mov1c || "",
-      mov2c: defCom.mov2c || "",
-      mailc: defCom.mailc || "",
+      // Responsable Comercial (revertir al default actual si es permitido, sino vacío)
+      codic: comercialCodic,
+      codco: comercialCodco,
+      nombc: comercialNombc,
+      telec: comercialTelec,
+      mov1c: comercialMov1c,
+      mov2c: comercialMov2c,
+      mailc: comercialMailc,
+      id_comercial: comercialId,
 
       // Responsable Técnico
       codit: "",
@@ -1042,6 +1123,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
       mov1t: "",
       mov2t: "",
       mailt: "",
+      id_tecnico: null,
 
       // Preservar Representante
       id_representante: prev.id_representante,
@@ -1053,7 +1135,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
       mailr: prev.mailr,
     }));
 
-    setComercialQuery(defCom.nombc || "");
+    setComercialQuery(comercialNombc);
     setTecnicoQuery("");
     setCondicionesHtml("");
   };
@@ -1314,7 +1396,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
   // ======================
   const CAMPOS_OBLIGATORIOS = [
     { key: "referencia", label: "Referencia" },
-    { key: "cliente_codigo", label: "Para (Cliente)" },
+    { key: "id_cliente", label: "Para (Cliente)" },
     { key: "prob", label: "Probabilidad" },
     { key: "cotit", label: "Tipo Cotización" },
     { key: "area_codigo", label: "Área" },
@@ -2687,7 +2769,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   onSelect={(cliente) => {
                     setData(prev => ({
                       ...prev,
-                      cliente_codigo: cliente.ruc ? String(cliente.ruc) : "",
+                      cliente_codigo: cliente.ruc ? String(cliente.ruc) : (cliente.id_cliente ? String(cliente.id_cliente) : ""),
                       id_cliente: cliente.id_cliente || null,
                       // Reset representative/contact fields
                       codir: "",
@@ -2805,6 +2887,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     value={data.f_recp || ""}
                     onChange={(e) => handleFieldChange("f_recp", e.target.value)}
                     readOnly={isReadOnly}
+                    tabIndex={6}
                     className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
                   />
                   <InputField
@@ -2814,6 +2897,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     value={data.f_visita || ""}
                     onChange={(e) => handleFieldChange("f_visita", e.target.value)}
                     readOnly={isReadOnly}
+                    tabIndex={7}
                     className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
                   />
                   <InputField
@@ -2824,6 +2908,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     value={data.f_limite || ""}
                     onChange={(e) => handleFieldChange("f_limite", e.target.value)}
                     readOnly={isReadOnly}
+                    tabIndex={8}
                   />
                   {!esNueva && (
                     <InputField
@@ -2833,6 +2918,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                       value={data.f_emi || ""}
                       onChange={(e) => handleFieldChange("f_emi", e.target.value)}
                       readOnly={isReadOnly}
+                      tabIndex={9}
                       className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
                     />
                   )}
@@ -2847,6 +2933,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     value={data.coment || ""}
                     onChange={(e) => handleFieldChange("coment", e.target.value)}
                     readOnly={isReadOnly}
+                    tabIndex={10}
                     className="[&_textarea]:border-none [&_textarea]:bg-slate-50/60 hover:[&_textarea]:bg-slate-100/40 [&_textarea]:rounded-2xl [&_textarea]:px-3 focus-within:[&_textarea]:bg-white focus-within:[&_textarea]:ring-2 focus-within:[&_textarea]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
                   />
                 </div>
@@ -2875,6 +2962,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   onChange={(e) => handleFieldChange("tipo_moneda", e.target.value)}
                   options={monedasOptions}
                   disabled={isReadOnly}
+                  tabIndex={14}
                 />
                 <SelectField
                   inline
@@ -2885,6 +2973,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   onChange={(e) => handleFieldChange("igv", e.target.value)}
                   options={igvOptions}
                   disabled={isReadOnly}
+                  tabIndex={15}
                 />
               </div>
 
@@ -2895,6 +2984,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                 value={data.tipo_cambio || (esNueva ? "3.425" : "")}
                 onChange={(e) => handleFieldChange("tipo_cambio", e.target.value)}
                 readOnly={isReadOnly}
+                tabIndex={16}
                 className="[&_input]:border-none [&_input]:bg-slate-50/60 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
               />
             </div>
@@ -2923,7 +3013,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                 value={data.referencia || ""}
                 onChange={(e) => handleFieldChange("referencia", e.target.value)}
                 readOnly={isReadOnly}
-                tabIndex={6}
+                tabIndex={11}
                 className={`[&_textarea]:border-none [&_textarea]:bg-slate-50/60 hover:[&_textarea]:bg-slate-100/40 [&_textarea]:rounded-2xl [&_textarea]:px-3 focus-within:[&_textarea]:bg-white focus-within:[&_textarea]:ring-2 focus-within:[&_textarea]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider ${campoError === "referencia" ? "[&_textarea]:border [&_textarea]:border-red-400 [&_textarea]:bg-red-50/50" : ""}`}
               />
 
@@ -2937,7 +3027,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   value={data.fecha || ""}
                   onChange={(e) => handleFieldChange("fecha", e.target.value)}
                   readOnly={isReadOnly}
-                  tabIndex={7}
+                  tabIndex={12}
                   className={`[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider ${campoError === "fecha" ? "[&_input]:border [&_input]:border-red-400 [&_input]:bg-red-50/50" : ""}`}
                 />
               )}
@@ -2953,7 +3043,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                   onChange={(e) => handleFieldChange("prob", e.target.value)}
                   options={probOptions}
                   disabled={isReadOnly}
-                  tabIndex={8}
+                  tabIndex={13}
                   className={campoError === "prob" ? "border-red-400 bg-red-50/50" : ""}
                 />
               </div>
@@ -2985,6 +3075,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     onBlur={handleSuministrosBlur}
                     readOnly={isReadOnly}
                     placeholder="ej. 15 días o 2 sem"
+                    tabIndex={17}
                     className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
                   />
                   {!isReadOnly && sugerenciasTiempos.suministros?.length > 0 && (
@@ -3021,6 +3112,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     onBlur={handleServiciosBlur}
                     readOnly={isReadOnly}
                     placeholder="ej. 7 días o 1 sem"
+                    tabIndex={18}
                     className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
                   />
                   {!isReadOnly && sugerenciasTiempos.servicios?.length > 0 && (
@@ -3057,6 +3149,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                     onBlur={handleValidezBlur}
                     readOnly={isReadOnly}
                     placeholder="ej. 30 días o 1 mes"
+                    tabIndex={19}
                     className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10.5px] [&_label]:font-bold [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
                   />
                   {!isReadOnly && sugerenciasTiempos.validez?.length > 0 && (
@@ -3106,6 +3199,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                 onChange={(e) => handleFieldChange("forma_pago", e.target.value)}
                 disabled={isReadOnly}
                 options={formasPagoOptions}
+                tabIndex={20}
               />
 
               <InputField
@@ -3115,6 +3209,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                 value={data.lugar || ""}
                 onChange={(e) => handleFieldChange("lugar", e.target.value)}
                 readOnly={isReadOnly}
+                tabIndex={21}
                 className="[&_input]:border-none [&_input]:bg-slate-50/60 hover:[&_input]:bg-slate-100/40 [&_input]:rounded-full [&_input]:h-8 [&_input]:px-3 focus-within:[&_input]:bg-white focus-within:[&_input]:ring-2 focus-within:[&_input]:ring-teal-500/25 transition-all [&_label]:text-[10px] [&_label]:font-black [&_label]:text-slate-600 [&_label]:uppercase [&_label]:tracking-wider"
               />
             </div>
@@ -3142,6 +3237,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                       value={comercialQuery}
                       disabled={isReadOnly}
                       placeholder="Buscar comercial..."
+                      tabIndex={22}
                       onFocus={() => {
                         setComercialFocused(true);
                         fetchComercialInline("");
@@ -3193,6 +3289,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                       value={tecnicoQuery}
                       disabled={isReadOnly}
                       placeholder="Buscar técnico..."
+                      tabIndex={23}
                       onFocus={() => {
                         setTecnicoFocused(true);
                         fetchTecnicoInline("");
@@ -3246,7 +3343,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
                 setOpenQuickCreate(false);
                 setData(prev => ({
                   ...prev,
-                  cliente_codigo: String(res.ruc || res.codigo || ""),
+                  cliente_codigo: String(res.ruc || res.id_cliente || ""),
                   id_cliente: res.id_cliente || null,
                 }));
                 setClienteQuery(res.nombre);
@@ -3264,6 +3361,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
           {/* SALIR */}
           <Button
             variant="ghost"
+            tabIndex={24}
             className="h-10 px-6 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 text-[11px] font-black uppercase tracking-widest border border-slate-200 transition-all"
             onClick={onClose}
           >
@@ -3275,6 +3373,7 @@ export default function CotizacionNuevaModal({ open, onClose, cotizacion, modo, 
             <Button
               type="button"
               variant="ghost"
+              tabIndex={25}
               disabled={crearMutation.isPending}
               className={`h-10 px-8 rounded-full bg-gradient-to-r from-teal-600 to-teal-500 hover:from-teal-700 hover:to-teal-600 text-white text-[11px] font-black uppercase tracking-widest shadow-lg shadow-teal-500/20 hover:shadow-xl hover:shadow-teal-500/30 transition-all border-none
                 ${crearMutation.isPending

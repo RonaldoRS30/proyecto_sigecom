@@ -15,22 +15,19 @@ import RegisterPage from "@/auth/register/RegisterPage.jsx";
 
 // LAYOUT PRINCIPAL
 import DashboardLayout from "@/dashboard/layout/DashboardLayout.jsx";
-import GlobalNavbar from "@/dashboard/layout/GlobalNavbar.jsx";
 
-// DASHBOARDS DE PRUEBA PARA COTIZACIONES
+// COMERCIAL
 import CotizacionesHome from "./dashboard/comercial/Home/CotizacionesHome";
 import Comercial from "./dashboard/comercial/Comercial";
 import CotizacionDetallePage from "./dashboard/comercial/CotizacionDetallePage";
-
-
-// TABLAS
+import CotizacionNuevaModal from "./modal/CotizacionNuevaModal";
 import EstructuraComercial from "./dashboard/Tablas/EstructuraComercial/EstructuraComercial";
 import ParametrosVentas from "./dashboard/Tablas/ParametrosVentas/ParametrosVentas";
 import CatalogoMarcas from "./dashboard/Tablas/CatalogoMarcas/CatalogoMarcas";
 import GastosAnalisis from "./dashboard/Tablas/Gastos_Analisis/GastosAnalisis";
 
-// MODAL NUEVA COTIZACIÓN
-import CotizacionNuevaModal from "./modal/CotizacionNuevaModal";
+// LOGISTICA
+import LogisticaDashboard from "./dashboard/logistica/LogisticaDashboard";
 
 import { KeyboardProvider } from "@/context/KeyboardContext.jsx";
 import MockModulePage from "@/dashboard/layout/MockModulePage";
@@ -67,7 +64,7 @@ export default function App() {
               {/* Inicio */}
               <Route path="home" element={<CotizacionesHome />} />
 
-              {/* Módulo Comercial (Agrupado) */}
+              {/* Módulo Comercial */}
               <Route path="comercial">
                 {/* Listado principal: /sigecom/comercial (redirige al tab por defecto) */}
                 <Route index element={<Navigate to="cotizaciones" replace />} /> 
@@ -94,6 +91,11 @@ export default function App() {
                 
                 {/* Nueva: /sigecom/comercial/nueva */}
                 <Route path="nueva" element={<CotizacionNuevaModal />} />
+              </Route>
+
+              {/* Módulo Logistica */}
+              <Route path="logistica">
+                <Route index element={<LogisticaDashboard />} />
               </Route>
 
               {/* Módulo Maestro / Tablas */}

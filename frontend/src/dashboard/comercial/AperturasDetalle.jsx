@@ -302,6 +302,18 @@ export default function AperturasDetalle({ idRegistro }) {
   const quote = useMemo(() => {
     return visibleAperturas[0]?.id_registro || aperturas[0]?.id_registro || {};
   }, [visibleAperturas, aperturas]);
+
+  useEffect(() => {
+    const codeToShow = quote?.codigo || quote?.numero;
+    if (codeToShow) {
+      window.dispatchEvent(new CustomEvent("sigecom-breadcrumb-label", {
+        detail: {
+          path: window.location.pathname,
+          label: codeToShow
+        }
+      }));
+    }
+  }, [quote?.codigo, quote?.numero]);
   
   const quoteId = quote.id_registro;
   const currencySymbol = quote.tipo_moneda === 'D' ? '$' : 'S/.';

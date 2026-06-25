@@ -22,6 +22,7 @@ export default function SelectField({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const containerRef = useRef(null);
 
   // Extract options from children if no options prop is provided
@@ -86,10 +87,28 @@ export default function SelectField({
     if (disabled) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      setIsOpen(!isOpen);
+      if (isOpen) {
+        if (highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
+          const opt = filteredOptions[highlightedIndex];
+          handleSelect(opt.id ?? opt.value);
+        } else {
+          setIsOpen(false);
+        }
+      } else {
+        setIsOpen(true);
+      }
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      setIsOpen(true);
+      if (!isOpen) {
+        setIsOpen(true);
+      } else if (filteredOptions.length > 0) {
+        setHighlightedIndex(prev => (prev + 1) % filteredOptions.length);
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (isOpen && filteredOptions.length > 0) {
+        setHighlightedIndex(prev => (prev - 1 + filteredOptions.length) % filteredOptions.length);
+      }
     } else if (e.key === "Escape") {
       e.preventDefault();
       setIsOpen(false);
@@ -102,6 +121,16 @@ export default function SelectField({
         String(o.id ?? o.value).toLowerCase().includes(searchQuery.toLowerCase())
       )
     : finalOptions;
+
+  // Sync highlightedIndex with selected value on open
+  useEffect(() => {
+    if (isOpen) {
+      const selectedIdx = filteredOptions.findIndex(o => String(o.id ?? o.value) === String(value));
+      setHighlightedIndex(selectedIdx >= 0 ? selectedIdx : 0);
+    } else {
+      setHighlightedIndex(-1);
+    }
+  }, [isOpen, value, filteredOptions.length]);
 
   return (
     <div
@@ -185,6 +214,7 @@ export default function SelectField({
               const optVal = o.id ?? o.value ?? "";
               const optLabel = String(o.nombre || o.label).toUpperCase();
               const isSelected = String(value) === String(optVal);
+              const isHighlighted = idx === highlightedIndex;
 
               return (
                 <div
@@ -194,7 +224,9 @@ export default function SelectField({
                     "px-4 py-2 text-[10px] font-bold uppercase tracking-wide cursor-pointer transition-colors",
                     isSelected
                       ? "bg-teal-500/10 text-teal-700 font-black border-l-4 border-l-teal-500 pl-3"
-                      : "hover:bg-slate-50 text-slate-600 hover:text-slate-900 border-l-4 border-l-transparent"
+                      : isHighlighted
+                        ? "bg-slate-100 text-slate-900 border-l-4 border-l-slate-300 pl-3 font-semibold"
+                        : "hover:bg-slate-50 text-slate-600 hover:text-slate-900 border-l-4 border-l-transparent"
                   )}
                 >
                   {optLabel}

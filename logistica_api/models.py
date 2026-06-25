@@ -23,42 +23,61 @@ class TipoCambio(models.Model):
         db_table = 'cont_tcambio'
         managed = False
 
-
 #========================================================================================
 
 ##=============================##
 ## LOGISTICA ##
 ##=============================##
-class LogisticaDashboard(models.Model):
-    # Campos principales
-    num_reg = models.AutoField(primary_key=True)
-    ope = models.CharField(max_length=1, blank=True, null=True) # operacion
-    anno = models.CharField(max_length=4, blank=True, null=True)
-    mes = models.CharField(max_length=2, blank=True, null=True)
-    fec = models.DateField(blank=True, null=True) #fecha
-    oco = models.CharField(max_length=100, blank=True, null=True) #ocompra
-    mov = models.CharField(max_length=5, blank=True, null=True)
-    tmo = models.CharField(max_length=100, blank=True, null=True)
-    tc = models.DecimalField(max_digits=7, decimal_places=3, blank=True, null=True)
-    cor = models.CharField(max_length=11, blank=True, null=True)
-    dor = models.CharField(max_length=100, blank=True, null=True)
-    tip = models.CharField(max_length=2, blank=True, null=True)
-    nfa = models.CharField(max_length=13, blank=True, null=True)
-    alm = models.CharField(max_length=3, blank=True, null=True)
-    ngu = models.CharField(max_length=13, blank=True, null=True)
-    nom1 = models.CharField(max_length=100, blank=True, null=True)
-    nom2 = models.CharField(max_length=100, blank=True, null=True)
-    sol = models.DecimalField(max_digits=15, decimal_places=2, blank=True, null=True)
-    dol = models.DecimalField(max_digits=11, decimal_places=2, blank=True, null=True)
-    reg = models.CharField(max_length=10, blank=True, null=True)
-    obs = models.CharField(max_length=100, blank=True, null=True)
-    anulado= models.CharField(max_length=1, blank=True, null=True)
-    est = models.IntegerField(blank=True, null=True)
-
+class ClienteLogistica(models.Model):
+    id_cliente = models.AutoField(primary_key=True)
+    nombre = models.CharField(max_length=100)
+    ruc = models.CharField(max_length=45, blank=True, null=True)
 
     class Meta:
         managed = False
-        db_table = "sis_alm_mov_es"
+        db_table = "clientes"
+
+# Almacén (tabla 'almacen' de db_new3)
+class AlmacenNew(models.Model):
+    idalmacen = models.AutoField(primary_key=True)
+    nombre = models.CharField(max_length=45)
+    usuario_id_usuario = models.IntegerField()
+    direccion = models.CharField(max_length=100, blank=True, null=True)
+    activo = models.CharField(max_length=45, blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = "almacen"
+
+    def __str__(self):
+        return f"{self.idalmacen} - {self.nombre}"
+
+class LogisticaDashboard(models.Model):
+    # Campos principales mapeados a 'movimiento'
+    num_reg = models.AutoField(primary_key=True, db_column='idmovimiento')
+    ope = models.CharField(max_length=45, blank=True, null=True, db_column='operacion')
+    fec = models.DateField(blank=True, null=True, db_column='fecha')
+    oco = models.CharField(max_length=100, blank=True, null=True, db_column='codigo_compra')
+    mov = models.CharField(max_length=5, blank=True, null=True, db_column='tipo_movimiento')
+    tmo = models.CharField(max_length=2, blank=True, null=True, db_column='tipo_moneda')
+    tc = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, db_column='monto_cambio')
+    cor = models.ForeignKey(ClienteLogistica, db_column='cliente_id_cliente', on_delete=models.DO_NOTHING, blank=True, null=True)
+    nfa = models.CharField(max_length=45, blank=True, null=True, db_column='numero_factura')
+    alm = models.ForeignKey(AlmacenNew, db_column='almacen_idalmacen', on_delete=models.DO_NOTHING, blank=True, null=True)
+    ngu = models.CharField(max_length=45, blank=True, null=True, db_column='numero_guia')
+    nom1 = models.CharField(max_length=100, blank=True, null=True, db_column='direccion')
+    nom2 = models.CharField(max_length=100, blank=True, null=True, db_column='observacion')
+    sol = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, db_column='soles')
+    dol = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, db_column='dolares')
+    reg = models.CharField(max_length=11, blank=True, null=True, db_column='usuario_id_usuario')
+    est = models.CharField(max_length=45, blank=True, null=True, db_column='estado')
+
+    # Campos requeridos por vistas (anulado, obs, tip) pero que ya no existen, o cambian.
+    # Evitamos usarlos en values().
+
+    class Meta:
+        managed = False
+        db_table = "movimiento"
         verbose_name = "Registro Logística"
         verbose_name_plural = "Registros Logística"
         ordering = ["-fec", "-num_reg"]
@@ -68,25 +87,23 @@ class LogisticaDashboard(models.Model):
 
 # DETALLE
 class LogisticaDashboardDetalle(models.Model):
-    # Campos principales
-    id = models.AutoField(primary_key=True)
-    num_reg = models.IntegerField()
-    num = models.CharField(max_length=30, blank=True, null=False) # operacion
-    cod = models.CharField(max_length=70, blank=True, null=True)
-    nom = models.CharField(max_length=1000, blank=True, null=True)
-    um = models.CharField(max_length=10, blank=True, null=True) #fecha
-    can = models.IntegerField(blank=True, null=True) #ocompra
-    val = models.DecimalField(max_digits=11, decimal_places=2, blank=True, null=True)
-    tot = models.DecimalField(max_digits=11, decimal_places=2, blank=True, null=True)
-    sol = models.DecimalField(max_digits=11, decimal_places=2, blank=True, null=True)
-    dol = models.DecimalField(max_digits=11, decimal_places=2, blank=True, null=True)
-    reg = models.CharField(max_length=10, blank=True, null=True)
-    obs = models.CharField(max_length=100, blank=True, null=True)
-    ope = models.CharField(max_length=1, blank=True, null=True)
+    # Campos principales mapeados a 'movimiento_detalle'
+    id = models.AutoField(primary_key=True, db_column='idmovimiento_detalle')
+    num_reg = models.IntegerField(db_column='idmovimiento')
+    num = models.CharField(max_length=45, blank=True, null=True, db_column='numero_ordenamiento') 
+    cod = models.CharField(max_length=70, blank=True, null=True, db_column='producto_idproducto')
+    nom = models.CharField(max_length=100, blank=True, null=True, db_column='nombre_producto')
+    um = models.CharField(max_length=11, blank=True, null=True, db_column='idunidad_medida') 
+    can = models.IntegerField(blank=True, null=True, db_column='cantidad') 
+    val = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, db_column='valor')
+    tot = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, db_column='total')
+    sol = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, db_column='soles')
+    dol = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, db_column='dolares')
+    obs = models.CharField(max_length=100, blank=True, null=True, db_column='observacion')
   
     class Meta:
         managed = False
-        db_table = "sis_alm_mov_es_det"
+        db_table = "movimiento_detalle"
         verbose_name = "Registro Logística"
         verbose_name_plural = "Registros Logística"
         ordering = ["-num_reg"]
@@ -228,6 +245,232 @@ class VcMovOrdenSoliD(models.Model):
 ##================##
 ## DATOS DE BD_VC ##
 ##================##    
+# vc_tab_estado
+class vc_tab_estado(models.Model):
+    codigo = models.CharField(max_length=5, primary_key=True)
+    nombre = models.CharField(max_length=100)
+    cot = models.CharField(max_length=1)
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        managed = False
+        db_table = "vc_tab_estado"
+
+    def __str__(self):
+        return self.nombre
+
+# vc_tab_tipo
+class vc_tab_tipo(models.Model):
+    codigo = models.CharField(max_length=10, primary_key=True, verbose_name="Código")
+    nombre = models.CharField(max_length=100, verbose_name="Nombre")
+    activo = models.BooleanField(default=True, verbose_name="Activo")
+
+    class Meta:
+        db_table = 'vc_tab_tipo'
+        verbose_name = 'Tipo'
+        verbose_name_plural = 'Tipos'
+
+    def __str__(self):
+        return f"{self.codigo} - {self.nombre}"
+
+# vc_mov_cotizaciones
+class vc_mov_cotizaciones(models.Model):
+    # Datos principales
+    num_reg = models.IntegerField(blank=True, null=True)
+    anno = models.IntegerField(default=timezone.now().year)
+    mes = models.IntegerField(blank=True, null=True)
+    cotin = models.IntegerField(primary_key=True)
+    cotit = models.CharField(max_length=50, blank=True, null=True)
+    cotif = models.DateField(blank=True, null=True)
+    refer = models.CharField(max_length=150, blank=True, null=True)
+    empre = models.CharField(max_length=20, blank=True, null=True)
+    codir = models.CharField(max_length=10, blank=True, null=True)
+    nombr = models.CharField(max_length=150, blank=True, null=True)
+    cargr = models.CharField(max_length=50, blank=True, null=True)
+    teler = models.CharField(max_length=20, blank=True, null=True)
+    movir = models.CharField(max_length=20, blank=True, null=True)
+    mailr = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Contacto Comercial
+    codic = models.CharField(max_length=10, blank=True, null=True)
+    nombc = models.CharField(max_length=150, blank=True, null=True)
+    telec = models.CharField(max_length=20, blank=True, null=True)
+    mov1c = models.CharField(max_length=20, blank=True, null=True)
+    mov2c = models.CharField(max_length=20, blank=True, null=True)
+    mov3c = models.CharField(max_length=20, blank=True, null=True)
+    mailc = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Contacto Técnico
+    codit = models.CharField(max_length=10, blank=True, null=True)
+    nombt = models.CharField(max_length=150, blank=True, null=True)
+    telet = models.CharField(max_length=20, blank=True, null=True)
+    mov1t = models.CharField(max_length=20, blank=True, null=True)
+    mov2t = models.CharField(max_length=20, blank=True, null=True)
+    mov3t = models.CharField(max_length=20, blank=True, null=True)
+    mailt = models.CharField(max_length=100, blank=True, null=True)
+
+    # Pago / Entrega / Moneda
+    fpago = models.CharField(max_length=50, blank=True, null=True)
+    lugar = models.CharField(max_length=100, blank=True, null=True)
+    plazo = models.CharField(max_length=50, blank=True, null=True)
+    tmone = models.CharField(max_length=20, blank=True, null=True)
+    igv = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
+    valid = models.IntegerField(blank=True, null=True)
+    
+    # Otros
+    por_c = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    acu_e = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    acu_s = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    tot_c = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    tot_d = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    tot_s = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    estad = models.CharField(max_length=5, blank=True, null=True)
+    ocomn = models.CharField(max_length=50, blank=True, null=True)
+    ocomf = models.CharField(max_length=50, blank=True, null=True)
+    area = models.CharField(max_length=10, blank=True, null=True)
+    entrp = models.IntegerField(blank=True, null=True)
+    entrf = models.CharField(max_length=50, blank=True, null=True)
+    regus = models.CharField(max_length=50, blank=True, null=True)
+    fecus = models.DateField(blank=True, null=True)
+    envio = models.CharField(max_length=50, blank=True, null=True)
+    tcamb = models.DecimalField(max_digits=10, decimal_places=3, blank=True, null=True)
+    sald = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    des_a = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    des_t = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    des_m = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    des_p = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    anno_a = models.IntegerField(blank=True, null=True)
+    msj = models.CharField(max_length=255, blank=True, null=True)
+    seg = models.CharField(max_length=50, blank=True, null=True)
+    prob = models.CharField(max_length=50, blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = "vc_mov_cotizaciones"
+        ordering = ["-cotif"]
+
+    # ─── Propiedades derivadas ───────────────────────
+    @property
+    def cliente_nombre(self):
+        try:
+            from logistica_api.models import Representante
+            if not self.empre:
+                return self.nombr or ""
+            cliente = Representante.objects.get(codigo=self.empre)
+            return cliente.representante or self.nombr or ""
+        except Representante.DoesNotExist:
+            return self.nombr or ""
+        except Exception:
+            return self.nombr or ""
+    
+    @property
+    def area_nombre(self):
+        try:
+            from logistica_api.models import Area
+            if not self.area:
+                return ""
+            area_obj = Area.objects.get(area_id=self.area)
+            return area_obj.nombre
+        except Exception:
+            return ""
+
+    @property
+    def estado_nombre(self):
+        try:
+            from logistica_api.models import vc_tab_estado
+            if not self.estad:
+                return ""
+            estado_obj = vc_tab_estado.objects.get(codigo=self.estad)
+            return estado_obj.nombre
+        except Exception:
+            return ""
+
+    @property
+    def tipo_nombre(self):
+        """
+        Devuelve el nombre del tipo (Servicio / Proyecto / Venta)
+        según el código cotit y la tabla vc_tab_tipo.
+        """
+        try:
+            from logistica_api.models import vc_tab_tipo
+            if not self.cotit:
+                return ""
+            tipo_obj = vc_tab_tipo.objects.get(codigo=self.cotit)
+            return tipo_obj.nombre
+        except vc_tab_tipo.DoesNotExist:
+            return ""
+        except Exception:
+            return ""
+
+    @property
+    def mes(self):
+        if self.cotif:
+            return self.cotif.month
+        return None
+
+# vc_tab_tproveedor
+class vc_tab_tproveedor(models.Model):
+    codigo = models.CharField(max_length=2, primary_key=True)
+    nombre = models.CharField(max_length=50, blank=True, null=True)
+    activo = models.CharField(max_length=1, blank=True, null=True)
+
+    class Meta:
+        db_table = "vc_tab_tproveedor"
+        managed = False  # 👈 importante si la tabla ya existe en la DB
+
+    def __str__(self):
+        return f"{self.codigo} - {self.nombre}"
+
+# vc_tab_categorias
+class vc_tab_categorias(models.Model):
+    codigo = models.CharField("Código", max_length=4, primary_key=True)
+    nombre = models.CharField("Nombre", max_length=70, blank=True, null=True)
+    cos_min = models.DecimalField("Costo Min", max_digits=10, decimal_places=2)
+    cos_max = models.DecimalField("Costo Max", max_digits=10, decimal_places=2)
+    cod_area = models.CharField("Código Área", max_length=1, blank=True, null=True)
+    activo = models.CharField("Activo", max_length=1) 
+
+    class Meta:
+        db_table = "vc_tab_categorias"
+        verbose_name = "Categoría"
+        verbose_name_plural = "Categorías"
+
+    def __str__(self):
+        return f"{self.codigo} - {self.nombre}"
+    
+# vc_tab_tgastos
+class vc_tab_tgastos(models.Model):
+    codigo = models.CharField("Código", max_length=2, primary_key=True)
+    nombre = models.CharField("Nombre", max_length=50, blank=True, null=True)
+    activo = models.CharField("Activo", max_length=1) 
+    concepto = models.CharField("Concepto", max_length=1) 
+
+    class Meta:
+        db_table = "vc_tab_tgastos"
+        verbose_name = "Tipo Gasto"
+        verbose_name_plural = "Tipo Gasto"
+
+    def __str__(self):
+        return f"{self.codigo} - {self.nombre}"
+
+# vc_tab_tgastos_d
+class vc_tab_tgastos_d(models.Model):
+    codigo = models.CharField("Código", max_length=5, primary_key=True)
+    nombre = models.CharField("Nombre", max_length=100, blank=True, null=True)
+    unimed = models.CharField("Unimed", max_length=5, blank=True, null=True)
+    importe = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    cod_tipo = models.CharField("Cod_Tipo", max_length=2, blank=True, null=True)
+    activo = models.CharField("Activo", max_length=1) 
+    cantidad = models.IntegerField() 
+
+    class Meta:
+        db_table = "vc_tab_tgastos_d"
+        verbose_name = "Tipo Gasto D"
+        verbose_name_plural = "Tipo Gasto D"
+
+    def __str__(self):
+        return f"{self.codigo} - {self.nombre}"
+
 # cont_cias
 class cont_cias(models.Model):
     cod = models.CharField(primary_key=True, max_length=10)  # clave primaria real (ej. "001")
@@ -454,4 +697,3 @@ class SisAlmTabDoc(models.Model):
 
     def __str__(self):
         return f"{self.cod} - {self.nom}"
-

@@ -4,6 +4,12 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 import uuid
 from .models import (
+    vc_tab_estado,
+    vc_tab_categorias,
+    vc_tab_tproveedor,
+    vc_mov_cotizaciones,
+    vc_tab_tgastos,
+    vc_tab_tgastos_d,
     vc_tab_rittal,
     vc_tab_rockwell,
     vc_tab_ceyesa,
@@ -72,6 +78,89 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 ##================##
 ## DATOS DE BD_VC ##
 ##================##
+# vc_tab_estado
+class EstadoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = vc_tab_estado
+        fields = "__all__"
+
+class ProveedoresSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = vc_tab_tproveedor
+        fields = "__all__"
+
+# vc_mov_cotizaciones
+class CotizacionesSerializer(serializers.ModelSerializer):
+    # Campos derivados para mostrar nombres legibles
+    cliente_nombre = serializers.SerializerMethodField()
+    area_nombre = serializers.SerializerMethodField()
+    estado_nombre = serializers.SerializerMethodField()
+
+    # Exponer IDs de FK si quieres (aunque en vc_mov_cotizaciones son strings)
+    cliente_id = serializers.SerializerMethodField()
+    area_id = serializers.SerializerMethodField()
+    estado_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = vc_mov_cotizaciones
+        fields = [
+            "cotif",
+            "cotin",
+            "refer",
+            "empre",
+            "nombr",
+            "area",
+            "estad",
+            "tot_c",
+            "cliente_id",
+            "cliente_nombre",
+            "area_id",
+            "area_nombre",
+            "estado_id",
+            "estado_nombre",
+        ]
+
+    # --------------------------
+    # Métodos para campos legibles
+    # --------------------------
+    def get_cliente_nombre(self, obj):
+        return obj.get_cliente_nombre()
+
+    def get_area_nombre(self, obj):
+        return obj.get_area_nombre()
+
+    def get_estado_nombre(self, obj):
+        return obj.get_estado_nombre()
+
+    # --------------------------
+    # Métodos para exponer los "IDs" de las relaciones
+    # --------------------------
+    def get_cliente_id(self, obj):
+        return obj.empre
+
+    def get_area_id(self, obj):
+        return obj.area
+
+    def get_estado_id(self, obj):
+        return obj.estad
+
+# vc_tab_categorias
+class CategoriasSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = vc_tab_categorias
+        fields = "__all__"
+
+# vc_tab_tgastos
+class TGastosSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = vc_tab_tgastos
+        fields = "__all__"
+
+# vc_tab_tgastos_d
+class TGastosDSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = vc_tab_tgastos_d
+        fields = "__all__"
 
 # vc_tab_rittal
 class RittalSerializer(serializers.ModelSerializer):

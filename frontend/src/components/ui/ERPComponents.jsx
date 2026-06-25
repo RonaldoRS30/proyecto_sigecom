@@ -82,6 +82,60 @@ export const ERPTable = ({
   sortConfig,
   pagination
 }) => {
+  const [isEditingPage, setIsEditingPage] = React.useState(false);
+  const [inputPageVal, setInputPageVal] = React.useState("");
+
+  React.useEffect(() => {
+    if (pagination) {
+      setInputPageVal(String(pagination.currentPage));
+    }
+  }, [pagination?.currentPage]);
+
+  const handlePageSubmit = () => {
+    setIsEditingPage(false);
+    if (!pagination) return;
+    const pageNum = parseInt(inputPageVal, 10);
+    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= pagination.totalPages) {
+      pagination.onPageChange(pageNum);
+    } else {
+      setInputPageVal(String(pagination.currentPage));
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handlePageSubmit();
+    } else if (e.key === 'Escape') {
+      setIsEditingPage(false);
+      if (pagination) {
+        setInputPageVal(String(pagination.currentPage));
+      }
+    }
+  };
+
+  const handleBlur = () => {
+    handlePageSubmit();
+  };
+
+  const handlePageInputChange = (e) => {
+    const val = e.target.value;
+    if (val === "") {
+      setInputPageVal("");
+      return;
+    }
+    if (!pagination) return;
+    const num = parseInt(val, 10);
+    if (!isNaN(num)) {
+      if (num > pagination.totalPages) {
+        setInputPageVal(String(pagination.totalPages));
+      } else if (num < 1) {
+        setInputPageVal("1");
+      } else {
+        setInputPageVal(String(num));
+      }
+    }
+  };
+
   return (
     <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden transition-all duration-300 hover:shadow-md flex flex-col h-full">
       {/* Vista Escritorio / Tabletas */}
@@ -143,23 +197,69 @@ export const ERPTable = ({
           <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate">
             {pagination.from} - {pagination.to} de {pagination.total}
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5">
+            {/* Primero << */}
+            <button
+              disabled={pagination.currentPage === 1}
+              onClick={() => pagination.onPageChange(1)}
+              className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-all shadow-sm"
+              title="Primera página"
+            >
+              <LucideIcons.ChevronsLeft className="h-4 w-4" />
+            </button>
+
+            {/* Anterior < */}
             <button
               disabled={pagination.currentPage === 1}
               onClick={() => pagination.onPageChange(pagination.currentPage - 1)}
               className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-all shadow-sm"
+              title="Página anterior"
             >
               <LucideIcons.ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="text-xs font-black text-gray-700 min-w-[1.5rem] text-center">
-              {pagination.currentPage}
-            </span>
+
+            {/* Número de página (Clickable / Editable) */}
+            {isEditingPage ? (
+              <input
+                type="number"
+                value={inputPageVal}
+                onChange={handlePageInputChange}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+                onFocus={(e) => e.target.select()}
+                className="w-10 text-center text-xs font-black text-gray-700 border border-gray-300 rounded bg-white py-0.5 px-1 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                autoFocus
+                min="1"
+                max={pagination.totalPages}
+              />
+            ) : (
+              <span 
+                onClick={() => setIsEditingPage(true)}
+                className="text-xs font-black text-gray-700 min-w-[2rem] text-center cursor-pointer hover:bg-gray-100 hover:text-indigo-600 px-1 py-0.5 rounded transition-all"
+                title="Hacer clic para ir a página..."
+              >
+                {pagination.currentPage}
+              </span>
+            )}
+
+            {/* Siguiente > */}
             <button
               disabled={pagination.currentPage === pagination.totalPages}
               onClick={() => pagination.onPageChange(pagination.currentPage + 1)}
               className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-all shadow-sm"
+              title="Página siguiente"
             >
               <LucideIcons.ChevronRight className="h-4 w-4" />
+            </button>
+
+            {/* Último >> */}
+            <button
+              disabled={pagination.currentPage === pagination.totalPages}
+              onClick={() => pagination.onPageChange(pagination.totalPages)}
+              className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-all shadow-sm"
+              title="Última página"
+            >
+              <LucideIcons.ChevronsRight className="h-4 w-4" />
             </button>
           </div>
         </div>

@@ -89,11 +89,18 @@ from django.conf import settings
 from datetime import date, datetime, timedelta
 from django.utils.timezone import now
 from .models import (
+    AlmacenNew,
     LogisticaDashboard,
     LogisticaDashboardDetalle,
     VcMovOrdenSoli,
     AlmTabUmed,
+    vc_tab_estado,
+    vc_mov_cotizaciones,
     cont_cias,
+    vc_tab_tproveedor,
+    vc_tab_categorias,
+    vc_tab_tgastos,
+    vc_tab_tgastos_d,
     vc_tab_rittal,
     vc_tab_rockwell,
     vc_tab_ceyesa,
@@ -114,7 +121,11 @@ from core.models import Cliente, Representante
 
 from .serializers import (
     OrdenOCSerializer,
-    ContCiasSerializer,
+    EstadoSerializer,
+    ProveedoresSerializer,
+    CategoriasSerializer,
+    TGastosSerializer,
+    TGastosDSerializer,
     RittalSerializer,
     RockwellSerializer,
     CeyesaSerializer,
@@ -419,27 +430,30 @@ def logistica_dashboard_view(request):
         # ======================================================
         # 2) Query base
         # ======================================================
-        qs = LogisticaDashboard.objects.all()
-
-        # Filtra por columnas dedicadas anno/mes (más eficiente que extraer de fec)
-        if anno != "%" and anno:
-            qs = qs.filter(anno=anno)
-
-        qs = qs.annotate(
+        from django.db.models import F, Q, CharField
+        from django.db.models.functions import Cast
+        qs = LogisticaDashboard.objects.annotate(
+            dor=F('cor__nombre'),
             sol_str=Cast('sol', CharField()),
-            dol_str=Cast('dol', CharField())
+            dol_str=Cast('dol', CharField()),
+            nom_alm=F('alm__nombre')
         )
+
+        if anno != "%" and anno:
+            qs = qs.filter(fec__year=anno)
+
         if razon_social != "%":
-            qs = qs.filter(dor=razon_social)
+            qs = qs.filter(dor__icontains=razon_social)
 
         if operacion != "%":
-            qs = qs.filter(ope=operacion)   # E = Entradas, S = Salidas
+            qs = qs.filter(ope=operacion)
 
         if orden_compra != "%":
             qs = qs.filter(oco=orden_compra)
 
+        # tipo_movimiento en bd_nueva es mov
         if tipo_movimiento != "%":
-            qs = qs.filter(tip=tipo_movimiento)
+            qs = qs.filter(mov=tipo_movimiento)
 
         if referencia != "%":
             qs = qs.filter(mov=referencia)
@@ -448,13 +462,13 @@ def logistica_dashboard_view(request):
             qs = qs.filter(ngu=nro_guia)
 
         if obs_doc != "%":
-            qs = qs.filter(nom2=obs_doc)
+            qs = qs.filter(nom2__icontains=obs_doc)
 
         if codigo != "%":
-            qs = qs.filter(cod=codigo)
+            pass # cod no está en cabecera
 
         if responsable != "%":
-            qs = qs.filter(nom1=responsable)
+            qs = qs.filter(nom1__icontains=responsable)
 
         if numero_doc != "%":
             qs = qs.filter(nfa=numero_doc)
@@ -469,18 +483,17 @@ def logistica_dashboard_view(request):
             qs = qs.filter(alm=almacen)
 
         if mes != "%" and mes:
-            qs = qs.filter(mes=mes.zfill(2))   # normalizar: "3" -> "03"
+            qs = qs.filter(fec__month=mes.zfill(2))
 
         if proveedor != "%":
-            qs = qs.filter(cor=proveedor)
+            qs = qs.filter(cor_id=proveedor)
 
         if estado != "%":
             if estado == "ANULADO":
-                qs = qs.filter(anulado="S")
+                qs = qs.filter(est="2") # Asumiendo 2 o 0 es anulado
             elif estado == "ACTIVO":
-                qs = qs.exclude(anulado="S")
+                qs = qs.exclude(est="2")
 
-        
         if general:
             qs = qs.filter(
                 Q(num_reg__icontains=general) |
@@ -488,15 +501,12 @@ def logistica_dashboard_view(request):
                 Q(oco__icontains=general) |
                 Q(nfa__icontains=general) |
                 Q(ngu__icontains=general) |
-                Q(cor__icontains=general) |
                 Q(dor__icontains=general) |
-                Q(tip__icontains=general) |
                 Q(alm__icontains=general) |
                 Q(tmo__icontains=general) |
                 Q(sol_str__icontains=general) |
-               Q(dol_str__icontains=general) |
+                Q(dol_str__icontains=general) |
                 Q(reg__icontains=general) |
-                Q(obs__icontains=general) |
                 Q(ope__icontains=general) |
                 Q(nom1__icontains=general) |
                 Q(nom2__icontains=general) |
@@ -504,7 +514,6 @@ def logistica_dashboard_view(request):
                 Q(mov__icontains=general)
             )
 
-            
         # ======================================================
         # 3) Dashboard Stats
         # ======================================================
@@ -520,7 +529,6 @@ def logistica_dashboard_view(request):
         proveedores_stats = {}
 
         for r in qs:
-
             # Conteo por mes
             if r.fec:
                 fec_obj = r.fec
@@ -539,21 +547,21 @@ def logistica_dashboard_view(request):
             total_dolares += float(r.dol or 0)
 
             # Stats proveedor
-            codigo = r.cor or "-"
-            nombre = r.dor or "SIN NOMBRE"
+            codigo_prov = str(r.cor_id) if r.cor_id else "-"
+            nombre_prov = r.dor or "SIN NOMBRE"
 
-            if codigo not in proveedores_stats:
-                proveedores_stats[codigo] = {
-                    "codigo": codigo,
-                    "nombre": nombre,
+            if codigo_prov not in proveedores_stats:
+                proveedores_stats[codigo_prov] = {
+                    "codigo": codigo_prov,
+                    "nombre": nombre_prov,
                     "cantidad": 0,
                     "soles": 0,
                     "dolares": 0,
                 }
 
-            proveedores_stats[codigo]["cantidad"] += 1
-            proveedores_stats[codigo]["soles"] += float(r.sol or 0)
-            proveedores_stats[codigo]["dolares"] += float(r.dol or 0)
+            proveedores_stats[codigo_prov]["cantidad"] += 1
+            proveedores_stats[codigo_prov]["soles"] += float(r.sol or 0)
+            proveedores_stats[codigo_prov]["dolares"] += float(r.dol or 0)
 
         # porcentajes
         for p in proveedores_stats.values():
@@ -580,23 +588,32 @@ def logistica_dashboard_view(request):
                 "oco",
                 "nfa",
                 "ngu",
-                "cor",
+                "cor_id", # cor changed to cor_id
                 "dor",
-                "tip",
                 "alm",
+                "nom_alm",
                 "tmo",
+                "tc",
                 "sol",
                 "dol",
                 "reg",
-                "obs",
-                "ope",
                 "nom1",
                 "nom2",
+                "ope",
                 "est",
-                "mov",
-
+                "mov"
             )
         )
+        
+        # Format table for frontend compatibility
+        for row in tabla:
+            row["cor"] = row.pop("cor_id", None)
+            row["nom_alm"] = row.get("nom_alm", "")
+            row["tc"] = float(row.get("tc") or 0)
+            # Reconstruct missing fields with defaults so frontend doesn't crash
+            row["tip"] = ""
+            row["obs"] = row.get("nom2", "")
+            row["anulado"] = "S" if row.get("est") == "2" else "N"
 
         # ======================================================
         # 5) Respuesta
@@ -606,12 +623,10 @@ def logistica_dashboard_view(request):
             "tabla": tabla,
             "anno": anno,
             "mes": mes,
-            "almacen":almacen,
-            "referencia":referencia,
+            "almacen": almacen,
+            "referencia": referencia,
             "general": general,
-             "general": general,
-             "operacion":operacion,
-
+            "operacion": operacion,
         })
 
     except Exception as e:
@@ -637,7 +652,8 @@ def logistica_modal_view(request, num_reg):
         # ==========================
         # 1ï¸âƒ£ CABECERA
         # ==========================
-        cabecera = LogisticaDashboard.objects.filter(num_reg=num_reg).first()
+        from django.db.models import F
+        cabecera = LogisticaDashboard.objects.annotate(dor=F('cor__nombre')).filter(num_reg=num_reg).first()
 
         if not cabecera:
             return Response(
@@ -669,7 +685,7 @@ def logistica_modal_view(request, num_reg):
                 "soles": float(d.sol or 0),
                 "dolares": float(d.dol or 0),
                 "observacion": d.obs,
-                "operacion": d.ope,
+                "operacion": cabecera.ope,
             })
 
         # ==========================
@@ -683,19 +699,19 @@ def logistica_modal_view(request, num_reg):
                 "referencia": cabecera.mov,
                 "numero_doc": cabecera.nfa,
                 "orden_compra": cabecera.oco,
-                "almacen": cabecera.alm,
-                "proveedor_codigo": cabecera.cor,
+                "almacen": cabecera.alm_id,
+                "proveedor_codigo": cabecera.cor_id,
                 "responsable": cabecera.nom1,
                 "obs_doc": cabecera.nom2,
                 "moneda": cabecera.tmo,
                 "tipo_cambio": float(cabecera.tc or 0),
                 "usuario": cabecera.reg,
-                "observacion": cabecera.obs,
+                "observacion": cabecera.nom2,
                 "nro_guia": cabecera.ngu,
                 "estado": cabecera.est,
-                "anulado": cabecera.anulado,
-                "tipo_movimiento": cabecera.tip,
-                "razon_social": cabecera.dor,
+                "anulado": "S" if cabecera.est == "2" else "N",
+                "tipo_movimiento": "",
+                "razon_social": getattr(cabecera, 'dor', "SIN NOMBRE"),
 
 
             },
@@ -714,6 +730,8 @@ def logistica_modal_view(request, num_reg):
         print("Error en logistica_modal_view:", traceback.format_exc())
         return Response({"error": str(e)}, status=500)
     
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def logistica_modal_view_sal(request, num_reg):
@@ -772,7 +790,7 @@ def logistica_modal_view_sal(request, num_reg):
                 "referencia": cabecera.mov,
                 "numero_doc": cabecera.nfa,
                 "orden_compra": cabecera.oco,
-                "almacen": cabecera.alm,
+                "almacen": cabecera.alm_id,
                 "proveedor_codigo": cabecera.cor,
                 "responsable": cabecera.nom1,
                 "obs_doc": cabecera.nom2,
@@ -1526,6 +1544,7 @@ from django.http import HttpResponse
 from django.template.loader import render_to_string
 from weasyprint import HTML
 
+
 ##================##
 ## DATOS DE BD_VC ##
 ##================##
@@ -1671,6 +1690,34 @@ def exportar_excel_proveedores(request):
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+# vc_tab_estado
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def lista_estados(request):
+    estados = vc_tab_estado.objects.filter(activo=True, cot=1).order_by("nombre")
+    serializer = EstadoSerializer(estados, many=True)
+    return Response(serializer.data)
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def lista_categorias(request):
+    categorias = vc_tab_categorias.objects.filter(activo="1").order_by("nombre")
+    serializer = CategoriasSerializer(categorias, many=True)
+    return Response(serializer.data)
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def lista_tgasto(request):
+    tgasto = vc_tab_tgastos.objects.filter(activo="1").order_by("codigo")
+    serializer = TGastosSerializer(tgasto, many=True)
+    return Response(serializer.data)
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def lista_tgasto_d(request):
+    tgasto_d = vc_tab_tgastos_d.objects.filter(activo="1").order_by("nombre")
+    serializer = TGastosDSerializer(tgasto_d, many=True)
+    return Response(serializer.data)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1778,6 +1825,13 @@ def lista_alm_articulos(request):
     serializer = AlmArticulosSerializer(queryset, many=True)
     return Response(serializer.data)
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def lista_proveedores(request):
+    proveedores = vc_tab_tproveedor.objects.filter(activo="1").order_by("nombre")
+    serializer = ProveedoresSerializer(proveedores, many=True)
+    return Response(serializer.data)
+
 # Usuario
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1835,6 +1889,13 @@ def html_to_text(html):
 ##===============##
 ##   ALMACENES   ##
 ##===============##
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def lista_almacenes_new(request):
+    almacenes = AlmacenNew.objects.filter(activo="1").order_by("idalmacen")
+    data = [{"idalmacen": a.idalmacen, "nombre": a.nombre} for a in almacenes]
+    return Response(data)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])

@@ -2223,7 +2223,7 @@ export default function AprobacionCotizacionModal({ open, onClose, cotizacion, m
   const CAMPOS_OBLIGATORIOS = [
     { key: "fecha", label: "Fecha" },
     { key: "referencia", label: "Referencia" },
-    { key: "cliente_codigo", label: "Para (Cliente)" },
+    { key: "id_cliente", label: "Para (Cliente)" },
     { key: "prob", label: "Probabilidad" },
     { key: "cotit", label: "Tipo Cotización" },
     { key: "area_codigo", label: "Área" },
