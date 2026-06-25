@@ -165,3 +165,9 @@ _sigecom/frontend/node_modules/vite/dist/node/chunks/dep-B0GuR2De.js:11060:2)[3
 9m
 [2m3:13:35 p. m.[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
 [2m3:13:35 p. m.[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css[22m
+[2m4:29:24 p. m.[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/dashboard/logistica/LogisticaDashboard.jsx, /src/index.css[22m
+[2m4:29:24 p. m.[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/dashboard/logistica/components/EntradaView.jsx, /src/index.css[22m
+[2m4:29:24 p. m.[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/modal/logistica/NuevaLogisticaModal.jsx[22m
+[2m4:29:24 p. m.[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/dashboard/logistica/components/SalidaView.jsx, /src/index.css[22m
+[2m4:30:37 p. m.[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/modal/logistica/NuevaLogisticaModal.jsx[22m
+^C
