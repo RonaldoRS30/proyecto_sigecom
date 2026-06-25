@@ -1,0 +1,59 @@
+﻿python : Watching for file changes with StatReloader
+En línea: 1 Carácter: 73
++ ... ; .\env\Scripts\Activate.ps1; python manage.py runserver 2>&1 | Out-F ...
++                                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Watching for fi...th StatReloader: 
+   String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Watching for file changes with StatReloader
+
+(process:22544): GLib-GIO-WARNING **: 14:56:15.232: Unexpectedly, UWP app 
+`Microsoft.OutlookForWindows_1.2026.602.400_x64__8wekyb3d8bbwe' (AUMId 
+`Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows') 
+supports 4 extensions but has no verbs
+
+(process:22544): GLib-GIO-WARNING **: 14:56:16.507: Unexpectedly, UWP app 
+`OpenAI.Codex_26.616.10790.0_x64__2p2nqsd0c76g0' (AUMId 
+`OpenAI.Codex_2p2nqsd0c76g0!App') supports 5 extensions but has no verbs
+System check identified some issues:
+
+WARNINGS:
+<django.template.backends.django.DjangoTemplates object at 0x000001C243E29160>: 
+(templates.W003) 'currency' is used for multiple template tag modules: 
+'cotizaciones_api.templatetags.currency', 'logistica_api.templatetags.currency'
+
+System check identified 1 issue (0 silenced).
+[25/Jun/2026 15:00:39] "GET /api/ HTTP/1.1" 200 1019
+[25/Jun/2026 15:00:40,206] - Broken pipe from ('127.0.0.1', 64947)
+C:\Users\VC-\PROYECTOS\proyecto_sigecom\backend\urls.py changed, reloading.
+C:\Users\VC-\PROYECTOS\proyecto_sigecom\backend\urls.py changed, reloading.
+Performing system checks...
+
+June 25, 2026 - 14:56:18
+Django version 5.2.4, using settings 'backend.settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CTRL-BREAK.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+System check identified some issues:
+
+WARNINGS:
+<django.template.backends.django.DjangoTemplates object at 0x0000016373D19160>: 
+(templates.W003) 'currency' is used for multiple template tag modules: 
+'cotizaciones_api.templatetags.currency', 'logistica_api.templatetags.currency'
+
+System check identified 1 issue (0 silenced).
+
+(process:3668): GLib-GIO-WARNING **: 15:07:38.963: Unexpectedly, UWP app 
+`Microsoft.OutlookForWindows_1.2026.602.400_x64__8wekyb3d8bbwe' (AUMId 
+`Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows') 
+supports 4 extensions but has no verbs
+
+(process:3668): GLib-GIO-WARNING **: 15:07:39.715: Unexpectedly, UWP app 
+`OpenAI.Codex_26.616.10790.0_x64__2p2nqsd0c76g0' (AUMId 
+`OpenAI.Codex_2p2nqsd0c76g0!App') supports 5 extensions but has no verbs
+[25/Jun/2026 15:20:13] "GET /api/users/ HTTP/1.1" 200 1019
