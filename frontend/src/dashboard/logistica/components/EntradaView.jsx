@@ -1,108 +1,180 @@
-import React, { useState } from "react";
-import { FilePlus, Eye, Loader } from "lucide-react";
+﻿import React, { useState } from "react";
+import { FilePlus, Eye, Loader, Search, RefreshCw, FileDown } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import Table from "@/components/ui/table";
-import FilterCard from "@/components/ui/FilterCard";
 import { getEstadoColor, getEstadoNombre } from "@/components/ui/colors";
 import NuevaLogisticaModal from "@/modal/logistica/NuevaLogisticaModal";
+import api from "@/services/api";
 
-export default function EntradaView({ data: movimientos = [], isFetching, onRefresh, onFilterChange }) {
-  const [detalleOpen, setDetalleOpen] = useState(false);
-  const [logisticaSeleccionada, setLogisticaSeleccionada] = useState(null);
+const CURRENT_YEAR = new Date().getFullYear().toString();
+const MESES = [
+  { value: "%", label: "Todos" },
+  { value: "01", label: "Enero" },   { value: "02", label: "Febrero" },
+  { value: "03", label: "Marzo" },   { value: "04", label: "Abril" },
+  { value: "05", label: "Mayo" },    { value: "06", label: "Junio" },
+  { value: "07", label: "Julio" },   { value: "08", label: "Agosto" },
+  { value: "09", label: "Sep" },     { value: "10", label: "Oct" },
+  { value: "11", label: "Nov" },     { value: "12", label: "Dic" },
+];
+
+export default function EntradaView() {
+  const queryClient = useQueryClient();
+  const [anno, setAnno] = useState(CURRENT_YEAR);
+  const [mes, setMes] = useState("%");
+  const [almacen, setAlmacen] = useState("%");
+  const [estado, setEstado] = useState("%");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+
   const [openNueva, setOpenNueva] = useState(false);
-  const currentYear = new Date().getFullYear().toString();
+  const [selected, setSelected] = useState(null);
+  const [openDetalle, setOpenDetalle] = useState(false);
 
-  const handleReport = (filters) => {
-    const params = {
-      anno: filters.anio || currentYear,
-      mes: filters.mes || "%",
-      cliente: filters.cliente || "%",
-      estado: filters.estado || "%",
-      referencia: filters.movimiento || "%",
-      almacen: filters.area || "%",
-      operacion: "E",
-    };
-    const API_URL = import.meta.env.VITE_API_URL;
-    const query = new URLSearchParams(params).toString();
-    window.open(`${API_URL}/cotizaciones/reportes/reporte_almacen_dashboard_html/?${query}`, "_blank");
+  const { data: almacenes = [] } = useQuery({
+    queryKey: ["almacenes_new"],
+    queryFn: () => api.get("logistica/dashboard/almacenes/").then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data, isFetching } = useQuery({
+    queryKey: ["logistica_entradas", { anno, mes, almacen, estado, search }],
+    queryFn: () =>
+      api.get("logistica/dashboard/", {
+        params: { operacion: "E", anno: anno || "%", mes: mes || "%", almacen: almacen || "%", estado: estado || "%", general: search || "" },
+      }).then(r => r.data),
+    staleTime: 30 * 1000,
+  });
+
+  const movimientos = (data?.tabla || []).filter(m => m.ope === "E");
+
+  const onRefresh = () => queryClient.invalidateQueries({ queryKey: ["logistica_entradas"] });
+
+  const handleReport = () => {
+    const base = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+    const params = new URLSearchParams({ anno: anno || "%", mes: mes || "%", almacen: almacen || "%", operacion: "E" });
+    window.open(`${base}/api/cotizaciones/reportes/reporte_almacen_dashboard_html/?${params}`, "_blank");
   };
 
   return (
-    <div className="flex flex-col h-full p-6">
-      <div className="w-full mb-4">
-        <FilterCard
-          dashboard="logistica"
-          compact
-          onProcess={async (filters) => {
-            onFilterChange({
-              anno: filters.anio || currentYear,
-              mes: filters.mes || "%",
-              cliente: filters.cliente || "%",
-              estado: filters.estado || "%",
-              referencia: filters.movimiento || "%",
-              almacen: filters.area || "%",
-            });
-          }}
-          onReport={handleReport}
-        />
+    <div className="flex flex-col h-full p-4">
+      {/* Filtros */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Anno</label>
+          <input type="number" value={anno} onChange={e => setAnno(e.target.value)}
+            className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white" />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Mes</label>
+          <select value={mes} onChange={e => setMes(e.target.value)}
+            className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
+            {MESES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Almacen</label>
+          <select value={almacen} onChange={e => setAlmacen(e.target.value)}
+            className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
+            <option value="%">Todos</option>
+            {almacenes.map(a => <option key={a.idalmacen} value={a.idalmacen}>{a.nombre}</option>)}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Estado</label>
+          <select value={estado} onChange={e => setEstado(e.target.value)}
+            className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
+            <option value="%">Todos</option>
+            <option value="ACTIVO">Activo</option>
+            <option value="ANULADO">Anulado</option>
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Busqueda</label>
+          <div className="flex gap-1">
+            <input type="text" value={searchInput} onChange={e => setSearchInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && setSearch(searchInput)}
+              placeholder="N, proveedor..." className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white" />
+            <button onClick={() => setSearch(searchInput)} className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+              <Search size={13} />
+            </button>
+          </div>
+        </div>
       </div>
 
+      {/* Tabla */}
       <div className="flex-1 overflow-auto relative rounded-xl border border-slate-200 bg-white shadow-sm min-h-[400px]">
         {isFetching && (
           <div className="absolute inset-0 z-30 bg-white/60 backdrop-blur-[2px] flex items-center justify-center">
             <Loader className="w-8 h-8 animate-spin text-teal-600" />
           </div>
         )}
-
         <Table
-          headers={["Registro", "Fecha", "OCompra", "Código", "Nombre", "Factura", "Guía", "Soles", "Dólares", "", ""].map(h => (
-            <span key={h} className="text-[10px] font-black uppercase tracking-wider text-slate-800 text-center block">
-              {h}
-            </span>
+          headers={["N", "Fecha", "O/Compra", "Proveedor / Razon Social", "Factura", "Guia", "Almacen", "Mon.", "Soles", "Dolares", "", ""].map(h => (
+            <span key={h} className="text-[10px] font-black uppercase tracking-wider text-slate-800 text-center block">{h}</span>
           ))}
           data={movimientos}
-          onRowClick={(c) => {
-            setLogisticaSeleccionada(c);
-            setDetalleOpen(true);
-          }}
-          renderRow={(c) => [
-            <span className="text-xs font-semibold text-slate-800 tabular-nums">{c.num_reg}</span>,
-            <span className="text-xs font-semibold text-slate-800">{c.fec}</span>,
-            <span className="text-xs font-semibold text-slate-800">{c.oco}</span>,
-            <span className="text-xs font-semibold text-slate-800">{c.codigo}</span>,
-            <span className="text-xs font-semibold text-slate-800 uppercase bg-slate-50 px-2 py-[2px] rounded-md border border-slate-100">{c.dor}</span>,
-            <span className="text-xs font-semibold text-slate-800">{c.nfa}</span>,
-            <span className="text-xs font-bold text-slate-800 tabular-nums">{c.ngu}</span>,
-            <span className="text-xs font-bold text-slate-800 tabular-nums">{c.sol}</span>,
-            <span className="text-xs font-bold text-slate-800 tabular-nums">{c.dol}</span>,
-            <div className="flex justify-start">
-              <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setLogisticaSeleccionada(c); setDetalleOpen(true); }} className="h-7 w-7 p-0 rounded-full hover:bg-teal-50 text-slate-400 hover:text-teal-600">
+          onRowClick={c => { setSelected(c); setOpenDetalle(true); }}
+          renderRow={c => [
+            <span className="text-xs font-bold text-indigo-700 tabular-nums">{c.num_reg}</span>,
+            <span className="text-xs text-slate-700">{c.fec}</span>,
+            <span className="text-xs text-slate-600">{c.oco || "."}</span>,
+            <span className="text-xs font-semibold text-slate-800 uppercase">{c.dor || "."}</span>,
+            <span className="text-xs text-slate-600">{c.nfa || "."}</span>,
+            <span className="text-xs text-slate-600">{c.ngu || "."}</span>,
+            <span className="text-xs text-slate-600">{c.nom_alm || "."}</span>,
+            <span className="text-[10px] font-bold text-slate-400">{c.tmo}</span>,
+            <span className="text-xs font-bold text-slate-800 tabular-nums">
+              {c.sol != null ? Number(c.sol).toLocaleString("es-PE", { minimumFractionDigits: 2 }) : "."}</span>,
+            <span className="text-xs font-bold text-slate-800 tabular-nums">
+              {c.dol != null ? Number(c.dol).toLocaleString("es-PE", { minimumFractionDigits: 2 }) : "."}</span>,
+            <div className="flex justify-center">
+              <Button size="sm" variant="ghost"
+                onClick={e => { e.stopPropagation(); setSelected(c); setOpenDetalle(true); }}
+                className="h-7 w-7 p-0 rounded-full hover:bg-teal-50 text-slate-400 hover:text-teal-600">
                 <Eye className="w-4 h-4" />
               </Button>
             </div>,
-            <div className="flex items-center justify-start">
-              <div className="w-3 h-3 rounded-full border border-white ring-1 ring-slate-200" style={{ backgroundColor: getEstadoColor(c.est) }} title={getEstadoNombre(c.est)} />
+            <div className="flex items-center justify-center">
+              <div className="w-3 h-3 rounded-full border border-white ring-1 ring-slate-200"
+                style={{ backgroundColor: getEstadoColor(c.est) }} title={getEstadoNombre(c.est)} />
             </div>,
           ]}
         />
       </div>
 
-      <div className="flex justify-between items-center mt-4">
-        <span className="text-xs text-slate-500 font-medium">
-          Total: <span className="font-bold text-slate-800">{movimientos.length}</span> registros
-        </span>
-        <Button onClick={() => setOpenNueva(true)} className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold uppercase tracking-widest px-6 h-9 rounded-xl transition-all flex gap-2 shadow-lg shadow-teal-100">
+      {/* Footer */}
+      <div className="flex justify-between items-center mt-4 gap-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500 font-medium">
+            Total: <span className="font-bold text-slate-800">{movimientos.length}</span> registros
+          </span>
+          <button onClick={onRefresh} title="Actualizar" className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-400">
+            <RefreshCw size={13} />
+          </button>
+          <button onClick={handleReport} title="Reporte HTML" className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-400">
+            <FileDown size={13} />
+          </button>
+        </div>
+        <Button onClick={() => setOpenNueva(true)}
+          className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold uppercase tracking-widest px-6 h-9 rounded-xl transition-all flex gap-2 shadow-lg shadow-teal-100">
           <FilePlus size={16} /> Nueva Entrada
         </Button>
       </div>
 
-      <NuevaLogisticaModal open={openNueva} onClose={() => { setOpenNueva(false); onRefresh(); }} operacion="E" />
-      {logisticaSeleccionada && (
+      <NuevaLogisticaModal
+        open={openNueva}
+        onClose={() => { setOpenNueva(false); onRefresh(); }}
+        operacion="E"
+        modo="N"
+      />
+
+      {selected && (
         <NuevaLogisticaModal
-          key={logisticaSeleccionada.num_reg}
-          open={detalleOpen}
-          onClose={() => setDetalleOpen(false)}
-          logistica={logisticaSeleccionada}
+          key={selected.num_reg}
+          open={openDetalle}
+          onClose={() => { setOpenDetalle(false); setSelected(null); onRefresh(); }}
+          logistica={selected}
           operacion="E"
           modo="V"
         />
