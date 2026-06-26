@@ -1,5 +1,5 @@
 
-# â”€â”€â”€ LibrerÃ­as estÃ¡ndar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€â"€ LibrerÃ­as estÃ¡ndar â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 import os
 import io
 import re
@@ -13,19 +13,19 @@ from decimal import Decimal, InvalidOperation
 from html import unescape
 from openpyxl import Workbook
 
-# â”€â”€â”€ LibrerÃ­as de terceros â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€â"€ LibrerÃ­as de terceros â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 from reportlab.pdfgen import canvas
 
 from . import serializers
 logger = logging.getLogger(__name__)
 
-# â”€â”€â”€ Django core â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€â"€ Django core â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 from django.conf import settings
 from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import ensure_csrf_cookie, csrf_exempt
 from django.utils import timezone
-from django.db.models import Sum, Count, Q, F, Max, DecimalField, ExpressionWrapper
+from django.db.models import Sum, Count, Q, F, Max, DecimalField, ExpressionWrapper, Value
 from django.db.models.functions import TruncDate, Coalesce
 from django.db.models.functions import ExtractMonth
 
@@ -38,7 +38,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-# â”€â”€â”€ Django REST Framework â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€â"€ Django REST Framework â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 from rest_framework.decorators import api_view, parser_classes, permission_classes, action, authentication_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
@@ -116,6 +116,7 @@ from .models import (
     sis_alm_tab_grupo,
     sis_alm_tab_articulos,
     sis_alm_tab_ccosto,
+    AlmacenNew,
 )
 
 from users.models import (
@@ -146,6 +147,7 @@ from .serializers import (
     HoffmanSerializer,
     AlmArticulosSerializer,
     AlmacenSerializer,
+    AlmacenNewSerializer,
     GrupoAnaliticoSerializer,
     ArticuloSerializer,
     AlmTabUmedSerializer,
@@ -161,6 +163,13 @@ from users.serializers import (
 from django.db.models.functions import Cast
 from django.db.models import CharField
 
+from .movimiento_helpers import (
+    build_movimiento_detalle_response,
+    moneda_to_db,
+    moneda_from_db,
+    MONEDA_LABEL,
+)
+from core.models import Producto, UnidadMedida
 
 PLANTILLAS_DIR = os.path.join(os.path.dirname(__file__), "plantillas")
 
@@ -677,27 +686,31 @@ def logistica_dashboard_view(request):
         # ======================================================
         # 2) Query base
         # ======================================================
-        qs = LogisticaDashboard.objects.all()
-
-        # Filtra por columnas dedicadas anno/mes (más eficiente que extraer de fec)
-        if anno != "%" and anno:
-            qs = qs.filter(anno=anno)
-
+        qs = LogisticaDashboard.objects.select_related('cor', 'alm')
         qs = qs.annotate(
             sol_str=Cast('sol', CharField()),
-            dol_str=Cast('dol', CharField())
+            dol_str=Cast('dol', CharField()),
+            dor=Coalesce(F('cor__nombre'), Value('', output_field=CharField())),
+            nom_alm=Coalesce(F('alm__nombre'), Value('', output_field=CharField())),
         )
+
+        if anno != "%" and anno:
+            try:
+                qs = qs.filter(fec__year=int(anno))
+            except (ValueError, TypeError):
+                pass
+
         if razon_social != "%":
-            qs = qs.filter(dor=razon_social)
+            qs = qs.filter(cor__nombre=razon_social)
 
         if operacion != "%":
-            qs = qs.filter(ope=operacion)   # E = Entradas, S = Salidas
+            qs = qs.filter(ope=operacion)
 
         if orden_compra != "%":
             qs = qs.filter(oco=orden_compra)
 
         if tipo_movimiento != "%":
-            qs = qs.filter(tip=tipo_movimiento)
+            qs = qs.filter(mov=tipo_movimiento)
 
         if referencia != "%":
             qs = qs.filter(mov=referencia)
@@ -707,9 +720,6 @@ def logistica_dashboard_view(request):
 
         if obs_doc != "%":
             qs = qs.filter(nom2=obs_doc)
-
-        if codigo != "%":
-            qs = qs.filter(cod=codigo)
 
         if responsable != "%":
             qs = qs.filter(nom1=responsable)
@@ -727,18 +737,20 @@ def logistica_dashboard_view(request):
             qs = qs.filter(alm=almacen)
 
         if mes != "%" and mes:
-            qs = qs.filter(mes=mes.zfill(2))   # normalizar: "3" -> "03"
+            try:
+                qs = qs.filter(fec__month=int(mes))
+            except (ValueError, TypeError):
+                pass
 
         if proveedor != "%":
             qs = qs.filter(cor=proveedor)
 
         if estado != "%":
             if estado == "ANULADO":
-                qs = qs.filter(anulado="S")
+                qs = qs.filter(est="2")
             elif estado == "ACTIVO":
-                qs = qs.exclude(anulado="S")
+                qs = qs.exclude(est="2")
 
-        
         if general:
             qs = qs.filter(
                 Q(num_reg__icontains=general) |
@@ -746,20 +758,17 @@ def logistica_dashboard_view(request):
                 Q(oco__icontains=general) |
                 Q(nfa__icontains=general) |
                 Q(ngu__icontains=general) |
-                Q(cor__icontains=general) |
                 Q(dor__icontains=general) |
-                Q(tip__icontains=general) |
-                Q(alm__icontains=general) |
+                Q(nom_alm__icontains=general) |
+                Q(mov__icontains=general) |
                 Q(tmo__icontains=general) |
                 Q(sol_str__icontains=general) |
-               Q(dol_str__icontains=general) |
+                Q(dol_str__icontains=general) |
                 Q(reg__icontains=general) |
-                Q(obs__icontains=general) |
                 Q(ope__icontains=general) |
                 Q(nom1__icontains=general) |
                 Q(nom2__icontains=general) |
-                Q(est__icontains=general) |
-                Q(mov__icontains=general)
+                Q(est__icontains=general)
             )
 
             
@@ -797,7 +806,7 @@ def logistica_dashboard_view(request):
             total_dolares += float(r.dol or 0)
 
             # Stats proveedor
-            codigo = r.cor or "-"
+            codigo = r.cor_id or "-"
             nombre = r.dor or "SIN NOMBRE"
 
             if codigo not in proveedores_stats:
@@ -832,29 +841,27 @@ def logistica_dashboard_view(request):
         # 4) Tabla
         # ======================================================
         tabla = list(
-            qs.order_by("-fec", "-num_reg").values(
-                "num_reg",
-                "fec",
-                "oco",
-                "nfa",
-                "ngu",
-                "cor",
-                "dor",
-                "tip",
-                "alm",
-                "tmo",
-                "sol",
-                "dol",
-                "reg",
-                "obs",
-                "ope",
-                "nom1",
-                "nom2",
-                "est",
-                "mov",
-
-            )
-        )
+    qs.order_by("-fec", "-num_reg").values(
+        "num_reg",
+        "fec",
+        "oco",
+        "nfa",
+        "ngu",
+        "cor_id",
+        "dor",
+        "nom_alm",
+        "alm_id",
+        "tmo",
+        "sol",
+        "dol",
+        "reg",
+        "ope",
+        "nom1",
+        "nom2",
+        "est",
+        "mov",
+    )[:500]
+)
 
         # ======================================================
         # 5) Respuesta
@@ -864,12 +871,10 @@ def logistica_dashboard_view(request):
             "tabla": tabla,
             "anno": anno,
             "mes": mes,
-            "almacen":almacen,
-            "referencia":referencia,
+            "almacen": almacen,
+            "referencia": referencia,
             "general": general,
-             "general": general,
-             "operacion":operacion,
-
+            "operacion": operacion,
         })
 
     except Exception as e:
@@ -886,183 +891,25 @@ def logistica_dashboard_view(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def logistica_modal_view(request, num_reg):
-    """
-    Retorna los detalles completos de un movimiento logÃ­stico
-    usando num_reg como clave principal.
-    """
-
+    """Detalle completo de un movimiento (entrada o salida)."""
     try:
-        # ==========================
-        # 1ï¸âƒ£ CABECERA
-        # ==========================
-        cabecera = LogisticaDashboard.objects.filter(num_reg=num_reg).first()
-
-        if not cabecera:
+        data = build_movimiento_detalle_response(num_reg)
+        if not data:
             return Response(
-                {"error": f"No se encontrÃ³ el movimiento con nÃºmero {num_reg}"},
-                status=404
+                {"error": f"No se encontró el movimiento con número {num_reg}"},
+                status=404,
             )
-
-        # ==========================
-        # 2ï¸âƒ£ DETALLE
-        # ==========================
-        detalles = LogisticaDashboardDetalle.objects.filter(num_reg=num_reg)
-
-        total_soles = 0
-        total_dolares = 0
-        items = []
-
-        for d in detalles:
-            total_soles += float(d.sol or 0)
-            total_dolares += float(d.dol or 0)
-
-            items.append({
-                "num_reg": d.num_reg,
-                "codigo": d.cod,
-                "nombre": d.nom,
-                "unidad": d.um,
-                "cantidad": d.can,
-                "valor_unitario": float(d.val or 0),
-                "total": float(d.tot or 0),
-                "soles": float(d.sol or 0),
-                "dolares": float(d.dol or 0),
-                "observacion": d.obs,
-                "operacion": d.ope,
-            })
-
-        # ==========================
-        # 3ï¸âƒ£ RESPONSE FINAL
-        # ==========================
-        response_data = {
-            "cabecera": {
-                "numero": cabecera.num_reg,
-                "fecha": cabecera.fec,
-                "operacion": cabecera.ope,
-                "referencia": cabecera.mov,
-                "numero_doc": cabecera.nfa,
-                "orden_compra": cabecera.oco,
-                "almacen": cabecera.alm,
-                "proveedor_codigo": cabecera.cor,
-                "responsable": cabecera.nom1,
-                "obs_doc": cabecera.nom2,
-                "moneda": cabecera.tmo,
-                "tipo_cambio": float(cabecera.tc or 0),
-                "usuario": cabecera.reg,
-                "observacion": cabecera.obs,
-                "nro_guia": cabecera.ngu,
-                "estado": cabecera.est,
-                "anulado": cabecera.anulado,
-                "tipo_movimiento": cabecera.tip,
-                "razon_social": cabecera.dor,
-
-
-            },
-            "items": items,
-            "resumen": {
-                "totalItems": len(items),
-                "totalSoles": round(total_soles, 2),
-                "totalDolares": round(total_dolares, 2),
-            }
-        }
-
-        return Response(response_data)
-
+        return Response(data)
     except Exception as e:
         import traceback
-        print("Error en logistica_modal_view:", traceback.format_exc())
+        logger.error("Error en logistica_modal_view: %s", traceback.format_exc())
         return Response({"error": str(e)}, status=500)
-    
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def logistica_modal_view_sal(request, num_reg):
-    """
-    Retorna los detalles completos de un movimiento logÃ­stico
-    usando num_reg como clave principal.
-    """
-
-    try:
-        # ==========================
-        # 1ï¸âƒ£ CABECERA
-        # ==========================
-        cabecera = LogisticaDashboard.objects.filter(num_reg=num_reg).first()
-
-        if not cabecera:
-            return Response(
-                {"error": f"No se encontrÃ³ el movimiento con nÃºmero {num_reg}"},
-                status=404
-            )
-
-        # ==========================
-        # 2ï¸âƒ£ DETALLE
-        # ==========================
-        detalles = LogisticaDashboardDetalle.objects.filter(num_reg=num_reg)
-
-        total_soles = 0
-        total_dolares = 0
-        items = []
-
-        for d in detalles:
-            total_soles += float(d.sol or 0)
-            total_dolares += float(d.dol or 0)
-
-            items.append({
-                "num_reg": d.num_reg,
-                "codigo": d.cod,
-                "nombre": d.nom,
-                "unidad": d.um,
-                "cantidad": d.can,
-                "valor_unitario": float(d.val or 0),
-                "total": float(d.tot or 0),
-                "soles": float(d.sol or 0),
-                "dolares": float(d.dol or 0),
-                "observacion": d.obs,
-                "operacion": d.ope,
-            })
-
-        # ==========================
-        # 3ï¸âƒ£ RESPONSE FINAL
-        # ==========================
-        response_data = {
-            "cabecera": {
-                "numero": cabecera.num_reg,
-                "fecha": cabecera.fec,
-                "operacion": cabecera.ope,
-                "referencia": cabecera.mov,
-                "numero_doc": cabecera.nfa,
-                "orden_compra": cabecera.oco,
-                "almacen": cabecera.alm,
-                "proveedor_codigo": cabecera.cor,
-                "responsable": cabecera.nom1,
-                "obs_doc": cabecera.nom2,
-                "moneda": cabecera.tmo,
-                "tipo_cambio": float(cabecera.tc or 0),
-                "usuario": cabecera.reg,
-                "observacion": cabecera.obs,
-                "nro_guia": cabecera.ngu,
-                "estado": cabecera.est,
-                "anulado": cabecera.anulado,
-                "tipo_movimiento": cabecera.tip,
-                "razon_social": cabecera.dor,
-
-
-            },
-            "items": items,
-            "resumen": {
-                "totalItems": len(items),
-                "totalSoles": round(total_soles, 2),
-                "totalDolares": round(total_dolares, 2),
-            }
-        }
-
-        return Response(response_data)
-
-    except Exception as e:
-        import traceback
-        print("Error en logistica_modal_view_sal:", traceback.format_exc())
-        return Response({"error": str(e)}, status=500)
-    
+    return logistica_modal_view(request, num_reg)
 
 from django.db.models import Q, Max
 from django.db.models.functions import Trim
@@ -1070,35 +917,32 @@ from django.db.models.functions import Trim
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def logistica_productos_view(request):
-    q = request.GET.get("q", "")
+    q = (request.GET.get("q", "") or "").strip()
 
-    # âœ… Normalizamos campos con TRIM
-    productos = LogisticaDashboardDetalle.objects.annotate(
-        cod_trim=Trim('cod'),
-        nom_trim=Trim('nom'),
-    )
+    productos = Producto.objects.select_related("id_medida").filter(activo=1)
 
     if q:
         productos = productos.filter(
-            Q(cod_trim__icontains=q) | Q(nom_trim__icontains=q)
+            Q(codigo__icontains=q)
+            | Q(nombre__icontains=q)
+            | Q(ocodigo__icontains=q)
         )
 
-    # âœ… Distinct por cÃ³digo+nombre ya recortados
-    productos = (
-        productos
-        .values("cod_trim", "nom_trim")
-        .annotate(um=Max("um"))
-        .order_by("cod_trim")[:100]
-    )
+    productos = productos.order_by("codigo")[:100]
 
     data = [
         {
-            "codigo": p["cod_trim"] or "",
-            "nombre": p["nom_trim"] or "",
-            "unidad": (p["um"] or "").strip(),
+            "id_producto": p.id_producto,
+            "codigo": p.codigo or "",
+            "nombre": p.nombre or "",
+            "descripcion": p.nombre or "",
+            "unidad": p.id_medida.codigo if p.id_medida else "",
+            "id_unidad_medida": p.id_medida_id,
+            "unidad_nombre": p.id_medida.nombre if p.id_medida else "",
+            "valor_soles": float(p.precio_soles or 0),
+            "valor_dolares": float(p.precio_dolares or 0),
         }
         for p in productos
-        if p["cod_trim"]
     ]
     return Response(data)
 
@@ -1258,196 +1102,228 @@ from .models import TipoCambio, LogisticaDashboard, LogisticaDashboardDetalle
 from datetime import datetime
 
 def _calcular_totales_items(items, moneda, tc):
+    moneda_db = moneda_to_db(moneda)
     total_soles = 0
     total_dolares = 0
     for item in items:
-        total = float(item.get(“total”) or 0)
-        if moneda == “Soles”:
+        total = float(item.get("total") or 0)
+        if moneda_db == "S":
             total_soles += total
             total_dolares += total / tc if tc > 0 else 0
-        elif moneda == “Dolares”:
+        elif moneda_db == "D":
             total_dolares += total
             total_soles += total * tc
     return round(total_soles, 2), round(total_dolares, 2)
 
 def _insertar_detalles(num_reg, items, moneda, tc):
+    moneda_db = moneda_to_db(moneda)
     for index, item in enumerate(items, start=1):
-        total = float(item.get(“total”) or 0)
-        if moneda == “Soles”:
+        total = float(item.get("total") or 0)
+        if moneda_db == "S":
             soles = total
             dolares = total / tc if tc > 0 else 0
-        elif moneda == “Dolares”:
+        elif moneda_db == "D":
             dolares = total
             soles = total * tc
         else:
             soles = dolares = 0
+
+        prod_id = item.get("id_producto") or item.get("producto_id")
+        um_id = item.get("id_unidad_medida") or item.get("um_id")
+        descripcion = item.get("descripcion") or item.get("nombre") or ""
+
         LogisticaDashboardDetalle.objects.create(
             num_reg=num_reg,
             num=index,
-            cod=item.get(“codigo”) or None,
-            nom=item.get(“descripcion”) or None,
-            um=item.get(“um”) or None,
-            can=int(float(item.get(“cant”) or 0)),
-            val=float(item.get(“valor”) or 0),
+            cod=str(prod_id) if prod_id else None,
+            nom=descripcion[:100] if descripcion else None,
+            um=str(um_id) if um_id else (item.get("um") or None),
+            can=int(float(item.get("cant") or item.get("cantidad") or 0)),
+            val=float(item.get("valor") or item.get("valor_unitario") or 0),
             tot=round(total, 2),
             sol=round(soles, 2),
             dol=round(dolares, 2),
-            obs=item.get(“obs”) or None,
+            obs=item.get("obs") or item.get("observacion") or None,
         )
 
 def _resolver_tc(fecha, tc_enviado):
     tc = float(tc_enviado or 0)
     if tc <= 0:
-        tcambio = TipoCambio.objects.filter(fec=fecha, activo=’1’).order_by(‘-hor’).first()
-        if tcambio:
-            tc = float(tcambio.com or 0)
+        try:
+            tcambio = TipoCambio.objects.filter(fec=fecha, activo='1').order_by('-hor').first()
+            if tcambio:
+                tc = float(tcambio.com or 0)
+        except Exception:
+            pass
     return tc
 
-@api_view([‘POST’])
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def logistica_tipo_cambio_view(request):
+    fecha_str = request.GET.get("fecha")
+    if not fecha_str:
+        return Response({"error": "Fecha requerida"}, status=400)
+    try:
+        fecha = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+    except ValueError:
+        return Response({"error": "Fecha inválida"}, status=400)
+    tc = _resolver_tc(fecha, request.GET.get("tc"))
+    return Response({"fecha": fecha_str, "tipo_cambio": tc})
+
+@api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def logistica_movimiento(request):
     try:
         data = request.data
 
-        ope = data.get(“ope”)
-        if ope not in [“E”, “S”]:
-            return Response({“error”: “Operación inválida”}, status=400)
+        ope = data.get("ope")
+        if ope not in ["E", "S"]:
+            return Response({"error": "Operación inválida"}, status=400)
 
-        items = data.get(“items”, [])
+        items = data.get("items", [])
         if not items:
-            return Response({“error”: “No hay items para insertar”}, status=400)
+            return Response({"error": "No hay items para insertar"}, status=400)
 
-        fecha_str = data.get(“fecha”)
+        fecha_str = data.get("fecha")
         if not fecha_str:
-            return Response({“error”: “Fecha requerida”}, status=400)
+            return Response({"error": "Fecha requerida"}, status=400)
 
-        fecha = datetime.strptime(fecha_str, “%Y-%m-%d”).date()
-        moneda = data.get(“moneda”, “Soles”)
-        tc = _resolver_tc(fecha, data.get(“tc”))
+        fecha = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+        moneda = moneda_to_db(data.get("moneda", "S"))
+        tc = _resolver_tc(fecha, data.get("tc"))
 
-        if moneda == “Dolares” and tc <= 0:
-            return Response({“error”: “Tipo de cambio inválido para moneda Dólares”}, status=400)
+        if moneda == "D" and tc <= 0:
+            return Response({"error": "Tipo de cambio inválido para moneda Dólares"}, status=400)
 
         total_soles, total_dolares = _calcular_totales_items(items, moneda, tc)
 
-        alm_val = str(data.get(“almacen”)).strip() if data.get(“almacen”) else None
-        cor_val = str(data.get(“cor_id”)).strip()   if data.get(“cor_id”)  else None
+        alm_val = str(data.get("almacen")).strip() if data.get("almacen") not in (None, "", []) else None
+        cor_raw = data.get("cor_id") or data.get("cliente_id")
+        cor_val = str(cor_raw).strip() if cor_raw not in (None, "", []) else None
 
-        reg = getattr(request.user, ‘usuario’, None) or str(request.user)
+        usuario_id = data.get("usuario_id") or data.get("responsable_id")
+        if not usuario_id:
+            usuario_id = getattr(request.user, "id_usuario", None)
+        reg = str(usuario_id) if usuario_id not in (None, "", []) else None
 
         cabecera = LogisticaDashboard.objects.create(
             ope=ope,
             fec=fecha,
-            oco=data.get(“orden_compra”) or None,
-            nfa=data.get(“numero_doc”) or None,
-            ngu=data.get(“nro_guia”) or None,
+            oco=data.get("orden_compra") or None,
+            nfa=data.get("numero_doc") or None,
+            ngu=data.get("nro_guia") or None,
             cor=cor_val,
-            dor=data.get(“razon_social”) or None,
             alm=alm_val,
             tmo=moneda,
             tc=tc,
             reg=reg,
-            nom1=data.get(“responsable”) or None,
-            nom2=data.get(“obs_doc”) or None,
+            nom2=data.get("obs_doc") or data.get("observacion") or None,
             sol=total_soles,
             dol=total_dolares,
-            mov=data.get(“referencia”) or None,
-            est=”0”,
+            mov=data.get("referencia") or None,
+            est="0",
         )
 
         _insertar_detalles(cabecera.num_reg, items, moneda, tc)
 
         return Response({
-            “message”: “Movimiento registrado correctamente”,
-            “num_reg”: cabecera.num_reg,
-            “ope”: ope,
-            “total_soles”: total_soles,
-            “total_dolares”: total_dolares,
+            "message": "Movimiento registrado correctamente",
+            "num_reg": cabecera.num_reg,
+            "ope": ope,
+            "total_soles": total_soles,
+            "total_dolares": total_dolares,
         })
 
     except Exception as e:
         import traceback
-        logger.error(“Error en logistica_movimiento POST: %s”, traceback.format_exc())
-        return Response({“error”: str(e)}, status=500)
+        logger.error("Error en logistica_movimiento POST: %s", traceback.format_exc())
+        return Response({"error": str(e)}, status=500)
 
 
-@api_view([‘PUT’, ‘PATCH’])
+@api_view(['PUT', 'PATCH'])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def logistica_movimiento_update(request, num_reg):
     try:
         cabecera = LogisticaDashboard.objects.filter(num_reg=num_reg).first()
         if not cabecera:
-            return Response({“error”: f”Movimiento {num_reg} no encontrado”}, status=404)
+            return Response({"error": f"Movimiento {num_reg} no encontrado"}, status=404)
 
-        if cabecera.est == “2”:
-            return Response({“error”: “No se puede editar un movimiento anulado”}, status=400)
+        if cabecera.est == "2":
+            return Response({"error": "No se puede editar un movimiento anulado"}, status=400)
 
         data = request.data
-        items = data.get(“items”, [])
+        items = data.get("items", [])
         if not items:
-            return Response({“error”: “No hay items”}, status=400)
+            return Response({"error": "No hay items"}, status=400)
 
-        fecha_str = data.get(“fecha”)
+        fecha_str = data.get("fecha")
         if not fecha_str:
-            return Response({“error”: “Fecha requerida”}, status=400)
+            return Response({"error": "Fecha requerida"}, status=400)
 
-        fecha = datetime.strptime(fecha_str, “%Y-%m-%d”).date()
-        moneda = data.get(“moneda”, “Soles”)
-        tc = _resolver_tc(fecha, data.get(“tc”))
+        fecha = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+        moneda = moneda_to_db(data.get("moneda", "S"))
+        tc = _resolver_tc(fecha, data.get("tc"))
+
+        if moneda == "D" and tc <= 0:
+            return Response({"error": "Tipo de cambio inválido para moneda Dólares"}, status=400)
 
         total_soles, total_dolares = _calcular_totales_items(items, moneda, tc)
 
-        alm_val = str(data.get(“almacen”)).strip() if data.get(“almacen”) else None
-        cor_val = str(data.get(“cor_id”)).strip()   if data.get(“cor_id”)  else None
+        alm_val = str(data.get("almacen")).strip() if data.get("almacen") not in (None, "", []) else None
+        cor_raw = data.get("cor_id") or data.get("cliente_id")
+        cor_val = str(cor_raw).strip() if cor_raw not in (None, "", []) else None
+
+        usuario_id = data.get("usuario_id") or data.get("responsable_id")
+        reg = str(usuario_id) if usuario_id not in (None, "", []) else cabecera.reg
 
         cabecera.fec  = fecha
-        cabecera.oco  = data.get(“orden_compra”) or None
-        cabecera.nfa  = data.get(“numero_doc”)   or None
-        cabecera.ngu  = data.get(“nro_guia”)     or None
+        cabecera.oco  = data.get("orden_compra") or None
+        cabecera.nfa  = data.get("numero_doc")   or None
+        cabecera.ngu  = data.get("nro_guia")     or None
         cabecera.cor  = cor_val
-        cabecera.dor  = data.get(“razon_social”) or None
         cabecera.alm  = alm_val
         cabecera.tmo  = moneda
         cabecera.tc   = tc
-        cabecera.nom1 = data.get(“responsable”)  or None
-        cabecera.nom2 = data.get(“obs_doc”)      or None
+        cabecera.reg  = reg
+        cabecera.nom2 = data.get("obs_doc") or data.get("observacion") or None
         cabecera.sol  = total_soles
         cabecera.dol  = total_dolares
-        cabecera.mov  = data.get(“referencia”)   or None
+        cabecera.mov  = data.get("referencia")   or None
         cabecera.save()
 
         LogisticaDashboardDetalle.objects.filter(num_reg=num_reg).delete()
         _insertar_detalles(num_reg, items, moneda, tc)
 
         return Response({
-            “message”: “Movimiento actualizado correctamente”,
-            “num_reg”: num_reg,
-            “total_soles”: total_soles,
-            “total_dolares”: total_dolares,
+            "message": "Movimiento actualizado correctamente",
+            "num_reg": num_reg,
+            "total_soles": total_soles,
+            "total_dolares": total_dolares,
         })
 
     except Exception as e:
         import traceback
-        logger.error(“Error en logistica_movimiento_update: %s”, traceback.format_exc())
-        return Response({“error”: str(e)}, status=500)
+        logger.error("Error en logistica_movimiento_update: %s", traceback.format_exc())
+        return Response({"error": str(e)}, status=500)
 
 
-@api_view([‘PATCH’])
+@api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
 def logistica_movimiento_anular(request, num_reg):
     try:
         cabecera = LogisticaDashboard.objects.filter(num_reg=num_reg).first()
         if not cabecera:
-            return Response({“error”: f”Movimiento {num_reg} no encontrado”}, status=404)
-        if cabecera.est == “2”:
-            return Response({“error”: “El movimiento ya está anulado”}, status=400)
-        cabecera.est = “2”
+            return Response({"error": f"Movimiento {num_reg} no encontrado"}, status=404)
+        if cabecera.est == "2":
+            return Response({"error": "El movimiento ya está anulado"}, status=400)
+        cabecera.est = "2"
         cabecera.save()
-        return Response({“message”: “Movimiento anulado correctamente”, “num_reg”: num_reg})
+        return Response({"message": "Movimiento anulado correctamente", "num_reg": num_reg})
     except Exception as e:
-        return Response({“error”: str(e)}, status=500)
+        return Response({"error": str(e)}, status=500)
 
 from openpyxl import Workbook
 from django.http import HttpResponse
@@ -1728,7 +1604,7 @@ def detalle_orden_compra(request, reg):
 def listar_suministros(request, num_reg):
     try:
         # ======================
-        # ðŸ“„ LISTAR
+        # ðŸ"„ LISTAR
         # ======================
         if request.method == "GET":
             suministros = CotiSuministros.objects.filter(
@@ -1837,7 +1713,7 @@ def listar_servicios(request, num_reg):
             for row in rows.filter(nig=1):
                 tipo_digito = row.cog[3]  # 4,5,6
                 subgrupo = {
-                    "titulo": clean_text(row.nog),       # ðŸ”¹ tÃ­tulo real de DB
+                    "titulo": clean_text(row.nog),       # ðŸ"¹ tÃ­tulo real de DB
                     "tipoCodigo": f"0{tipo_digito}",     # "04", "05", "06"
                     "tipoNombre": tipo_map.get(tipo_digito, "DESCONOCIDO"),
                     "items": []
@@ -1858,8 +1734,8 @@ def listar_servicios(request, num_reg):
 
             resultado.append({
                 "tituloGeneral": titulo_general,
-                "cantidad": str(servicio.can or "1"),   # ðŸ”¹ can (nig = 0)
-                "detalle": servicio.tog or "",           # ðŸ”¹ tog (HTML)
+                "cantidad": str(servicio.can or "1"),   # ðŸ"¹ can (nig = 0)
+                "detalle": servicio.tog or "",           # ðŸ"¹ tog (HTML)
                 "subgrupos": subgrupos
             })
 
@@ -2131,7 +2007,7 @@ def asignar_regus(request, num_reg):
 def generar_codigo_view(request, numero):
     """
     Retorna el cÃ³digo (cotin) asociado a la cotizaciÃ³n.
-    Si la cotizaciÃ³n no existe â†’ 404
+    Si la cotizaciÃ³n no existe â†' 404
     """
     try:
         cot = DashboardCotizacion.objects.filter(numero=numero).first()
@@ -2540,7 +2416,7 @@ def listar_usuario(request):
 
 
 ##============##
-## AÃ‘O ACTUAL ##
+## AÃ'O ACTUAL ##
 ##============##
 @api_view(["GET"])
 def anno_actual(request):
@@ -2581,8 +2457,59 @@ def html_to_text(html):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def lista_almacenes_new(request):
-    almacenes = sis_alm_tab_almacen.objects.filter(activo="1").order_by("cod")
-    return Response([{"idalmacen": a.cod, "nombre": a.nom} for a in almacenes])
+    q = (request.GET.get("q", "") or "").strip()
+    almacenes = AlmacenNew.objects.all()
+    if q:
+        almacenes = almacenes.filter(
+            Q(nombre__icontains=q) | Q(direccion__icontains=q)
+        )
+    almacenes = almacenes.order_by("nombre")[:100]
+    return Response([
+        {
+            "idalmacen": a.idalmacen,
+            "nombre": a.nombre,
+            "direccion": a.direccion or "",
+            "activo": a.activo,
+        }
+        for a in almacenes
+    ])
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def crear_almacen_new(request):
+    data = request.data.copy()
+    if not data.get("usuario_id_usuario"):
+        data["usuario_id_usuario"] = getattr(request.user, "id_usuario", 1)
+    if not data.get("activo"):
+        data["activo"] = "1"
+    serializer = AlmacenNewSerializer(data=data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def buscar_usuarios_logistica(request):
+    q = (request.GET.get("q", "") or "").strip()
+    usuarios = Usuario.objects.filter(activo=1)
+    if q:
+        usuarios = usuarios.filter(
+            Q(nombre_completo__icontains=q)
+            | Q(usuario__icontains=q)
+            | Q(dni__icontains=q)
+        )
+    usuarios = usuarios.order_by("nombre_completo")[:30]
+    return Response([
+        {
+            "id_usuario": u.id_usuario,
+            "usuario": u.usuario,
+            "nombre": u.nombre_completo,
+        }
+        for u in usuarios
+    ])
 
 
 @api_view(["GET"])
@@ -3703,3 +3630,5 @@ def exportar_excel_barras(request):
     response["Content-Disposition"] = 'attachment; filename="reporte_barras.xlsx"'
     wb.save(response)
     return response
+
+

@@ -1,17 +1,19 @@
-import React, { useState } from "react";
+import React from "react";
+import { useNavigate } from "react-router-dom";
 import { ArrowDownCircle, ArrowUpCircle, ClipboardList } from "lucide-react";
 import KardexView from "./components/KardexView";
 import EntradaView from "./components/EntradaView";
 import SalidaView from "./components/SalidaView";
 
 const TABS = [
-  { id: "entrada", label: "Entradas", icon: <ArrowDownCircle size={14} /> },
-  { id: "salida",  label: "Salidas",  icon: <ArrowUpCircle size={14} /> },
-  { id: "kardex",  label: "Kardex",   icon: <ClipboardList size={14} /> },
+  { id: "entrada", label: "Entradas", path: "/sigecom/logistica/entradas", icon: <ArrowDownCircle size={14} /> },
+  { id: "salida",  label: "Salidas",  path: "/sigecom/logistica/salidas",  icon: <ArrowUpCircle size={14} /> },
+  { id: "kardex",  label: "Kardex",   path: "/sigecom/logistica/kardex",   icon: <ClipboardList size={14} /> },
 ];
 
-export default function LogisticaDashboard() {
-  const [tabActiva, setTabActiva] = useState("entrada");
+export default function LogisticaDashboard({ defaultTab = "entrada" }) {
+  const navigate = useNavigate();
+  const tabActiva = defaultTab;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -24,7 +26,7 @@ export default function LogisticaDashboard() {
           {TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setTabActiva(tab.id)}
+              onClick={() => navigate(tab.path)}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
                 tabActiva === tab.id
                   ? "bg-indigo-600 text-white shadow-md"

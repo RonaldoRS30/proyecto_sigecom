@@ -9,6 +9,9 @@ urlpatterns = [
     # DASHBOARD LOGÍSTICA
     path('logistica/dashboard/', views.logistica_dashboard_view, name="logistica_dashboard_view"),
     path('logistica/dashboard/almacenes/', views.lista_almacenes_new, name="lista_almacenes_new"),
+    path('logistica/almacenes/', views.crear_almacen_new, name="crear_almacen_new"),
+    path('logistica/usuarios/', views.buscar_usuarios_logistica, name="buscar_usuarios_logistica"),
+    path('logistica/tipo-cambio/', views.logistica_tipo_cambio_view, name="logistica_tipo_cambio"),
     path('logistica/dashboard/modal/<str:num_reg>/', views.logistica_modal_view, name="logistica_modal_view"),
     
     # KARDEX Y REPORTES LOGÍSTICA

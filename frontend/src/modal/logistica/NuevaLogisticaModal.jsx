@@ -1,33 +1,69 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import logoImg from "@/assets/logo.png";
 import api from "@/services/api";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Package, Trash2, Plus, X, Pencil, Ban, Save } from "lucide-react";
+import { Package, Trash2, Plus, X, Pencil, Ban, Save, ArrowLeft } from "lucide-react";
+import SearchableSelect from "@/dashboard/logistica/components/SearchableSelect";
+import { NuevoClienteMiniModal, NuevoAlmacenMiniModal } from "@/dashboard/logistica/components/LogisticaMiniModals";
 
 const MONEDA_OPTS = [
-  { id: "Soles",   nombre: "Soles (S/)" },
-  { id: "Dolares", nombre: "Dolares ($)" },
+  { id: "S", nombre: "Soles" },
+  { id: "D", nombre: "Dólares" },
 ];
+
+const monedaLabel = (v) => MONEDA_OPTS.find((m) => m.id === v)?.nombre || v || "--";
 
 const FORM_VACIO = {
   fecha: new Date().toISOString().split("T")[0],
-  moneda: "Soles",
+  moneda: "S",
   tc: "",
   almacen: "",
+  almacen_nombre: "",
   referencia: "",
   razon_social: "",
   cor_id: "",
   orden_compra: "",
   numero_doc: "",
   nro_guia: "",
+  usuario_id: "",
   responsable: "",
   obs_doc: "",
+  _soles: 0,
+  _dolares: 0,
 };
 
-const ITEM_VACIO = { codigo: "", descripcion: "", um: "", cant: "", valor: "" };
+const ITEM_VACIO = { id_producto: "", codigo: "", descripcion: "", um_id: "", um: "", cant: "", valor: "" };
+
+function roundN(v, d = 2) {
+  const f = 10 ** d;
+  return Math.round(Number(v || 0) * f) / f;
+}
+
+function calcTotalesMoneda(total, moneda, tc) {
+  const t = Number(tc) || 0;
+  if (moneda === "D") {
+    return { dolares: roundN(total), soles: roundN(total * t) };
+  }
+  return { soles: roundN(total), dolares: t > 0 ? roundN(total / t) : 0 };
+}
+
+function convertirItemsMoneda(items, monedaOrigen, monedaDestino, tc) {
+  const tipoCambio = Number(tc) || 0;
+  if (!tipoCambio || monedaOrigen === monedaDestino) return items;
+  return items.map((it) => {
+    let valor = Number(it.valor || 0);
+    if (monedaOrigen === "S" && monedaDestino === "D") {
+      valor = valor / tipoCambio;
+    } else if (monedaOrigen === "D" && monedaDestino === "S") {
+      valor = valor * tipoCambio;
+    }
+    const cant = Number(it.cant || 0);
+    return { ...it, valor: roundN(valor, 4), total: roundN(cant * valor) };
+  });
+}
 
 function fmtNum(v) {
   return v != null
@@ -58,7 +94,9 @@ export default function NuevaLogisticaModal({
   logistica = null,
   operacion = "E",
   modo: modoProp = "N",
+  asPage = false,
 }) {
+  const queryClient = useQueryClient();
   const [modo, setModo] = useState(modoProp);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -66,66 +104,144 @@ export default function NuevaLogisticaModal({
   const [items, setItems] = useState([]);
   const [newItem, setNewItem] = useState(ITEM_VACIO);
 
+  const [clientesLista, setClientesLista] = useState([]);
+  const [usuariosLista, setUsuariosLista] = useState([]);
+  const [productosLista, setProductosLista] = useState([]);
+  const [loadingClientes, setLoadingClientes] = useState(false);
+  const [loadingUsuarios, setLoadingUsuarios] = useState(false);
+  const [loadingProductos, setLoadingProductos] = useState(false);
+
+  const [openClienteModal, setOpenClienteModal] = useState(false);
+  const [openAlmacenModal, setOpenAlmacenModal] = useState(false);
   const [openBuscador, setOpenBuscador] = useState(false);
   const [busqQuery, setBusqQuery] = useState("");
-  const [productosLista, setProductosLista] = useState([]);
-
-  const [openCliente, setOpenCliente] = useState(false);
-  const [cliQuery, setCliQuery] = useState("");
-  const [clienteLista, setClienteLista] = useState([]);
 
   const { data: almacenes = [] } = useQuery({
     queryKey: ["almacenes_new"],
     queryFn: () => api.get("logistica/dashboard/almacenes/").then((r) => r.data),
     staleTime: 5 * 60 * 1000,
-    enabled: open,
+    enabled: open || asPage,
   });
 
+  const esNuevo  = modo === "N";
+  const esEditar = modo === "E";
+  const esVer    = modo === "V";
+  const editable = esNuevo || esEditar;
+  const anulado  = form._anulado === "S";
+
   const totalGeneral = items.reduce((acc, it) => acc + Number(it.total || 0), 0);
+  const totalesVista = calcTotalesMoneda(totalGeneral, form.moneda, form.tc);
+  const totalSolesCab = editable ? totalesVista.soles : (form._soles != null && form._soles !== "" ? Number(form._soles) : totalesVista.soles);
+  const totalDolaresCab = editable ? totalesVista.dolares : (form._dolares != null ? Number(form._dolares) : totalesVista.dolares);
+
+  const getNumReg = () => form._num || logistica?.num_reg;
+
+  const fetchTipoCambio = useCallback(async (fecha, mantenerManual = false) => {
+    if (!fecha) return;
+    try {
+      const { data } = await api.get("logistica/tipo-cambio/", { params: { fecha } });
+      if (data?.tipo_cambio) {
+        setForm((p) => ({
+          ...p,
+          tc: mantenerManual && p.tc ? p.tc : String(data.tipo_cambio),
+        }));
+      }
+    } catch { /* sin TC del día */ }
+  }, []);
+
+  const invalidarListas = () => {
+    queryClient.invalidateQueries({ queryKey: ["logistica_entradas"] });
+    queryClient.invalidateQueries({ queryKey: ["logistica_salidas"] });
+    queryClient.invalidateQueries({ queryKey: ["almacenes_new"] });
+  };
+
+  const buscarClientes = useCallback(async (q = "") => {
+    setLoadingClientes(true);
+    try {
+      const { data } = await api.get("core/clientes/buscar/", { params: { q } });
+      setClientesLista(Array.isArray(data) ? data : []);
+    } catch { setClientesLista([]); }
+    finally { setLoadingClientes(false); }
+  }, []);
+
+  const buscarUsuarios = useCallback(async (q = "") => {
+    setLoadingUsuarios(true);
+    try {
+      const { data } = await api.get("logistica/usuarios/", { params: { q } });
+      setUsuariosLista(Array.isArray(data) ? data : []);
+    } catch { setUsuariosLista([]); }
+    finally { setLoadingUsuarios(false); }
+  }, []);
+
+  const buscarProductos = useCallback(async (q = "") => {
+    setLoadingProductos(true);
+    try {
+      const { data } = await api.get("logistica/dashboard/productos/", { params: { q } });
+      setProductosLista(Array.isArray(data) ? data : []);
+    } catch { setProductosLista([]); }
+    finally { setLoadingProductos(false); }
+  }, []);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !asPage) return;
     setModo(modoProp);
     if (logistica && logistica.num_reg) {
       cargarDetalle(logistica.num_reg);
     } else {
-      setForm({ ...FORM_VACIO });
+      let user = {};
+      try { user = JSON.parse(localStorage.getItem("auth_user") || "{}"); } catch { /* ignore */ }
+      const fechaHoy = new Date().toISOString().split("T")[0];
+      setForm({
+        ...FORM_VACIO,
+        fecha: fechaHoy,
+        usuario_id: user.id_usuario || "",
+        responsable: user.nombre_completo || "",
+      });
       setItems([]);
+      fetchTipoCambio(fechaHoy);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, logistica && logistica.num_reg, modoProp]);
+  }, [open, asPage, logistica && logistica.num_reg, modoProp]);
 
   async function cargarDetalle(num_reg) {
     setLoading(true);
     try {
       const { data } = await api.get(`logistica/dashboard/modal/${num_reg}/`);
       const cab = data.cabecera || {};
+      const monedaDb = cab.moneda === "Soles" ? "S" : cab.moneda === "Dolares" ? "D" : (cab.moneda || "S");
       setForm({
-        fecha:        cab.fecha            || new Date().toISOString().split("T")[0],
-        moneda:       cab.moneda           || "Soles",
-        tc:           cab.tipo_cambio      || "",
-        almacen:      cab.almacen != null  ? String(cab.almacen) : "",
-        referencia:   cab.referencia       || "",
-        razon_social: cab.razon_social     || "",
-        cor_id:       cab.proveedor_codigo || "",
-        orden_compra: cab.orden_compra     || "",
-        numero_doc:   cab.numero_doc       || "",
-        nro_guia:     cab.nro_guia         || "",
-        responsable:  cab.responsable      || "",
-        obs_doc:      cab.obs_doc          || "",
+        fecha:        cab.fecha?.split?.("T")?.[0] || cab.fecha || new Date().toISOString().split("T")[0],
+        moneda:       monedaDb,
+        tc:           cab.tipo_cambio ?? "",
+        almacen:      cab.almacen != null ? String(cab.almacen) : "",
+        almacen_nombre: cab.almacen_nombre || "",
+        referencia:   cab.referencia || cab.tipo_movimiento || "",
+        razon_social: cab.razon_social || "",
+        cor_id:       cab.cliente_id ?? cab.proveedor_codigo ?? "",
+        orden_compra: cab.orden_compra || "",
+        numero_doc:   cab.numero_doc || "",
+        nro_guia:     cab.nro_guia || "",
+        usuario_id:   cab.usuario_id ?? "",
+        responsable:  cab.responsable || "",
+        obs_doc:      cab.observacion ?? cab.obs_doc ?? "",
         _num:         cab.numero,
         _est:         cab.estado,
         _anulado:     cab.anulado,
+        _soles:       data.resumen?.totalSoles ?? cab.soles ?? 0,
+        _dolares:     data.resumen?.totalDolares ?? cab.dolares ?? 0,
       });
       setItems(
         (data.items || []).map((it, idx) => ({
-          id:          idx + 1,
-          codigo:      it.codigo           || "",
-          descripcion: it.nombre           || "",
-          um:          it.unidad           || "",
-          cant:        Number(it.cantidad       || 0),
-          valor:       Number(it.valor_unitario || 0),
-          total:       Number(it.total          || 0),
+          id:            it.id_detalle || idx + 1,
+          id_detalle:    it.id_detalle,
+          id_producto:   it.id_producto || "",
+          codigo:        it.codigo || "",
+          descripcion:   it.descripcion || it.nombre || "",
+          um_id:         it.id_unidad_medida || "",
+          um:            it.unidad || "",
+          cant:          Number(it.cantidad || 0),
+          valor:         Number(it.valor_unitario || 0),
+          total:         Number(it.total || 0),
         }))
       );
     } catch {
@@ -135,7 +251,38 @@ export default function NuevaLogisticaModal({
     }
   }
 
-  const setF = (name, value) => setForm((p) => ({ ...p, [name]: value }));
+  const setF = (name, value) => {
+    if (name === "fecha" && modo === "N") {
+      setForm((p) => ({ ...p, fecha: value }));
+      fetchTipoCambio(value);
+      return;
+    }
+    setForm((p) => ({ ...p, [name]: value }));
+  };
+
+  function cambiarMoneda(nuevaMoneda) {
+    if (!nuevaMoneda || nuevaMoneda === form.moneda) return;
+    const tc = Number(form.tc);
+    if (!tc || tc <= 0) {
+      toast.warning("Ingrese el tipo de cambio del movimiento antes de cambiar la moneda");
+      return;
+    }
+    setItems((prev) => convertirItemsMoneda(prev, form.moneda, nuevaMoneda, tc));
+    setForm((p) => ({ ...p, moneda: nuevaMoneda }));
+    toast.info(`Valores convertidos a ${monedaLabel(nuevaMoneda)} (TC: ${tc})`);
+  }
+
+  async function validarFormulario() {
+    if (!form.fecha) { toast.warning("La fecha es obligatoria"); return false; }
+    if (!form.almacen) { toast.warning("Seleccione un almacén"); return false; }
+    const tc = Number(form.tc);
+    if (form.moneda === "D" && (!tc || tc <= 0)) {
+      toast.warning("Ingrese un tipo de cambio válido para operar en dólares");
+      return false;
+    }
+    if (items.length === 0) { toast.warning("Agregue al menos un ítem"); return false; }
+    return true;
+  }
 
   function addItem() {
     if (!newItem.codigo && !newItem.descripcion) return;
@@ -147,6 +294,39 @@ export default function NuevaLogisticaModal({
     ]);
     setNewItem(ITEM_VACIO);
   }
+
+  function selectProducto(p) {
+    setNewItem({
+      id_producto: p.id_producto,
+      codigo: p.codigo,
+      descripcion: p.nombre || p.descripcion,
+      um_id: p.id_unidad_medida || "",
+      um: p.unidad || "",
+      cant: newItem.cant || "",
+      valor: form.moneda === "D" ? (p.valor_dolares || p.valor_soles) : (p.valor_soles || p.valor_dolares),
+    });
+    setOpenBuscador(false);
+  }
+
+  const buildPayload = () => ({
+    ...form,
+    cliente_id: form.cor_id,
+    usuario_id: form.usuario_id,
+    items: items.map((it) => ({
+      id_producto: it.id_producto,
+      producto_id: it.id_producto,
+      codigo: it.codigo,
+      descripcion: it.descripcion,
+      id_unidad_medida: it.um_id,
+      um_id: it.um_id,
+      um: it.um,
+      cant: it.cant,
+      cantidad: it.cant,
+      valor: it.valor,
+      valor_unitario: it.valor,
+      total: it.total,
+    })),
+  });
 
   function removeItem(id) {
     setItems((prev) => prev.filter((it) => it.id !== id));
@@ -164,37 +344,51 @@ export default function NuevaLogisticaModal({
   }
 
   async function handleSave() {
-    if (items.length === 0) { toast.warning("Agregue al menos un item"); return; }
+    if (!(await validarFormulario())) return;
     setSaving(true);
     try {
-      await api.post("logistica/movimiento/", { ...form, ope: operacion, items });
-      toast.success((operacion === "E" ? "Entrada" : "Salida") + " guardada correctamente");
-      onClose();
+      const { data } = await api.post("logistica/movimiento/", { ...buildPayload(), ope: operacion });
+      toast.success((operacion === "E" ? "Entrada" : "Salida") + " registrada correctamente");
+      invalidarListas();
+      onClose(data);
     } catch (err) {
-      toast.error(err?.response?.data?.error || "Error al guardar");
+      const msg = err?.response?.data?.error || err?.response?.data?.detail || "Error al guardar";
+      toast.error(typeof msg === "string" ? msg : JSON.stringify(msg));
     } finally { setSaving(false); }
   }
 
   async function handleUpdate() {
-    if (items.length === 0) { toast.warning("Agregue al menos un item"); return; }
+    const numReg = getNumReg();
+    if (!numReg) { toast.error("No se encontró el número de registro"); return; }
+    if (!(await validarFormulario())) return;
     setSaving(true);
     try {
-      await api.put(`logistica/movimiento/${logistica.num_reg}/`, {
-        ...form, ope: operacion, items,
+      const { data } = await api.put(`logistica/movimiento/${numReg}/`, {
+        ...buildPayload(), ope: operacion,
       });
       toast.success("Movimiento actualizado correctamente");
-      onClose();
+      invalidarListas();
+      if (asPage) {
+        await cargarDetalle(numReg);
+        setModo("V");
+      } else {
+        onClose(data);
+      }
     } catch (err) {
-      toast.error(err?.response?.data?.error || "Error al actualizar");
+      const msg = err?.response?.data?.error || err?.response?.data?.detail || "Error al actualizar";
+      toast.error(typeof msg === "string" ? msg : JSON.stringify(msg));
     } finally { setSaving(false); }
   }
 
   async function handleAnular() {
+    const numReg = getNumReg();
+    if (!numReg) { toast.error("No se encontró el número de registro"); return; }
     if (!window.confirm("Confirma anular este movimiento? Esta accion no se puede deshacer.")) return;
     setSaving(true);
     try {
-      await api.patch(`logistica/movimiento/${logistica.num_reg}/anular/`);
+      await api.patch(`logistica/movimiento/${numReg}/anular/`);
       toast.success("Movimiento anulado");
+      invalidarListas();
       onClose();
     } catch (err) {
       toast.error(err?.response?.data?.error || "Error al anular");
@@ -203,42 +397,34 @@ export default function NuevaLogisticaModal({
 
   useEffect(() => {
     if (!openBuscador) return;
-    const t = setTimeout(async () => {
-      try {
-        const { data } = await api.get(`logistica/dashboard/productos/?q=${busqQuery}`);
-        setProductosLista(data || []);
-      } catch { /* ignore */ }
-    }, 350);
+    const t = setTimeout(() => buscarProductos(busqQuery), 300);
     return () => clearTimeout(t);
-  }, [busqQuery, openBuscador]);
+  }, [busqQuery, openBuscador, buscarProductos]);
 
   useEffect(() => {
-    if (!openCliente) return;
-    const t = setTimeout(async () => {
-      try {
-        const { data } = await api.get("core/clientes/", { params: { q: cliQuery } });
-        setClienteLista(Array.isArray(data) ? data : []);
-      } catch { /* ignore */ }
-    }, 350);
-    return () => clearTimeout(t);
-  }, [cliQuery, openCliente]);
-
-  const esNuevo  = modo === "N";
-  const esEditar = modo === "E";
-  const esVer    = modo === "V";
-  const editable = esNuevo || esEditar;
-  const anulado  = form._anulado === "S";
+    if (editable && (open || asPage)) {
+      buscarClientes("");
+      buscarUsuarios("");
+    }
+  }, [editable, open, asPage, buscarClientes, buscarUsuarios]);
 
   const colorBtn    = operacion === "E" ? "bg-teal-600 hover:bg-teal-700"   : "bg-rose-600 hover:bg-rose-700";
   const colorHeader = operacion === "E" ? "bg-teal-600"                     : "bg-rose-600";
 
-  return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl p-0 overflow-hidden bg-white rounded-2xl flex flex-col max-h-[95vh]">
-
+  const content = (
+    <>
         {/* HEADER */}
         <div className="shrink-0 bg-slate-900 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
+            {asPage && (
+              <button
+                onClick={onClose}
+                className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                title="Volver al listado"
+              >
+                <ArrowLeft size={18} />
+              </button>
+            )}
             <div className={`p-2 ${colorHeader} text-white rounded-lg`}>
               <Package size={20} />
             </div>
@@ -271,10 +457,18 @@ export default function NuevaLogisticaModal({
 
         {/* BODY */}
         {!loading && (
-          <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-slate-50/50">
+          <div className={`${asPage ? "flex-1" : ""} overflow-y-auto p-6 space-y-5 bg-slate-50/50`}>
 
             {/* Cabecera */}
             <div className="grid grid-cols-12 gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+
+              {form._num && (
+                <div className="col-span-3">
+                  <Field label="N° Registro">
+                    <ReadVal value={form._num} />
+                  </Field>
+                </div>
+              )}
 
               <div className="col-span-3">
                 <Field label="Fecha">
@@ -286,27 +480,40 @@ export default function NuevaLogisticaModal({
               </div>
 
               <div className="col-span-3">
-                <Field label="Almacen">
-                  {editable
-                    ? <select value={form.almacen || ""} onChange={(e) => setF("almacen", e.target.value)}
-                        className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
-                        <option value="">-- Seleccione --</option>
-                        {almacenes.map((a) => (
-                          <option key={a.idalmacen} value={a.idalmacen}>{a.nombre}</option>
-                        ))}
-                      </select>
-                    : <ReadVal value={almacenes.find((a) => String(a.idalmacen) === String(form.almacen))?.nombre} />}
+                <Field label="Almacén">
+                  {editable ? (
+                    <SearchableSelect
+                      value={form.almacen}
+                      displayValue={form.almacen_nombre || almacenes.find((a) => String(a.idalmacen) === String(form.almacen))?.nombre}
+                      options={almacenes}
+                      onChange={(opt) => {
+                        if (!opt) { setF("almacen", ""); setF("almacen_nombre", ""); return; }
+                        setForm((p) => ({ ...p, almacen: String(opt.idalmacen), almacen_nombre: opt.nombre }));
+                      }}
+                      onSearch={() => queryClient.invalidateQueries({ queryKey: ["almacenes_new"] })}
+                      placeholder="Seleccionar almacén..."
+                      onAdd={() => setOpenAlmacenModal(true)}
+                      addLabel="Almacén"
+                      renderOption={(a) => <span>{a.nombre}</span>}
+                    />
+                  ) : (
+                    <ReadVal value={form.almacen_nombre || almacenes.find((a) => String(a.idalmacen) === String(form.almacen))?.nombre} />
+                  )}
                 </Field>
               </div>
 
               <div className="col-span-3">
                 <Field label="Moneda">
-                  {editable
-                    ? <select value={form.moneda || "Soles"} onChange={(e) => setF("moneda", e.target.value)}
-                        className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
-                        {MONEDA_OPTS.map((o) => <option key={o.id} value={o.id}>{o.nombre}</option>)}
-                      </select>
-                    : <ReadVal value={form.moneda} />}
+                  {editable ? (
+                    <SearchableSelect
+                      value={form.moneda}
+                      displayValue={monedaLabel(form.moneda)}
+                      options={MONEDA_OPTS}
+                      onChange={(opt) => cambiarMoneda(opt?.id || "S")}
+                      placeholder="Moneda..."
+                      renderOption={(o) => <span>{o.nombre}</span>}
+                    />
+                  ) : <ReadVal value={monedaLabel(form.moneda)} />}
                 </Field>
               </div>
 
@@ -320,7 +527,7 @@ export default function NuevaLogisticaModal({
               </div>
 
               <div className="col-span-4">
-                <Field label="Orden de Compra">
+                <Field label="O/Compra">
                   {editable
                     ? <input type="text" value={form.orden_compra || ""} onChange={(e) => setF("orden_compra", e.target.value)}
                         className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5" />
@@ -329,7 +536,7 @@ export default function NuevaLogisticaModal({
               </div>
 
               <div className="col-span-4">
-                <Field label="Nro. Factura / Doc.">
+                <Field label="Factura">
                   {editable
                     ? <input type="text" value={form.numero_doc || ""} onChange={(e) => setF("numero_doc", e.target.value)}
                         className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5" />
@@ -338,7 +545,7 @@ export default function NuevaLogisticaModal({
               </div>
 
               <div className="col-span-4">
-                <Field label="Nro. Guia">
+                <Field label="Guía">
                   {editable
                     ? <input type="text" value={form.nro_guia || ""} onChange={(e) => setF("nro_guia", e.target.value)}
                         className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5" />
@@ -348,38 +555,79 @@ export default function NuevaLogisticaModal({
 
               <div className="col-span-4">
                 <Field label="Responsable">
-                  {editable
-                    ? <input type="text" value={form.responsable || ""} onChange={(e) => setF("responsable", e.target.value)}
-                        className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5" />
-                    : <ReadVal value={form.responsable} />}
+                  {editable ? (
+                    <SearchableSelect
+                      value={form.usuario_id}
+                      displayValue={form.responsable}
+                      options={usuariosLista}
+                      loading={loadingUsuarios}
+                      onSearch={buscarUsuarios}
+                      onChange={(opt) => {
+                        if (!opt) { setF("usuario_id", ""); setF("responsable", ""); return; }
+                        setForm((p) => ({ ...p, usuario_id: opt.id_usuario, responsable: opt.nombre }));
+                      }}
+                      placeholder="Buscar usuario..."
+                      renderOption={(u) => (
+                        <div>
+                          <p className="font-semibold text-slate-800">{u.nombre}</p>
+                          <p className="text-[10px] text-slate-400">{u.usuario}</p>
+                        </div>
+                      )}
+                    />
+                  ) : <ReadVal value={form.responsable} />}
                 </Field>
               </div>
 
               <div className="col-span-8">
-                <Field label="Razon Social / Proveedor">
-                  {editable
-                    ? <div className="relative">
-                        <input type="text" value={form.razon_social || ""}
-                          onChange={(e) => setF("razon_social", e.target.value)}
-                          className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5 pr-20" />
-                        <button
-                          onClick={() => { setCliQuery(""); setOpenCliente(true); }}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-indigo-600 hover:text-indigo-800">
-                          Buscar
-                        </button>
-                      </div>
-                    : <ReadVal value={form.razon_social} />}
+                <Field label="Proveedor / Razón Social">
+                  {editable ? (
+                    <SearchableSelect
+                      value={form.cor_id}
+                      displayValue={form.razon_social}
+                      options={clientesLista}
+                      loading={loadingClientes}
+                      onSearch={buscarClientes}
+                      onChange={(opt) => {
+                        if (!opt) { setF("cor_id", ""); setF("razon_social", ""); return; }
+                        setForm((p) => ({ ...p, cor_id: opt.id_cliente, razon_social: opt.nombre }));
+                      }}
+                      placeholder="Buscar cliente o proveedor..."
+                      onAdd={() => setOpenClienteModal(true)}
+                      addLabel="Cliente"
+                      renderOption={(c) => (
+                        <div>
+                          <p className="font-semibold text-slate-800">{c.nombre}</p>
+                          <p className="text-[10px] text-slate-400">{c.ruc || "Sin RUC"}</p>
+                        </div>
+                      )}
+                    />
+                  ) : <ReadVal value={form.razon_social} />}
                 </Field>
               </div>
 
               <div className="col-span-12">
-                <Field label="Observacion">
+                <Field label="Observación">
                   {editable
                     ? <input type="text" value={form.obs_doc || ""} onChange={(e) => setF("obs_doc", e.target.value)}
                         className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-1.5" />
                     : <ReadVal value={form.obs_doc} />}
                 </Field>
               </div>
+
+              {!editable && (
+                <>
+                  <div className="col-span-3">
+                    <Field label="Total Soles">
+                      <ReadVal value={fmtNum(totalSolesCab)} />
+                    </Field>
+                  </div>
+                  <div className="col-span-3">
+                    <Field label="Total Dólares">
+                      <ReadVal value={fmtNum(totalDolaresCab)} />
+                    </Field>
+                  </div>
+                </>
+              )}
 
             </div>
 
@@ -448,7 +696,7 @@ export default function NuevaLogisticaModal({
                 <tbody className="divide-y divide-slate-100">
                   {items.map((it, idx) => (
                     <tr key={it.id} className="hover:bg-slate-50 text-xs">
-                      <td className="px-4 py-2 text-center text-slate-400 font-bold">{idx + 1}</td>
+                      <td className="px-4 py-2 text-center text-slate-400 font-bold">{it.id_detalle || idx + 1}</td>
                       <td className="px-4 py-2 font-bold text-slate-700">{it.codigo}</td>
 
                       {editable
@@ -506,13 +754,34 @@ export default function NuevaLogisticaModal({
                 <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                   <tr>
                     <td colSpan={6} className="px-4 py-3 text-right text-[10px] font-black uppercase text-slate-500">
-                      Total ({form.moneda}):
+                      Total ítems ({monedaLabel(form.moneda)}):
                     </td>
                     <td className="px-4 py-3 text-right text-sm font-black text-amber-600">
-                      {fmtNum(totalGeneral)}
+                      {fmtNum(editable ? totalGeneral : totalSolesCab)}
                     </td>
                     {editable && <td></td>}
                   </tr>
+                  {editable && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-2 text-right text-[10px] font-bold text-slate-400">
+                        Equivalente (TC {form.tc || "--"})
+                      </td>
+                      <td className="px-4 py-2 text-right text-xs font-bold text-slate-700">
+                        S/ {fmtNum(totalSolesCab)} &nbsp;|&nbsp; $ {fmtNum(totalDolaresCab)}
+                      </td>
+                      <td></td>
+                    </tr>
+                  )}
+                  {!editable && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-2 text-right text-[10px] font-bold text-slate-400">
+                        Soles / Dólares (movimiento)
+                      </td>
+                      <td className="px-4 py-2 text-right text-xs font-bold text-slate-700">
+                        S/ {fmtNum(totalSolesCab)} &nbsp;|&nbsp; $ {fmtNum(totalDolaresCab)}
+                      </td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
             </div>
@@ -524,7 +793,7 @@ export default function NuevaLogisticaModal({
         {!loading && (
           <div className="shrink-0 px-6 py-4 bg-slate-100 border-t border-slate-200 flex justify-between items-center gap-3">
             <div>
-              {esVer && logistica?.num_reg && !anulado && (
+              {esVer && getNumReg() && !anulado && (
                 <Button
                   variant="outline"
                   onClick={handleAnular}
@@ -543,7 +812,7 @@ export default function NuevaLogisticaModal({
                 Cerrar
               </Button>
 
-              {esVer && logistica?.num_reg && !anulado && (
+              {esVer && getNumReg() && !anulado && (
                 <Button
                   variant="outline"
                   onClick={() => setModo("E")}
@@ -597,16 +866,8 @@ export default function NuevaLogisticaModal({
               <div className="flex-1 overflow-y-auto px-3 pb-3 divide-y divide-slate-100">
                 {productosLista.map((p) => (
                   <div
-                    key={p.codigo}
-                    onClick={() => {
-                      setNewItem((prev) => ({
-                        ...prev,
-                        codigo:      p.codigo,
-                        descripcion: p.nombre,
-                        um:          p.unidad || "",
-                      }));
-                      setOpenBuscador(false);
-                    }}
+                    key={p.id_producto || p.codigo}
+                    onClick={() => selectProducto(p)}
                     className="p-2 text-xs hover:bg-teal-50 cursor-pointer flex justify-between gap-4">
                     <span className="font-bold text-slate-700 w-32 shrink-0">{p.codigo}</span>
                     <span className="text-slate-600 truncate flex-1">{p.nombre}</span>
@@ -621,47 +882,39 @@ export default function NuevaLogisticaModal({
           </div>
         )}
 
-        {/* BUSCADOR DE CLIENTES */}
-        {openCliente && (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="bg-white rounded-xl shadow-2xl w-[520px] max-h-[420px] flex flex-col border border-slate-200">
-              <div className="px-4 py-3 bg-slate-800 text-white flex justify-between items-center rounded-t-xl">
-                <span className="text-[11px] font-black uppercase">Buscar Proveedor / Cliente</span>
-                <button onClick={() => setOpenCliente(false)} className="hover:text-slate-300">
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="p-3">
-                <input
-                  autoFocus
-                  type="text"
-                  value={cliQuery}
-                  onChange={(e) => setCliQuery(e.target.value)}
-                  className="w-full border p-2 text-xs rounded-lg"
-                  placeholder="Nombre o RUC..." />
-              </div>
-              <div className="flex-1 overflow-y-auto px-3 pb-3 divide-y divide-slate-100">
-                {clienteLista.map((c) => (
-                  <div
-                    key={c.id_cliente || c.codigo}
-                    onClick={() => {
-                      setF("razon_social", c.nombre);
-                      setF("cor_id", c.id_cliente || "");
-                      setOpenCliente(false);
-                    }}
-                    className="p-2 text-xs hover:bg-teal-50 cursor-pointer flex justify-between gap-4">
-                    <span className="font-bold text-slate-700 w-32 shrink-0">{c.ruc || c.codigo || "--"}</span>
-                    <span className="text-slate-600 truncate flex-1">{c.nombre}</span>
-                  </div>
-                ))}
-                {clienteLista.length === 0 && (
-                  <p className="text-center text-xs text-slate-400 py-6">Sin resultados</p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        <NuevoClienteMiniModal
+          open={openClienteModal}
+          onClose={() => setOpenClienteModal(false)}
+          onCreated={(c) => {
+            setForm((p) => ({ ...p, cor_id: c.id_cliente, razon_social: c.nombre }));
+            queryClient.invalidateQueries({ queryKey: ["almacenes_new"] });
+            buscarClientes("");
+          }}
+        />
+        <NuevoAlmacenMiniModal
+          open={openAlmacenModal}
+          onClose={() => setOpenAlmacenModal(false)}
+          onCreated={(a) => {
+            setForm((p) => ({ ...p, almacen: String(a.idalmacen), almacen_nombre: a.nombre }));
+            queryClient.invalidateQueries({ queryKey: ["almacenes_new"] });
+          }}
+        />
 
+    </>
+  );
+
+  if (asPage) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col min-h-[calc(100vh-8rem)] overflow-hidden">
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-5xl p-0 overflow-hidden bg-white rounded-2xl flex flex-col max-h-[95vh]">
+        {content}
       </DialogContent>
     </Dialog>
   );

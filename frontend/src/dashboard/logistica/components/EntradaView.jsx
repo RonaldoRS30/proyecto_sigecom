@@ -1,4 +1,5 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { FilePlus, Eye, Loader, Search, RefreshCw, FileDown } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,10 @@ const MESES = [
   { value: "11", label: "Nov" },     { value: "12", label: "Dic" },
 ];
 
+const monedaTabla = (tmo) => ({ S: "Soles", D: "Dólares" }[tmo] || tmo || ".");
+
 export default function EntradaView() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [anno, setAnno] = useState(CURRENT_YEAR);
   const [mes, setMes] = useState("%");
@@ -28,12 +32,12 @@ export default function EntradaView() {
   const [search, setSearch] = useState("");
 
   const [openNueva, setOpenNueva] = useState(false);
-  const [selected, setSelected] = useState(null);
-  const [openDetalle, setOpenDetalle] = useState(false);
+
+  const goToDetalle = (numReg) => navigate(`/sigecom/logistica/entradas/${numReg}`);
 
   const { data: almacenes = [] } = useQuery({
     queryKey: ["almacenes_new"],
-    queryFn: () => api.get("logistica/dashboard/almacenes/").then(r => r.data),
+    queryFn: () => api.get("logistica/dashboard/almacenes/").then(r => Array.isArray(r.data) ? r.data : []),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -114,7 +118,7 @@ export default function EntradaView() {
             <span key={h} className="text-[10px] font-black uppercase tracking-wider text-slate-800 text-center block">{h}</span>
           ))}
           data={movimientos}
-          onRowClick={c => { setSelected(c); setOpenDetalle(true); }}
+          onRowClick={c => goToDetalle(c.num_reg)}
           renderRow={c => [
             <span className="text-xs font-bold text-indigo-700 tabular-nums">{c.num_reg}</span>,
             <span className="text-xs text-slate-700">{c.fec}</span>,
@@ -123,14 +127,14 @@ export default function EntradaView() {
             <span className="text-xs text-slate-600">{c.nfa || "."}</span>,
             <span className="text-xs text-slate-600">{c.ngu || "."}</span>,
             <span className="text-xs text-slate-600">{c.nom_alm || "."}</span>,
-            <span className="text-[10px] font-bold text-slate-400">{c.tmo}</span>,
+            <span className="text-[10px] font-bold text-slate-400">{monedaTabla(c.tmo)}</span>,
             <span className="text-xs font-bold text-slate-800 tabular-nums">
               {c.sol != null ? Number(c.sol).toLocaleString("es-PE", { minimumFractionDigits: 2 }) : "."}</span>,
             <span className="text-xs font-bold text-slate-800 tabular-nums">
               {c.dol != null ? Number(c.dol).toLocaleString("es-PE", { minimumFractionDigits: 2 }) : "."}</span>,
             <div className="flex justify-center">
               <Button size="sm" variant="ghost"
-                onClick={e => { e.stopPropagation(); setSelected(c); setOpenDetalle(true); }}
+                onClick={e => { e.stopPropagation(); goToDetalle(c.num_reg); }}
                 className="h-7 w-7 p-0 rounded-full hover:bg-teal-50 text-slate-400 hover:text-teal-600">
                 <Eye className="w-4 h-4" />
               </Button>
@@ -168,17 +172,6 @@ export default function EntradaView() {
         operacion="E"
         modo="N"
       />
-
-      {selected && (
-        <NuevaLogisticaModal
-          key={selected.num_reg}
-          open={openDetalle}
-          onClose={() => { setOpenDetalle(false); setSelected(null); onRefresh(); }}
-          logistica={selected}
-          operacion="E"
-          modo="V"
-        />
-      )}
     </div>
   );
 }
