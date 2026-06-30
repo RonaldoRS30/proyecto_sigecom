@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import api from '@/services/api';
-import { toast } from 'react-toastify';
+import { toast } from '../utils/toast';
 import { useSensors, useSensor, PointerSensor } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 
-export const useCotizacionServicios = (numReg) => {
+export const useCotizacionServicios = (numReg, onAddLog) => {
   const [gruposServicios, setGruposServicios] = useState({});
   const [originalGruposServicios, setOriginalGruposServicios] = useState({});
   const [deletedServicioIds, setDeletedServicioIds] = useState([]);
@@ -197,7 +197,12 @@ export const useCotizacionServicios = (numReg) => {
         return next;
       });
 
-      toast.success(isEdit ? "Grupo de servicios actualizado localmente" : "Grupo de servicios y subgrupos creados localmente");
+      toast.add(isEdit ? "Servicio actualizado correctamente" : `Servicio "${form.nombre.toUpperCase()}" creado`, isEdit ? "SERVICIO ACTUALIZADO" : "SERVICIO GUARDADO");
+      
+      if (onAddLog) {
+        onAddLog(isEdit ? `Servicios: Se editó el servicio '${form.nombre.toUpperCase()}'` : `Servicios: Se agregó el servicio '${form.nombre.toUpperCase()}'`);
+      }
+
       return true;
     } catch (error) {
       console.error("Error al guardar grupo de servicios:", error);
@@ -281,10 +286,19 @@ export const useCotizacionServicios = (numReg) => {
         }
 
         return next;
-      });
+    });
 
-      toast.success(isEdit ? "Ítem de servicio actualizado localmente" : "Ítem de servicio añadido localmente");
-      return true;
+    toast.add(isEdit ? `Ítem "${form.descripcion_item.toUpperCase()}" actualizado` : `Ítem "${form.descripcion_item.toUpperCase()}" añadido`, isEdit ? "ÍTEM ACTUALIZADO" : "ÍTEM AGREGADO");
+    
+    if (onAddLog && subgrupo) {
+      const nom_padre = servicio?.tituloGeneral || "";
+      const tipo_nombre = subgrupo?.tipoNombre || "";
+      const codigo_item = (form.codigo_item || "S/C").toUpperCase();
+      const descripcion_item = (form.descripcion_item || "SERVICIO").toUpperCase();
+      onAddLog(isEdit ? `Servicios: Se editó el ítem '${codigo_item} - ${descripcion_item}' a ${nom_padre} - ${tipo_nombre}` : `Servicios: Se agregó el ítem '${codigo_item} - ${descripcion_item}' a ${nom_padre} - ${tipo_nombre}`);
+    }
+
+    return true;
     } catch (error) {
       console.error("Error al guardar ítem de servicio:", error);
       toast.error("Error al guardar ítem de servicio");
@@ -294,7 +308,7 @@ export const useCotizacionServicios = (numReg) => {
 
   // Eliminar Grupo de Servicios (Nivel 0 y cascada)
   const handleEliminarGrupoServicio = async (idServicio, nombreGrupo) => {
-    if (!confirm(`¿Está seguro de eliminar el grupo de servicios "${nombreGrupo}" y todos sus subgrupos e ítems asociados?`)) {
+    if (!confirm(`¿Está seguro de eliminar el servicio "${nombreGrupo}" y todos sus subgrupos e ítems asociados?`)) {
       return false;
     }
 
@@ -305,16 +319,6 @@ export const useCotizacionServicios = (numReg) => {
     if (typeof idServicio !== 'string' || !idServicio.startsWith('temp_')) {
       toDelete.push(idServicio);
     }
-    (grupo.subgrupos || []).forEach(sg => {
-      if (typeof sg.id_servicio !== 'string' || !sg.id_servicio.startsWith('temp_')) {
-        toDelete.push(sg.id_servicio);
-      }
-      (sg.items || []).forEach(it => {
-        if (typeof it.id_servicio !== 'string' || !it.id_servicio.startsWith('temp_')) {
-          toDelete.push(it.id_servicio);
-        }
-      });
-    });
 
     if (toDelete.length > 0) {
       setDeletedServicioIds(prev => [...prev, ...toDelete]);
@@ -326,13 +330,37 @@ export const useCotizacionServicios = (numReg) => {
       return next;
     });
 
-    toast.success(`Grupo "${nombreGrupo}" eliminado localmente`);
+    toast.delete(`Servicio "${nombreGrupo}" eliminado`, "SERVICIO ELIMINADO");
+    
+    if (onAddLog) {
+      onAddLog(`Servicios: Se eliminó el servicio '${nombreGrupo}'`);
+    }
+
     return true;
   };
 
   // Eliminar Ítem de Servicio (Nivel 2)
   const handleEliminarItemServicio = async (idItem) => {
-    if (!confirm("¿Está seguro de eliminar este ítem de servicio?")) {
+    let itemDesc = "";
+    let foundItem = null;
+    let foundParentService = null;
+    let foundSubgroup = null;
+    Object.values(gruposServicios).forEach(grupo => {
+      if (grupo.subgrupos) {
+        grupo.subgrupos.forEach(subgrupo => {
+          const found = subgrupo.items?.find(it => it.id_servicio === idItem);
+          if (found) {
+            itemDesc = found.descripcion_item || "";
+            foundItem = found;
+            foundParentService = grupo;
+            foundSubgroup = subgrupo;
+          }
+        });
+      }
+    });
+    const descText = itemDesc ? ` "${itemDesc}"` : "";
+
+    if (!confirm(`¿Está seguro de eliminar el ítem de servicio${descText}?`)) {
       return false;
     }
 
@@ -352,7 +380,19 @@ export const useCotizacionServicios = (numReg) => {
       return next;
     });
 
-    toast.success("Ítem de servicio eliminado localmente");
+    toast.delete(`Ítem de servicio${descText} eliminado correctamente`, "ÍTEM ELIMINADO");
+    
+    if (onAddLog && foundItem) {
+      const nom_padre = foundParentService?.tituloGeneral || "";
+      let tipo_nombre = foundSubgroup?.tipoNombre || "";
+      if (tipo_nombre === "GASTOS SERVICIO" || tipo_nombre === "GASTO DE SERVICIO") {
+        tipo_nombre = "GASTO DE SERVICIO";
+      }
+      const codigo_item = (foundItem.codigo_item || "S/C").toUpperCase();
+      const descripcion_item = (foundItem.descripcion_item || "SERVICIO").toUpperCase();
+      onAddLog(`Servicios: Se eliminó el ítem '${codigo_item} - ${descripcion_item}' de ${nom_padre} - ${tipo_nombre}`);
+    }
+
     return true;
   };
 
@@ -410,7 +450,7 @@ export const useCotizacionServicios = (numReg) => {
       return next;
     });
 
-    toast.success("Grupo de servicios duplicado localmente");
+    toast.add("Grupo de servicios duplicado", "GRUPO DUPLICADO");
     return true;
   };
 
@@ -441,10 +481,17 @@ export const useCotizacionServicios = (numReg) => {
 
   const saveServicios = async () => {
     if (deletedServicioIds.length > 0) {
-      const deletePromises = deletedServicioIds.map(id =>
-        api.delete(`cotizaciones/lista_servicios/${numReg}/`, { params: { id_servicio: id } })
-      );
-      await Promise.all(deletePromises);
+      for (const id of deletedServicioIds) {
+        try {
+          await api.delete(`cotizaciones/lista_servicios/${numReg}/`, { params: { id_servicio: id } });
+        } catch (err) {
+          if (err.response && err.response.status === 404) {
+            console.log(`Servicio ${id} ya estaba eliminado (404).`);
+            continue;
+          }
+          throw err;
+        }
+      }
     }
 
     const toDec = (val) => {
@@ -454,10 +501,79 @@ export const useCotizacionServicios = (numReg) => {
       return Number(val).toFixed(2);
     };
 
-    const tempIdToRealIdMap = new Map();
+    const hasGroupChanged = (gp, origGp) => {
+      if (!origGp) return true;
+      return (
+        gp.tituloGeneral !== origGp.tituloGeneral ||
+        gp.cantidad !== origGp.cantidad ||
+        gp.detalle !== origGp.detalle ||
+        gp.orden !== origGp.orden
+      );
+    };
+
+    const hasSubgroupChanged = (sg, origSg) => {
+      if (!origSg) return true;
+      return sg.titulo !== origSg.titulo;
+    };
+
+    const hasItemChanged = (item, origItem) => {
+      if (!origItem) return true;
+      const fields = [
+        'codigo_item', 'descripcion_item', 'horas', 'cantidad_hombres', 
+        'costo_hombre_dia', 'cantidad_dias', 'costo_total', 'porcentaje', 
+        'utilidad', 'cotizado_hombre_dia', 'cotizado_total', 'id_tipo_gasto', 'id_area'
+      ];
+      return fields.some(f => {
+        const v1 = item[f];
+        const v2 = origItem[f];
+        const cleanV1 = (v1 === undefined || v1 === null) ? "" : String(v1).trim();
+        const cleanV2 = (v2 === undefined || v2 === null) ? "" : String(v2).trim();
+        return cleanV1 !== cleanV2;
+      });
+    };
+
+    let hasAdd = false;
+    let hasDelete = deletedServicioIds.length > 0;
+    let hasUpdate = false;
 
     for (const gp of Object.values(gruposServicios)) {
       const isGroupTemp = typeof gp.id_servicio === 'string' && gp.id_servicio.startsWith('temp_');
+      if (isGroupTemp) {
+        hasAdd = true;
+      }
+      const origGp = originalGruposServicios[gp.id_servicio];
+      if (!isGroupTemp && hasGroupChanged(gp, origGp)) {
+        hasUpdate = true;
+      }
+      for (const sg of (gp.subgrupos || [])) {
+        const isSubgroupTemp = typeof sg.id_servicio === 'string' && sg.id_servicio.startsWith('temp_');
+        if (isSubgroupTemp) {
+          hasAdd = true;
+        }
+        const origSg = origGp?.subgrupos?.find(s => s.id_servicio === sg.id_servicio);
+        if (!isSubgroupTemp && hasSubgroupChanged(sg, origSg)) {
+          hasUpdate = true;
+        }
+        for (const item of (sg.items || [])) {
+          const isItemTemp = typeof item.id_servicio === 'string' && item.id_servicio.startsWith('temp_');
+          if (isItemTemp) {
+            hasAdd = true;
+          } else {
+            const origItem = origSg?.items?.find(it => it.id_servicio === item.id_servicio);
+            if (hasItemChanged(item, origItem)) {
+              hasUpdate = true;
+            }
+          }
+        }
+      }
+    }
+
+    const tempIdToRealIdMap = new Map();
+    const savePromises = [];
+
+    for (const gp of Object.values(gruposServicios)) {
+      const isGroupTemp = typeof gp.id_servicio === 'string' && gp.id_servicio.startsWith('temp_');
+      const origGp = originalGruposServicios[gp.id_servicio];
       let realGroupId = gp.id_servicio;
 
       if (isGroupTemp) {
@@ -507,13 +623,14 @@ export const useCotizacionServicios = (numReg) => {
           const tempSub = gp.subgrupos?.find(sg => sg.tipoCodigo === subPayload.codigo_servicio.slice(2, 4));
           if (tempSub) {
             tempIdToRealIdMap.set(tempSub.id_servicio, realSubId);
-            for (const item of (tempSub.items || [])) {
+            const itemPromises = (tempSub.items || []).map(async (item) => {
               const payloadItem = {
                 id_registro: numReg,
                 nivel: 2,
                 codigo_item: item.codigo_item,
                 descripcion_item: item.descripcion_item,
                 horas: item.horas,
+                shadow_horas: item.horas,
                 cantidad_hombres: item.cantidad_hombres,
                 costo_hombre_dia: item.costo_hombre_dia,
                 cantidad_dias: item.cantidad_dias,
@@ -528,7 +645,8 @@ export const useCotizacionServicios = (numReg) => {
               };
               const resItem = await api.post(`cotizaciones/lista_servicios/${numReg}/`, payloadItem);
               tempIdToRealIdMap.set(item.id_servicio, resItem.data.id_servicio);
-            }
+            });
+            await Promise.all(itemPromises);
           }
         }
       } else {
@@ -540,29 +658,34 @@ export const useCotizacionServicios = (numReg) => {
           groupCode = srvExistente.subgrupos?.[0]?.codigo_servicio?.slice(0, 2) || "01";
         }
 
-        const payloadGroup = {
-          id_servicio: gp.id_servicio,
-          id_registro: numReg,
-          nivel: 0,
-          nombre_servicio: gp.tituloGeneral,
-          cantidad_hombres: gp.cantidad,
-          descripcion_servicio: gp.detalle,
-          codigo_servicio: `${groupCode}000`
-        };
-        await api.put(`cotizaciones/lista_servicios/${numReg}/`, payloadGroup);
+        if (hasGroupChanged(gp, origGp)) {
+          const payloadGroup = {
+            id_servicio: gp.id_servicio,
+            id_registro: numReg,
+            nivel: 0,
+            nombre_servicio: gp.tituloGeneral,
+            cantidad_hombres: gp.cantidad,
+            descripcion_servicio: gp.detalle,
+            codigo_servicio: `${groupCode}000`
+          };
+          savePromises.push(api.put(`cotizaciones/lista_servicios/${numReg}/`, payloadGroup));
+        }
 
         for (const sg of (gp.subgrupos || [])) {
           const subCode = `${groupCode}${sg.tipoCodigo || "04"}1`;
+          const origSg = origGp?.subgrupos?.find(s => s.id_servicio === sg.id_servicio);
 
           if (typeof sg.id_servicio !== 'string' || !sg.id_servicio.startsWith('temp_')) {
-            const payloadSub = {
-              id_servicio: sg.id_servicio,
-              id_registro: numReg,
-              nivel: 1,
-              nombre_servicio: sg.titulo,
-              codigo_servicio: subCode
-            };
-            await api.put(`cotizaciones/lista_servicios/${numReg}/`, payloadSub);
+            if (hasSubgroupChanged(sg, origSg)) {
+              const payloadSub = {
+                id_servicio: sg.id_servicio,
+                id_registro: numReg,
+                nivel: 1,
+                nombre_servicio: sg.titulo,
+                codigo_servicio: subCode
+              };
+              savePromises.push(api.put(`cotizaciones/lista_servicios/${numReg}/`, payloadSub));
+            }
           }
 
           for (const item of (sg.items || [])) {
@@ -588,33 +711,42 @@ export const useCotizacionServicios = (numReg) => {
                 id_area: item.id_area,
                 codigo_servicio: itemCode
               };
-              const resItem = await api.post(`cotizaciones/lista_servicios/${numReg}/`, payloadItem);
-              tempIdToRealIdMap.set(item.id_servicio, resItem.data.id_servicio);
+              const postPromise = api.post(`cotizaciones/lista_servicios/${numReg}/`, payloadItem).then(res => {
+                tempIdToRealIdMap.set(item.id_servicio, res.data.id_servicio);
+              });
+              savePromises.push(postPromise);
             } else {
-              const payloadItem = {
-                id_servicio: item.id_servicio,
-                id_registro: numReg,
-                nivel: 2,
-                codigo_item: item.codigo_item,
-                descripcion_item: item.descripcion_item,
-                horas: item.horas,
-                cantidad_hombres: item.cantidad_hombres,
-                costo_hombre_dia: item.costo_hombre_dia,
-                cantidad_dias: item.cantidad_dias,
-                costo_total: toDec(item.costo_total),
-                porcentaje: toDec(item.porcentaje),
-                utilidad: toDec(item.utilidad),
-                cotizado_hombre_dia: toDec(item.cotizado_hombre_dia),
-                cotizado_total: toDec(item.cotizado_total),
-                id_tipo_gasto: item.id_tipo_gasto,
-                id_area: item.id_area,
-                codigo_servicio: itemCode
-              };
-              await api.put(`cotizaciones/lista_servicios/${numReg}/`, payloadItem);
+              const origItem = origSg?.items?.find(it => it.id_servicio === item.id_servicio);
+              if (hasItemChanged(item, origItem)) {
+                const payloadItem = {
+                  id_servicio: item.id_servicio,
+                  id_registro: numReg,
+                  nivel: 2,
+                  codigo_item: item.codigo_item,
+                  descripcion_item: item.descripcion_item,
+                  horas: item.horas,
+                  cantidad_hombres: item.cantidad_hombres,
+                  costo_hombre_dia: item.costo_hombre_dia,
+                  cantidad_dias: item.cantidad_dias,
+                  costo_total: toDec(item.costo_total),
+                  porcentaje: toDec(item.porcentaje),
+                  utilidad: toDec(item.utilidad),
+                  cotizado_hombre_dia: toDec(item.cotizado_hombre_dia),
+                  cotizado_total: toDec(item.cotizado_total),
+                  id_tipo_gasto: item.id_tipo_gasto,
+                  id_area: item.id_area,
+                  codigo_servicio: itemCode
+                };
+                savePromises.push(api.put(`cotizaciones/lista_servicios/${numReg}/`, payloadItem));
+              }
             }
           }
         }
       }
+    }
+
+    if (savePromises.length > 0) {
+      await Promise.all(savePromises);
     }
 
     const reorderItems = [];
@@ -663,6 +795,24 @@ export const useCotizacionServicios = (numReg) => {
 
     setDeletedServicioIds([]);
     await fetchServicios();
+
+    return {
+      type: hasAdd ? 'add' : (hasDelete ? 'delete' : (hasUpdate ? 'update' : 'save')),
+      message: hasAdd 
+        ? "Servicios agregados correctamente" 
+        : (hasDelete 
+            ? "Servicio eliminado correctamente" 
+            : (hasUpdate 
+                ? "Servicios actualizados correctamente" 
+                : "Servicios guardados")),
+      title: hasAdd 
+        ? "ITEMS AGREGADOS" 
+        : (hasDelete 
+            ? "SERVICIO ELIMINADO" 
+            : (hasUpdate 
+                ? "SERVICIOS ACTUALIZADOS" 
+                : "SERVICIOS GUARDADOS"))
+    };
   };
 
   const sensors = useSensors(

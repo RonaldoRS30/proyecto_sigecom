@@ -11,10 +11,7 @@ from .models import (
     CotizacionMensaje,
     CotizacionSeguimiento,
     CotizacionApertura,
-    vc_tab_rittal,
-    vc_tab_rockwell,
-    vc_tab_ceyesa,
-    vc_tab_hoffman,
+
     alm_articulos,
     ObjetivoAnual,
     ObjetivoAnualArea, 
@@ -41,7 +38,7 @@ class RawDateTimeField(serializers.DateTimeField):
         import datetime
         try:
             if is_aware(value):
-                value = value.astimezone(datetime.timezone.utc)
+                value = localtime(value)
             return value.strftime(self.format or "%Y-%m-%d %H:%M:%S")
         except Exception:
             return str(value)
@@ -996,30 +993,6 @@ class CotizacionAperturaTablaSerializer(serializers.ModelSerializer):
 ##================##
 ## DATOS DE BD_VC ##
 ##================##     
-
-# vc_tab_rittal
-class RittalSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = vc_tab_rittal
-        fields = "__all__"
-
-# vc_tab_rockwell
-class RockwellSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = vc_tab_rockwell
-        fields = "__all__"
-
-# vc_tab_ceyesa
-class CeyesaSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = vc_tab_ceyesa
-        fields = "__all__"
-
-# vc_tab_hoffman
-class HoffmanSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = vc_tab_hoffman
-        fields = "__all__"
 
 # alm_articulos
 class AlmArticulosSerializer(serializers.ModelSerializer):

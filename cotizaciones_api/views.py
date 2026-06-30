@@ -83,10 +83,6 @@ from .models import (
     CotizacionCondicionGeneral,
     CotizacionSeguimiento,
     CotizacionApertura,
-    vc_tab_rittal,
-    vc_tab_rockwell,
-    vc_tab_ceyesa,
-    vc_tab_hoffman,
     alm_articulos,
     ObjetivoAnualArea,
     ObjetivoAnual,
@@ -115,10 +111,6 @@ from .serializers import (
     CotizacionSerializer,
     CotizacionAperturaSerializer,
     CotizacionAperturaTablaSerializer,
-    RittalSerializer,
-    RockwellSerializer,
-    CeyesaSerializer,
-    HoffmanSerializer,
     AlmArticulosSerializer,
     ObjetivoAnualAreaSerializer,
     ObjetivoAnualSerializer,
@@ -593,6 +585,51 @@ def tiempos_frecuentes(request):
         print(f"❌ Error en tiempos_frecuentes: {str(e)}")
         return Response({"error": str(e)}, status=500)
 
+def obtener_ultimo_valor_no_vacio_historial(id_registro, field_label):
+    from cotizaciones_api.models import CotizacionSeguimiento
+    import re
+    
+    # Buscar registros ordenados por id descendente
+    logs = CotizacionSeguimiento.objects.filter(
+        id_registro_id=id_registro,
+        detalle__icontains=field_label
+    ).order_by('-id_seguimiento')
+    
+    # Usar regex con límites de palabra para evitar confusiones de etiquetas
+    if field_label == "Representante":
+        pattern = re.compile(r"(?<!Nombre del\s)\bRepresentante\b\s+(?:modificado|modificada|de|actualizó|agregó)\s+.*?\s+a?\s*'([^']+)'", re.IGNORECASE)
+    else:
+        pattern = re.compile(rf"\b{field_label}\b\s+(?:modificado|modificada|de|actualizó|agregó)\s+.*?\s+a?\s*'([^']+)'", re.IGNORECASE)
+    
+    for log in logs:
+        match = pattern.search(log.detalle or "")
+        if match:
+            val = match.group(1)
+            if val and val != "Vacío" and val != "null" and val != "":
+                return val
+    return "Vacío"
+
+def formatear_mensaje_cambio(label, old_val, new_val):
+    femeninos = [
+        "Área", "Moneda", "Probabilidad", "Forma de pago", "Validez de oferta", 
+        "Fecha de recepción", "Fecha límite", "Fecha de visita técnica", "Fecha de emisión", "Referencia"
+    ]
+    # "Área" is grammatically masculine when using article because of tonic 'a' (el área).
+    genero = "la" if (label in femeninos and label != "Área") else "el"
+    
+    is_old_empty = old_val is None or str(old_val).strip() in ["", "Vacío", "None"]
+    is_new_empty = new_val is None or str(new_val).strip() in ["", "Vacío", "None"]
+    
+    if is_old_empty and not is_new_empty:
+        # Se agregó
+        return f"Se agregó {genero} {label.lower()} '{new_val}'"
+    elif not is_old_empty and is_new_empty:
+        # Se eliminó
+        return f"Se eliminó {genero} {label.lower()}"
+    else:
+        # Se actualizó
+        return f"Se actualizó {label.lower()} de '{old_val}' a '{new_val}'"
+
 @api_view(['GET', 'PUT'])
 @permission_classes([IsAuthenticated])
 def cotizacion_detalle(request, id_registro):
@@ -631,7 +668,6 @@ def cotizacion_detalle(request, id_registro):
                 'validez_oferta': ('Validez de oferta', str),
                 'probabilidad': ('Probabilidad', lambda x: 'Baja' if x == 1 else ('Media' if x == 2 else ('Alta' if x == 3 else 'Muy Alta' if x == 4 else str(x)))),
                 'comentario': ('Comentario', str),
-                'representante_nombre': ('Nombre del representante', str),
             }
 
             old_vals = {}
@@ -682,34 +718,70 @@ def cotizacion_detalle(request, id_registro):
                                 formatted_old = formatter(old_val) if old_val is not None else "Vacío"
                                 formatted_new = formatter(new_val) if new_val is not None else "Vacío"
                                 if formatted_old != formatted_new:
-                                    cambios.append(f"{label} modificado de '{formatted_old}' a '{formatted_new}'")
+                                    cambios.append(formatear_mensaje_cambio(label, formatted_old, formatted_new))
 
+                    # Omitir logs intermedios a "Vacío" y resolver los valores anteriores del historial
                     if cot.id_area != old_area_id:
                         new_area_name = area_mapping.get(cot.id_area, "Vacío")
-                        cambios.append(f"Área modificada de '{old_area_name}' a '{new_area_name}'")
+                        resolved_old = old_area_name
+                        if resolved_old == "Vacío" and new_area_name != "Vacío":
+                            resolved_old = obtener_ultimo_valor_no_vacio_historial(cot.id_registro, "Área")
+                        if resolved_old != new_area_name:
+                            cambios.append(formatear_mensaje_cambio("Área", resolved_old, new_area_name))
+
                     if cot.id_tipo_id != old_tipo_id:
                         new_tipo_name = cot.id_tipo.nombre if cot.id_tipo else "Vacío"
-                        cambios.append(f"Tipo modificado de '{old_tipo_name}' a '{new_tipo_name}'")
+                        resolved_old = old_tipo_name
+                        if resolved_old == "Vacío" and new_tipo_name != "Vacío":
+                            resolved_old = obtener_ultimo_valor_no_vacio_historial(cot.id_registro, "Tipo")
+                        if resolved_old != new_tipo_name:
+                            cambios.append(formatear_mensaje_cambio("Tipo", resolved_old, new_tipo_name))
+
                     if cot.id_cliente_id != old_cliente_id:
                         new_cliente_name = cot.id_cliente.nombre if cot.id_cliente else "Vacío"
-                        cambios.append(f"Cliente modificado de '{old_cliente_name}' a '{new_cliente_name}'")
+                        resolved_old = old_cliente_name
+                        if resolved_old == "Vacío" and new_cliente_name != "Vacío":
+                            resolved_old = obtener_ultimo_valor_no_vacio_historial(cot.id_registro, "Cliente")
+                        if resolved_old != new_cliente_name:
+                            cambios.append(formatear_mensaje_cambio("Cliente", resolved_old, new_cliente_name))
+
                     if cot.id_representante_id != old_rep_id:
                         new_rep_name = cot.id_representante.nombre_representante if cot.id_representante else "Vacío"
-                        cambios.append(f"Representante modificado de '{old_rep_name}' a '{new_rep_name}'")
+                        resolved_old = old_rep_name
+                        if resolved_old == "Vacío" and new_rep_name != "Vacío":
+                            resolved_old = obtener_ultimo_valor_no_vacio_historial(cot.id_registro, "Representante")
+                        if resolved_old != new_rep_name:
+                            cambios.append(formatear_mensaje_cambio("Representante", resolved_old, new_rep_name))
+
                     if cot.id_comercial_id != old_comercial_id:
                         new_comercial_name = cot.id_comercial.nombre_completo if cot.id_comercial else "Vacío"
-                        cambios.append(f"Responsable Comercial modificado de '{old_comercial_name}' a '{new_comercial_name}'")
+                        resolved_old = old_comercial_name
+                        if resolved_old == "Vacío" and new_comercial_name != "Vacío":
+                            resolved_old = obtener_ultimo_valor_no_vacio_historial(cot.id_registro, "Responsable Comercial")
+                        if resolved_old != new_comercial_name:
+                            cambios.append(formatear_mensaje_cambio("Responsable Comercial", resolved_old, new_comercial_name))
+
                     if cot.id_tecnico_id != old_tecnico_id:
                         new_tecnico_name = cot.id_tecnico.nombre_completo if cot.id_tecnico else "Vacío"
-                        cambios.append(f"Responsable Técnico modificado de '{old_tecnico_name}' a '{new_tecnico_name}'")
+                        resolved_old = old_tecnico_name
+                        if resolved_old == "Vacío" and new_tecnico_name != "Vacío":
+                            resolved_old = obtener_ultimo_valor_no_vacio_historial(cot.id_registro, "Responsable Técnico")
+                        if resolved_old != new_tecnico_name:
+                            cambios.append(formatear_mensaje_cambio("Responsable Técnico", resolved_old, new_tecnico_name))
+
                     if cot.id_estado_id != old_est_id:
                         new_estado_name = cot.id_estado.nombre if cot.id_estado else "Vacío"
-                        cambios.append(f"Estado modificado de '{old_estado_name}' a '{new_estado_name}'")
+                        resolved_old = old_estado_name
+                        if resolved_old == "Vacío" and new_estado_name != "Vacío":
+                            resolved_old = obtener_ultimo_valor_no_vacio_historial(cot.id_registro, "Estado")
+                        if resolved_old != new_estado_name:
+                            cambios.append(formatear_mensaje_cambio("Estado", resolved_old, new_estado_name))
+
                     if cot.estado_oportunidad != old_estado_op:
                         opp_states_map = {1: "Pendiente", 2: "No Cotizado", 3: "Rechazado", 4: "Cotizado"}
                         old_opp = opp_states_map.get(old_estado_op, 'Desconocido')
                         new_opp = opp_states_map.get(cot.estado_oportunidad, 'Desconocido')
-                        cambios.append(f"Estado de Oportunidad modificado de '{old_opp}' a '{new_opp}'")
+                        cambios.append(formatear_mensaje_cambio("Estado de Oportunidad", old_opp, new_opp))
 
                     for date_field, label in [
                         ('recepcion_solicitud', 'Fecha de recepción'),
@@ -719,16 +791,21 @@ def cotizacion_detalle(request, id_registro):
                     ]:
                         old_date = old_dates[date_field]
                         new_date = getattr(cot, date_field)
-                        if old_date != new_date:
-                            old_d_str = old_date.strftime('%d/%m/%Y %H:%M') if old_date else "Vacío"
-                            new_d_str = new_date.strftime('%d/%m/%Y %H:%M') if new_date else "Vacío"
-                            if old_d_str != new_d_str:
-                                cambios.append(f"{label} modificada de '{old_d_str}' a '{new_d_str}'")
+                        
+                        # Normalizar a hora local (si es aware) antes de formatear
+                        old_local = timezone.localtime(old_date) if (old_date and timezone.is_aware(old_date)) else old_date
+                        new_local = timezone.localtime(new_date) if (new_date and timezone.is_aware(new_date)) else new_date
+                        
+                        old_d_str = old_local.strftime('%d/%m/%Y %H:%M') if old_local else "Vacío"
+                        new_d_str = new_local.strftime('%d/%m/%Y %H:%M') if new_local else "Vacío"
+                        
+                        if old_d_str != new_d_str:
+                            cambios.append(formatear_mensaje_cambio(label, old_d_str, new_d_str))
 
                     for cambio in cambios:
                         CotizacionSeguimiento.objects.create(
                             id_registro=cot,
-                            detalle=f"Edición de datos: {cambio}",
+                            detalle=f"DATOS: {cambio}",
                             id_usuario=request.user,
                             activo='1'
                         )
@@ -741,16 +818,18 @@ def cotizacion_detalle(request, id_registro):
                         cot.refresh_from_db(fields=['id_area', 'id_tipo', 'id_cliente', 'codigo'])
                         nuevo_codigo = calcular_codigo_dinamico(cot, cot.codigo)
                         if nuevo_codigo != cot.codigo:
-                            cot.codigo = nuevo_codigo
-                            cot.save(update_fields=['codigo'])
-                            
-                            # Registrar hito en seguimiento
-                            CotizacionSeguimiento.objects.create(
-                                id_registro=cot,
-                                detalle=f"Código actualizado por cambio en parámetros: {nuevo_codigo or 'SIN CÓDIGO'} (antes: {old_codigo or 'SIN CÓDIGO'})",
-                                id_usuario=request.user,
-                                activo='1'
-                            )
+                            # Evitar guardar código vacío o nulo
+                            if nuevo_codigo and nuevo_codigo != "SIN CÓDIGO":
+                                cot.codigo = nuevo_codigo
+                                cot.save(update_fields=['codigo'])
+                                
+                                # Registrar hito en seguimiento con la categoría propia CÓDIGO
+                                CotizacionSeguimiento.objects.create(
+                                    id_registro=cot,
+                                    detalle=f"CÓDIGO: Código actualizado de '{old_codigo or 'SIN CÓDIGO'}' a '{nuevo_codigo}'",
+                                    id_usuario=request.user,
+                                    activo='1'
+                                )
                     actualizar_total_general_cotizacion(cot)
 
                 # Return updated detail
@@ -878,6 +957,32 @@ def actualizar_total_general_cotizacion(cotizacion):
     cotizacion.save(update_fields=["total_cotizacion"])
     return total_general
 
+def _obtener_nombre_suministro_padre(cot_id, codigo_grupo):
+    padre = CotizacionSuministro.objects.filter(
+        id_registro=cot_id,
+        nivel=0,
+        codigo_grupo=codigo_grupo
+    ).first()
+    return padre.nombre_grupo if (padre and padre.nombre_grupo) else "Suministro General"
+
+def _obtener_nombre_servicio_padre(cot_id, codigo_servicio):
+    if not codigo_servicio or len(codigo_servicio) < 2:
+        return "Servicio General"
+    prefix = codigo_servicio[:2]
+    padre = CotizacionServicio.objects.filter(
+        id_registro=cot_id,
+        nivel=0,
+        codigo_servicio__startswith=prefix
+    ).first()
+    return padre.nombre_servicio if (padre and padre.nombre_servicio) else "Servicio General"
+
+def _obtener_categoria_servicio(tipo_gasto_id):
+    if tipo_gasto_id == 3:
+        return "MANO DE OBRA"
+    elif tipo_gasto_id == 4:
+        return "GASTO DE SERVICIO"
+    return "OTROS"
+
 @api_view(["GET", "POST", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
 def listar_suministros(request, id_registro):
@@ -897,6 +1002,14 @@ def listar_suministros(request, id_registro):
         # 📄 LISTAR
         # ======================
         if request.method == "GET":
+            # Auto-ajuste de la longitud de la columna 'detalle' en la BD física
+            try:
+                from django.db import connection
+                with connection.cursor() as cursor:
+                    cursor.execute("ALTER TABLE cotizaciones_seguimiento MODIFY COLUMN detalle VARCHAR(1000) NULL")
+            except Exception:
+                pass
+
             # Usamos select_related para traer los nombres de marca y gasto de una vez
             suministros = CotizacionSuministro.objects.select_related(
                 'id_marca', 'id_tipo_gasto', 'id_unidad_tiempo_entrega'
@@ -926,9 +1039,10 @@ def listar_suministros(request, id_registro):
                 
                 # Registrar en la trazabilidad (Seguimiento)
                 if sumin.nivel == 0:
-                    detalle_log = f"Suministros: Se creó el grupo '{sumin.nombre_grupo or ''}'"
+                    detalle_log = f"Suministros: Se agregó el suministro '{sumin.nombre_grupo or ''}'"
                 else:
-                    detalle_log = f"Suministros: Se creó la partida '{sumin.codigo_item or ''} - {sumin.descripcion or ''}'"
+                    nom_padre = _obtener_nombre_suministro_padre(id_registro, sumin.codigo_grupo)
+                    detalle_log = f"Suministros: Se agregó el ítem '{sumin.codigo_item or ''} - {sumin.descripcion or ''}' - {nom_padre}"
                 
                 CotizacionSeguimiento.objects.create(
                     id_registro=cot,
@@ -1013,7 +1127,7 @@ def listar_suministros(request, id_registro):
                 if sumin_updated.nivel == 0:
                     if old_nombre_grupo != sumin_updated.nombre_grupo:
                         cambios.append(f"Nombre de grupo modificado de '{old_nombre_grupo or 'Vacío'}' a '{sumin_updated.nombre_grupo or 'Vacío'}'")
-                    detalle_prefijo = f"Suministros (Grupo):"
+                    detalle_prefijo = f"Suministros: Se editó el suministro '{sumin_updated.nombre_grupo or ''}':"
                 else:
                     if old_codigo_item != sumin_updated.codigo_item:
                         cambios.append(f"Código de item modificado de '{old_codigo_item or 'Vacío'}' a '{sumin_updated.codigo_item or 'Vacío'}'")
@@ -1031,7 +1145,8 @@ def listar_suministros(request, id_registro):
                         cambios.append(f"Observación modificada de '{old_observacion or 'Vacío'}' a '{sumin_updated.observacion or 'Vacío'}'")
                     if old_tipo_unidad != sumin_updated.tipo_unidad:
                         cambios.append(f"Unidad modificada de '{old_tipo_unidad or 'Vacío'}' a '{sumin_updated.tipo_unidad or 'Vacío'}'")
-                    detalle_prefijo = f"Suministros (Partida '{sumin_updated.codigo_item or ''} - {sumin_updated.descripcion or ''}'):"
+                    nom_padre = _obtener_nombre_suministro_padre(id_registro, sumin_updated.codigo_grupo)
+                    detalle_prefijo = f"Suministros: Se editó el ítem '{sumin_updated.codigo_item or ''} - {sumin_updated.descripcion or ''}' - {nom_padre}:"
                 
                 if cambios:
                     CotizacionSeguimiento.objects.create(
@@ -1063,9 +1178,10 @@ def listar_suministros(request, id_registro):
 
             # Trazabilidad
             if suministro.nivel == 0:
-                detalle_log = f"Suministros: Se eliminó el grupo '{suministro.nombre_grupo or ''}' y sus partidas asociadas"
+                detalle_log = f"Suministros: Se eliminó el suministro '{suministro.nombre_grupo or ''}'"
             else:
-                detalle_log = f"Suministros: Se eliminó la partida '{suministro.codigo_item or ''} - {suministro.descripcion or ''}'"
+                nom_padre = _obtener_nombre_suministro_padre(id_registro, suministro.codigo_grupo)
+                detalle_log = f"Suministros: Se eliminó el ítem '{suministro.codigo_item or ''} - {suministro.descripcion or ''}' - {nom_padre}"
 
             # Si es cabecera de grupo (nivel=0), también eliminamos los items del grupo
             if suministro.nivel == 0:
@@ -1090,7 +1206,14 @@ def listar_suministros(request, id_registro):
         return Response({"error": "Suministro no encontrado en esta cotización"}, status=404)
 
     except Exception as e:
-        return Response({"error": str(e)}, status=500)
+        import traceback
+        tb_str = traceback.format_exc()
+        try:
+            with open("c:/Users/VC-23031/PROYECTOS/SIGECOM_5/backend_error_suministros.log", "w", encoding="utf-8") as f:
+                f.write(tb_str)
+        except Exception:
+            pass
+        return Response({"error": str(e), "traceback": tb_str}, status=500)
 
 def clean_text(text):
     """Limpia espacios, tabulaciones, saltos de línea y decodifica HTML."""
@@ -1272,11 +1395,13 @@ def listar_servicios(request, id_registro):
                 
                 # Registrar en la trazabilidad (Seguimiento)
                 if serv.nivel == 0:
-                    detalle_log = f"Servicios: Se creó el grupo '{serv.nombre_servicio or ''}'"
+                    detalle_log = f"Servicios: Se agregó el servicio '{serv.nombre_servicio or ''}'"
                 elif serv.nivel == 1:
-                    detalle_log = f"Servicios: Se creó el subgrupo '{serv.nombre_servicio or ''}'"
+                    detalle_log = f"Servicios: Se agregó el subgrupo '{serv.nombre_servicio or ''}'"
                 else:
-                    detalle_log = f"Servicios: Se creó la partida '{serv.codigo_item or ''} - {serv.descripcion_item or ''}'"
+                    tipo_nombre = _obtener_categoria_servicio(serv.id_tipo_gasto_id)
+                    nom_padre = _obtener_nombre_servicio_padre(id_registro, serv.codigo_servicio)
+                    detalle_log = f"Servicios: Se agregó el ítem '{serv.codigo_item or ''} - {serv.descripcion_item or ''}' a {nom_padre} - {tipo_nombre}"
                 
                 CotizacionSeguimiento.objects.create(
                     id_registro=cot,
@@ -1354,14 +1479,14 @@ def listar_servicios(request, id_registro):
                 cambios = []
                 if serv_updated.nivel == 0:
                     if old_nombre_servicio != serv_updated.nombre_servicio:
-                        cambios.append(f"Nombre de grupo modificado de '{old_nombre_servicio or 'Vacío'}' a '{serv_updated.nombre_servicio or 'Vacío'}'")
+                        cambios.append(f"Nombre de servicio modificado de '{old_nombre_servicio or 'Vacío'}' a '{serv_updated.nombre_servicio or 'Vacío'}'")
                     if old_descripcion_servicio != serv_updated.descripcion_servicio:
-                        cambios.append(f"Descripción de grupo modificada de '{old_descripcion_servicio or 'Vacío'}' a '{serv_updated.descripcion_servicio or 'Vacío'}'")
-                    detalle_prefijo = f"Servicios (Grupo):"
+                        cambios.append(f"Descripción de servicio modificada de '{old_descripcion_servicio or 'Vacío'}' a '{serv_updated.descripcion_servicio or 'Vacío'}'")
+                    detalle_prefijo = f"Servicios: Se editó el servicio '{serv_updated.nombre_servicio or ''}':"
                 elif serv_updated.nivel == 1:
                     if old_nombre_servicio != serv_updated.nombre_servicio:
                         cambios.append(f"Nombre de subgrupo modificado de '{old_nombre_servicio or 'Vacío'}' a '{serv_updated.nombre_servicio or 'Vacío'}'")
-                    detalle_prefijo = f"Servicios (Subgrupo):"
+                    detalle_prefijo = f"Servicios: Se editó el subgrupo '{serv_updated.nombre_servicio or ''}':"
                 else:
                     if old_codigo_item != serv_updated.codigo_item:
                         cambios.append(f"Código modificado de '{old_codigo_item or 'Vacío'}' a '{serv_updated.codigo_item or 'Vacío'}'")
@@ -1377,7 +1502,9 @@ def listar_servicios(request, id_registro):
                         cambios.append(f"Hombre/Día modificado de '{old_cotizado_hombre_dia or 0}' a '{serv_updated.cotizado_hombre_dia or 0}'")
                     if old_cotizado_total != serv_updated.cotizado_total:
                         cambios.append(f"Cotizado Total modificado de '{old_cotizado_total or 0}' a '{serv_updated.cotizado_total or 0}'")
-                    detalle_prefijo = f"Servicios (Partida '{serv_updated.codigo_item or ''} - {serv_updated.descripcion_item or ''}'):"
+                    tipo_nombre = _obtener_categoria_servicio(serv_updated.id_tipo_gasto_id)
+                    nom_padre = _obtener_nombre_servicio_padre(id_registro, serv_updated.codigo_servicio)
+                    detalle_prefijo = f"Servicios: Se editó el ítem '{serv_updated.codigo_item or ''} - {serv_updated.descripcion_item or ''}' a {nom_padre} - {tipo_nombre}:"
 
                 if cambios:
                     CotizacionSeguimiento.objects.create(
@@ -1408,11 +1535,13 @@ def listar_servicios(request, id_registro):
 
             # Trazabilidad antes de eliminar
             if servicio.nivel == 0:
-                detalle_log = f"Servicios: Se eliminó el grupo '{servicio.nombre_servicio or ''}' y todos sus subgrupos/partidas asociados"
+                detalle_log = f"Servicios: Se eliminó el servicio '{servicio.nombre_servicio or ''}'"
             elif servicio.nivel == 1:
-                detalle_log = f"Servicios: Se eliminó el subgrupo '{servicio.nombre_servicio or ''}' y sus partidas asociadas"
+                detalle_log = f"Servicios: Se eliminó el subgrupo '{servicio.nombre_servicio or ''}'"
             else:
-                detalle_log = f"Servicios: Se eliminó la partida '{servicio.codigo_item or ''} - {servicio.descripcion_item or ''}'"
+                tipo_nombre = _obtener_categoria_servicio(servicio.id_tipo_gasto_id)
+                nom_padre = _obtener_nombre_servicio_padre(id_registro, servicio.codigo_servicio)
+                detalle_log = f"Servicios: Se eliminó el ítem '{servicio.codigo_item or ''} - {servicio.descripcion_item or ''}' de {nom_padre} - {tipo_nombre}"
 
             # Si es cabecera (nivel=0), eliminamos todo el grupo de servicios
             if servicio.nivel == 0:
@@ -3455,7 +3584,7 @@ def condiciones_generales(request, id_registro):
                 if old_desc != contenido:
                     CotizacionSeguimiento.objects.create(
                         id_registro=cot,
-                        detalle="Condiciones Generales: Se actualizaron las condiciones generales de la cotización.",
+                        detalle="CONDICIONES GENERALES: Se actualizaron las condiciones generales de la cotización.",
                         id_usuario=request.user,
                         activo='1'
                     )
@@ -3882,6 +4011,34 @@ def descuento_cotizacion(request, num_reg):
         "descuento_porcentaje",
         "descuento_monto",
     ])
+
+    try:
+        u_obj = request.user if (request.user and request.user.is_authenticated) else None
+        if aplicar:
+            afecto_str = "el TOTAL"
+            if afecto_front == "su":
+                afecto_str = "SUMINISTROS"
+            elif afecto_front == "ser":
+                afecto_str = "SERVICIOS"
+                
+            monto_val = data.get("importe") or "0.00"
+            pct_val = data.get("porcentaje")
+            
+            if pct_val:
+                detalle_log = f"DESCUENTOS: Se aplicó un descuento del {pct_val}% ({monto_val}) para {afecto_str}"
+            else:
+                detalle_log = f"DESCUENTOS: Se aplicó un descuento de {monto_val} para {afecto_str}"
+        else:
+            detalle_log = "DESCUENTOS: Se desactivó el descuento"
+
+        CotizacionSeguimiento.objects.create(
+            id_registro=cot,
+            detalle=detalle_log,
+            id_usuario=u_obj,
+            activo='1'
+        )
+    except Exception as e:
+        print(f"Error registrando seguimiento de descuento: {str(e)}")
 
     return Response({"ok": True})
 
@@ -6027,81 +6184,6 @@ def alertas_sin_respuesta():
 ##================##
 ## DATOS DE BD_VC ##
 ##================##
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_rittal(request):
-    search = request.GET.get("search")
-    limit = int(request.GET.get("limit", 15))
-
-    queryset = vc_tab_rittal.objects.filter(activo="1")
-
-    if search:
-        queryset = queryset.filter(
-            Q(nombre__icontains=search) |
-            Q(codigo__icontains=search)
-        )
-
-    queryset = queryset.order_by("nombre")[:limit]
-    serializer = RittalSerializer(queryset, many=True)
-    return Response(serializer.data)
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_rockwell(request):
-    search = (request.GET.get("search") or "").strip()
-    limit = int(request.GET.get("limit", 15))
-
-    queryset = vc_tab_rockwell.objects.filter(activo="1")
-
-    if search:
-        queryset = queryset.filter(
-            Q(codigo__icontains=search) |
-            Q(codigo2__icontains=search) |
-            Q(descripcion__icontains=search) |
-            Q(ds__icontains=search)
-        )
-
-    queryset = queryset.order_by("codigo")[:limit]
-
-    serializer = RockwellSerializer(queryset, many=True)
-    return Response(serializer.data)
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_ceyesa(request):
-    search = request.GET.get("search")
-    limit = int(request.GET.get("limit", 15))
-
-    queryset = vc_tab_ceyesa.objects.filter(activo="1")
-
-    if search:
-        queryset = queryset.filter(
-            Q(descripcion__icontains=search) |
-            Q(codigo__icontains=search)
-        )
-
-    queryset = queryset.order_by("codigo")[:limit]
-    serializer = CeyesaSerializer(queryset, many=True)
-    return Response(serializer.data)
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def lista_hoffman(request):
-    search = request.GET.get("search")
-    limit = int(request.GET.get("limit", 15))
-
-    queryset = vc_tab_hoffman.objects.filter(activo="1")
-
-    if search:
-        queryset = queryset.filter(
-            Q(nombre__icontains=search) |
-            Q(codigo__icontains=search)
-        )
-
-    queryset = queryset.order_by("nombre")[:limit]
-    serializer = HoffmanSerializer(queryset, many=True)
-    return Response(serializer.data)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])

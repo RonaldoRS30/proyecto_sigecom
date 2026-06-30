@@ -245,7 +245,6 @@ class Producto(models.Model):
     precio_soles = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True, blank=True)
     precio_dolares = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True, blank=True)
     cantidad = models.IntegerField(default=0, null=True, blank=True)
-    ocodigo = models.CharField(max_length=60, null=True, blank=True) # Siempre guarda código numérico según tu comentario
     stock_min = models.IntegerField(default=0, null=True, blank=True)
     stock_max = models.IntegerField(default=0, null=True, blank=True)
     descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True, blank=True)
@@ -275,6 +274,4 @@ class Nota(models.Model):
 
     def __str__(self):
         return f"{self.codigo} - {self.descripcion[:50]}..."
-
-
 

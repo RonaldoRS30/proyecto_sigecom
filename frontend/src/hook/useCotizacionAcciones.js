@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation } from "react-router-dom";
-import { toast } from "react-toastify";
+import { toast } from "../utils/toast";
 import api from "@/services/api";
 
 export const useCotizacionAcciones = (numReg, onActionSuccess) => {

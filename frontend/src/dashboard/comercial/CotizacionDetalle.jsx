@@ -39,7 +39,7 @@ import ServicioModal from '../Servicios/ServicioModal';
 import { useCotizacionAcciones } from '@/hook/useCotizacionAcciones';
 import { useCotizacionSuministros } from '@/hook/useCotizacionSuministros';
 import { useCotizacionServicios } from '@/hook/useCotizacionServicios';
-import { ClienteAutocomplete, RepresentanteAutocomplete, ProductoAutocomplete, TipoPersonalAutocomplete, TipoGastoDetalleAutocomplete } from '@/components/comercial/CotizacionAutocompletes';
+import { ClienteAutocomplete, RepresentanteAutocomplete, ProductoAutocomplete, TipoPersonalAutocomplete, TipoGastoDetalleAutocomplete, UnidadMedidaAutocomplete } from '@/components/comercial/CotizacionAutocompletes';
 import { calcularItemSegunProveedor, resolverEndpointPorProveedor } from '@/dashboard/Suministros/tables/tablaUtils';
 
 const Icon = ({ name, className }) => {
@@ -450,6 +450,117 @@ const NotasAutocomplete = ({ notasComunes = [], onSelect }) => {
   );
 };
 
+let lastFocusedInput = null;
+
+const handleRowKeyDown = (e, submitFn) => {
+  // Check if Alt key is pressed alone to toggle additional details
+  if (e.key === "Alt") {
+    e.preventDefault();
+    e.stopPropagation();
+    lastFocusedInput = e.target;
+    const row = e.currentTarget;
+    const detailsButton = row.querySelector("button[title='Detalles Adicionales']");
+    if (detailsButton) {
+      // Radix UI trigger responds to pointerdown and mousedown
+      detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+      detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      detailsButton.click();
+    }
+    return;
+  }
+
+  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Enter") {
+    return;
+  }
+
+  const target = e.target;
+  if (target.tagName !== "INPUT" && target.tagName !== "SELECT" && target.tagName !== "BUTTON") {
+    return;
+  }
+
+  if (e.defaultPrevented) {
+    return;
+  }
+
+  const row = e.currentTarget;
+  const inputs = Array.from(row.querySelectorAll("input, select, button[title='Detalles Adicionales']")).filter(input => {
+    return input.type !== "hidden" && !input.disabled && !input.readOnly;
+  });
+  const currentIndex = inputs.indexOf(target);
+  if (currentIndex === -1) return;
+
+  const supportsSelection = ["text", "search", "url", "tel", "password"].includes(target.type) || target.tagName === "TEXTAREA";
+
+  const focusInput = (index) => {
+    const nextInput = inputs[index];
+    if (nextInput) {
+      nextInput.focus();
+      if (nextInput.select) nextInput.select();
+    }
+  };
+
+  if (e.key === "ArrowRight") {
+    if (supportsSelection && target.selectionStart !== target.value.length) {
+      return;
+    }
+    e.preventDefault();
+    if (currentIndex === 0) {
+      focusInput(2);
+    } else if (currentIndex === 1) {
+      focusInput(3);
+    } else if (currentIndex === 2 || currentIndex === 3) {
+      focusInput(4);
+    } else {
+      focusInput(currentIndex + 1);
+    }
+  } else if (e.key === "ArrowLeft") {
+    if (supportsSelection && target.selectionStart !== 0) {
+      return;
+    }
+    e.preventDefault();
+    if (currentIndex === 5 || currentIndex === 4) {
+      focusInput(currentIndex === 5 ? 4 : 2);
+    } else if (currentIndex === 3) {
+      focusInput(1);
+    } else if (currentIndex === 2) {
+      focusInput(0);
+    } else if (currentIndex === 1) {
+      focusInput(0);
+    } else {
+      focusInput(currentIndex - 1);
+    }
+  } else if (e.key === "ArrowDown") {
+    if (currentIndex === 0) {
+      e.preventDefault();
+      focusInput(1);
+    } else if (currentIndex === 2) {
+      e.preventDefault();
+      focusInput(3);
+    }
+  } else if (e.key === "ArrowUp") {
+    if (currentIndex === 1) {
+      e.preventDefault();
+      focusInput(0);
+    } else if (currentIndex === 3) {
+      e.preventDefault();
+      focusInput(2);
+    }
+  } else if (e.key === "Enter") {
+    if (e.ctrlKey || e.metaKey) {
+      return; // Bubbles up for Ctrl+Enter save group shortcut
+    }
+    if (target.tagName === "BUTTON") {
+      return; // Let the button click handler run naturally to open the ActionMenu!
+    }
+    e.preventDefault();
+    submitFn();
+    // Schedule focus redirect to first input (Brand) on next tick
+    setTimeout(() => {
+      focusInput(0);
+    }, 50);
+  }
+};
+
 const EditableGroupRow = ({
   tipo,
   onSave,
@@ -463,8 +574,13 @@ const EditableGroupRow = ({
   categoriasPersonal = [],
   tiposGasto = [],
   notasComunes = [],
-  idArea
+  idArea,
+  catalogoVersion,
+  setCatalogoVersion,
+  unidadesMedida = [],
+  setUnidadesMedida
 }) => {
+  const isSavingRef = useRef(false);
   const [tempData, setTempData] = useState({ titulo: '', cantidad: 1, costoEnvio: 0, detalle: '' });
   const [tempItems, setTempItems] = useState([]);
   const [manoObraCostError, setManoObraCostError] = useState("");
@@ -852,6 +968,56 @@ const EditableGroupRow = ({
     }
   };
 
+  const handleContainerKeyDown = (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && tempData.titulo.trim()) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleSaveGroup();
+    }
+  };
+
+  const handleHeaderKeyDown = (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "ArrowDown") {
+      return;
+    }
+
+    const target = e.target;
+    if (target.tagName !== "INPUT") return;
+
+    const container = e.currentTarget;
+    const inputs = Array.from(container.querySelectorAll("input")).filter(input => {
+      return input.type !== "hidden" && !input.disabled && !input.readOnly;
+    });
+    const currentIndex = inputs.indexOf(target);
+    if (currentIndex === -1) return;
+
+    if (e.key === "ArrowRight") {
+      const nextInput = inputs[currentIndex + 1];
+      if (nextInput) {
+        e.preventDefault();
+        nextInput.focus();
+        if (nextInput.select) nextInput.select();
+      }
+    } else if (e.key === "ArrowLeft") {
+      const prevInput = inputs[currentIndex - 1];
+      if (prevInput) {
+        e.preventDefault();
+        prevInput.focus();
+        if (prevInput.select) prevInput.select();
+      }
+    } else if (e.key === "ArrowDown") {
+      const tableRow = container.closest(".bg-white.border").querySelector("tbody tr.bg-indigo-50\\/10");
+      if (tableRow) {
+        const firstRowInput = tableRow.querySelector("input");
+        if (firstRowInput) {
+          e.preventDefault();
+          firstRowInput.focus();
+          if (firstRowInput.select) firstRowInput.select();
+        }
+      }
+    }
+  };
+
   const canExpand = true;
   const isExpanded = canExpand && tempData.titulo.trim().length > 0;
   
@@ -865,12 +1031,18 @@ const EditableGroupRow = ({
   }));
 
   return (
-    <div className={cn(
-      "bg-white border rounded-xl overflow-hidden transition-all duration-300 shadow-sm mb-6",
-      isExpanded ? "border-indigo-400 ring-4 ring-indigo-50" : "border-gray-200"
-    )}>
+    <div 
+      onKeyDown={handleContainerKeyDown}
+      className={cn(
+        "bg-white border rounded-xl overflow-hidden transition-all duration-300 shadow-sm mb-6",
+        isExpanded ? "border-indigo-400 ring-4 ring-indigo-50" : "border-gray-200"
+      )}
+    >
       {/* Cabecera del Grupo editable */}
-      <div className="px-5 py-3.5 flex justify-between items-center bg-gray-50/50 border-b border-gray-100">
+      <div 
+        onKeyDown={handleHeaderKeyDown}
+        className="px-5 py-3.5 flex justify-between items-center bg-gray-50/50 border-b border-gray-100"
+      >
         <div className="flex items-center gap-3 flex-1">
           <div className={cn("transition-transform duration-300", isExpanded ? "rotate-90 text-indigo-600" : "rotate-0 text-gray-400")}>
             <Icon name="plus" className="h-4 w-4" />
@@ -1812,26 +1984,24 @@ const EditableGroupRow = ({
                 <table className="min-w-full table-fixed divide-y divide-gray-100">
                     <thead className="bg-slate-100 border-b border-slate-200">
                       <tr>
-                        <th className={isVenta ? "w-[14%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[15%] px-4 py-2 text-left text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Código/Marca</th>
-                        <th className={isVenta ? "w-[25%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[45%] px-4 py-2 text-left text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Descripción *</th>
-                        <th className={isVenta ? "w-[6%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[10%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Cantidad</th>
-                        <th className={isVenta ? "w-[11%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[13%] px-4 py-2 text-right text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Costo Unit.</th>
+                        <th className="w-[3%] py-2"></th>
+                        <th className={isVenta ? "w-[14%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[15%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Código/Marca</th>
+                        <th className={isVenta ? "w-[25%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[28%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Descripción *</th>
+                        <th className={isVenta ? "w-[6%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[7%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Cantidad</th>
+                        <th className={isVenta ? "w-[11%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[12%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Costo Unit.</th>
                         {isVenta && (
                           <th className="w-[10%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider">Envío</th>
                         )}
-                        {isVenta && (
-                          <th className="w-[9%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider">Utilidad</th>
-                        )}
-                        {isVenta && (
-                          <th className="w-[11%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider">Venta Precio</th>
-                        )}
-                        <th className={isVenta ? "w-[11%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[12%] px-4 py-2 text-right text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Venta Total</th>
+                        <th className={isVenta ? "w-[9%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[10%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Utilidad</th>
+                        <th className={isVenta ? "w-[11%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[12%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Venta Precio</th>
+                        <th className={isVenta ? "w-[11%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider" : "w-[13%] px-4 py-2 text-center text-[10px] font-black text-slate-700 uppercase tracking-wider"}>Venta Total</th>
                         <th className="w-[5%] px-4 py-2"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {tempItems.map((item) => (
                         <tr key={item.id_temp} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="w-[3%] py-1.5"></td>
                           <td className="px-4 py-1.5 text-[11px] font-bold text-gray-900 uppercase">
                             <div className="flex flex-col">
                               <span>{item.codigo_item}</span>
@@ -1857,19 +2027,15 @@ const EditableGroupRow = ({
                               {formatMoneySymbolSafe(item.costo_envio)}
                             </td>
                           )}
-                          {isVenta && (
-                            <td className="px-4 py-1.5 text-[11px] text-right text-gray-600 font-medium">
-                              <div className="flex flex-col items-end">
-                                <span>{formatMoneySymbolSafe(item.utilidad)}</span>
-                                <span className="text-[9px] text-gray-400">{item.porcentaje_utilidad}%</span>
-                              </div>
-                            </td>
-                          )}
-                          {isVenta && (
-                            <td className="px-4 py-1.5 text-[11px] text-right text-gray-600 font-medium">
-                              {formatMoneySymbolSafe(item.precio_venta)}
-                            </td>
-                          )}
+                          <td className="px-4 py-1.5 text-[11px] text-right text-gray-600 font-medium">
+                            <div className="flex flex-col items-end">
+                              <span>{formatMoneySymbolSafe(item.utilidad || 0)}</span>
+                              <span className="text-[9px] text-gray-400">{item.porcentaje_utilidad || 0}%</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-1.5 text-[11px] text-right text-gray-600 font-medium">
+                            {formatMoneySymbolSafe(item.precio_venta || item.costo_precio)}
+                          </td>
                           <td className="px-4 py-1.5 text-[11px] font-black text-right text-gray-900">
                             {formatMoneySymbolSafe(isVenta ? item.venta_total : item.cantidad * item.costo_precio)}
                           </td>
@@ -1885,7 +2051,8 @@ const EditableGroupRow = ({
                         </tr>
                       ))}
 
-                      <tr className="bg-indigo-50/10">
+                      <tr className="bg-indigo-50/10" onKeyDown={e => handleRowKeyDown(e, handleAddItem)}>
+                        <td className="w-[3%] py-1.5"></td>
                         {/* P/N o Código / Marca */}
                         <td className="px-4 py-1.5">
                           {canExpand ? (
@@ -1945,7 +2112,7 @@ const EditableGroupRow = ({
                               value={newItem.codigo_item}
                               onChange={(e) => handleNewItemChange('codigo_item', e.target.value)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
+                                if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
                                   e.preventDefault();
                                   handleAddItem();
                                 }
@@ -1980,7 +2147,7 @@ const EditableGroupRow = ({
                               value={newItem.descripcion}
                               onChange={(e) => handleNewItemChange('descripcion', e.target.value)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
+                                if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
                                   e.preventDefault();
                                   handleAddItem();
                                 }
@@ -2000,7 +2167,7 @@ const EditableGroupRow = ({
                             value={newItem.cantidad || ""}
                             onChange={(e) => handleNewItemChange('cantidad', parseInt(e.target.value) || 1)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
+                              if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
                                 e.preventDefault();
                                 handleAddItem();
                               }
@@ -2019,7 +2186,7 @@ const EditableGroupRow = ({
                             value={newItem.costo_precio === undefined || newItem.costo_precio === null ? "" : newItem.costo_precio}
                             onChange={(e) => handleDecimalChange(e, (val) => handleNewItemChange('costo_precio', val))}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
+                              if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
                                 e.preventDefault();
                                 handleAddItem();
                               }
@@ -2048,7 +2215,7 @@ const EditableGroupRow = ({
                                   value={newItem.porcentaje_utilidad === undefined || newItem.porcentaje_utilidad === null ? "" : newItem.porcentaje_utilidad}
                                   onChange={(e) => handleDecimalChange(e, (val) => handleNewItemChange('porcentaje_utilidad', val))}
                                   onKeyDown={e => {
-                                    if (e.key === "Enter") {
+                                    if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
                                       e.preventDefault();
                                       handleAddItem();
                                     }
@@ -2071,13 +2238,6 @@ const EditableGroupRow = ({
                         </td>
                         <td className="px-4 py-1.5 text-center align-middle">
                           <div className="flex items-center justify-center gap-1">
-                            <button
-                              onClick={handleAddItem}
-                              className="p-1 bg-indigo-50 border border-indigo-200 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
-                              title="Añadir"
-                            >
-                              <Icon name="check" className="h-4 w-4" />
-                            </button>
                             {canExpand && (
                               <ActionMenu
                                 title="Logística y Detalles del Nuevo Ítem"
@@ -2094,16 +2254,50 @@ const EditableGroupRow = ({
                                   </button>
                                 }
                               >
-                                <div className="p-3 space-y-3 text-xs text-left bg-white">
+                                <div 
+                                  className="p-3 space-y-3 text-xs text-left bg-white"
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Alt") {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      
+                                      const detailsButton = document.querySelector("button[title='Detalles Adicionales'][data-state='open']") || document.querySelector("button[title='Detalles Adicionales']");
+                                      if (detailsButton) {
+                                        detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+                                        detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+                                        detailsButton.click();
+                                      }
+                                      
+                                      if (lastFocusedInput) {
+                                        setTimeout(() => {
+                                          lastFocusedInput.focus();
+                                          if (lastFocusedInput.select) lastFocusedInput.select();
+                                        }, 50);
+                                      }
+                                    }
+                                  }}
+                                 >
                                   {/* U. Medida */}
                                   <div className="flex flex-col gap-1">
                                     <span className="font-bold text-gray-400 uppercase text-[9px]">U. Medida:</span>
-                                    <input
-                                      type="text"
-                                      className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 uppercase font-semibold text-gray-700"
-                                      value={newItem.tipo_unidad || ""}
-                                      onChange={e => handleNewItemChange("tipo_unidad", e.target.value.toUpperCase())}
-                                      placeholder="UNI, GLN, etc."
+                                    <UnidadMedidaAutocomplete
+                                      idMedida={newItem.id_medida}
+                                      unidadesMedida={unidadesMedida}
+                                      onSelect={(unit) => {
+                                        setNewItem(prev => ({
+                                          ...prev,
+                                          id_medida: unit.id_medida,
+                                          tipo_unidad: unit.nombre
+                                        }));
+                                      }}
+                                      onAddMedida={(newUnit) => {
+                                        setUnidadesMedida(prev => [...prev, newUnit]);
+                                        setNewItem(prev => ({
+                                          ...prev,
+                                          id_medida: newUnit.id_medida,
+                                          tipo_unidad: newUnit.nombre
+                                        }));
+                                      }}
                                     />
                                   </div>
                                   {/* Tiempo Entrega */}
@@ -2260,6 +2454,8 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   });
   const [data, setData] = useState(null);
   const [originalData, setOriginalData] = useState(null);
+  const [unidadesMedida, setUnidadesMedida] = useState([]);
+  const [catalogoVersion, setCatalogoVersion] = useState(0);
 
   useEffect(() => {
     const codeToShow = data?.codigo || data?.numero;
@@ -3019,6 +3215,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
 
   // Inline Editing State
   const [editingItemId, setEditingItemId] = useState(null);
+  const [activeEditField, setActiveEditField] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [isEditingGenerals, setIsEditingGenerals] = useState(false);
   const [formGenerals, setFormGenerals] = useState({});
@@ -3070,6 +3267,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   const [addingServicioForm, setAddingServicioForm] = useState({});
   const [editingItemServicioId, setEditingItemServicioId] = useState(null);
   const [editingServicioForm, setEditingServicioForm] = useState({});
+  const [activeEditServicioField, setActiveEditServicioField] = useState(null);
 
   // Collapse/Expand state for Services and Subgroups
   const [serviciosExpandidos, setServiciosExpandidos] = useState({});
@@ -3680,6 +3878,14 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   const loadAllData = async () => {
     setLoading(true);
     try {
+      // Fetch unidades de medida
+      try {
+        const { data: units } = await api.get("core/unidades_medida/");
+        setUnidadesMedida(Array.isArray(units) ? units : []);
+      } catch (err) {
+        console.error("Error loading units of measure:", err);
+      }
+
       // 1. Cabecera
       const endpoint = `cotizaciones/cotizacion_detalle/${numReg}/`;
       const res = await api.get(endpoint);
@@ -3774,6 +3980,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
     const activeGrupoKey = form.cog_override || grupoActivo;
     const success = await hookAgregarItem(form, activeGrupoKey, null, data?.tipo_venta);
     if (success) setOpenItemModal(false);
+    return success;
   };
 
   const saveEditItem = async () => {
@@ -3803,12 +4010,16 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
 
       if (!hasChanged) {
         setEditingItemId(null);
+        setActiveEditField(null);
         return;
       }
     }
 
     const success = await hookSaveEditItem(editingItemId, editForm, null, data?.tipo_venta);
-    if (success) setEditingItemId(null);
+    if (success) {
+      setEditingItemId(null);
+      setActiveEditField(null);
+    }
   };
 
   const handleConfirmGrupoServicio = async (form) => {
@@ -3859,6 +4070,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
         return next;
       });
       setEditingItemServicioId(null);
+      setActiveEditServicioField(null);
       setInlineDescError({ subgrupoId: null, message: "" });
     }
   };
@@ -3887,6 +4099,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
         return next;
       });
       setEditingItemServicioId(null);
+      setActiveEditServicioField(null);
       setInlineDescError({ subgrupoId: null, message: "" });
     }
   };
@@ -3915,11 +4128,12 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
         return next;
       });
       setEditingItemServicioId(null);
+      setActiveEditServicioField(null);
       setInlineDescError({ subgrupoId: null, message: "" });
     }
   };
 
-  const handleStartEditingItemInline = (item) => {
+  const handleStartEditingItemInline = (item, fieldName = null) => {
     setEditingItemServicioId(item.id_servicio);
     setEditingServicioForm({
       id_servicio: item.id_servicio,
@@ -3932,6 +4146,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
       cotizado_hombre_dia: item.cotizado_hombre_dia || item.costo_hombre_dia,
       porcentaje: item.porcentaje
     });
+    setActiveEditServicioField(fieldName);
   };
 
   const renderGrupoSuministro = (grupo, gIdx, dndListeners = {}, dndAttributes = {}) => {
@@ -4153,6 +4368,10 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                           tipoMoneda={data?.tipo_moneda || "S"}
                           isVenta={isVenta}
                           tipoVenta={data?.tipo_venta}
+                          catalogoVersion={catalogoVersion}
+                          unidadesMedida={unidadesMedida}
+                          setUnidadesMedida={setUnidadesMedida}
+                          activeEditField={activeEditField}
                         />
                       ))}
                     </SortableContext>
@@ -4303,8 +4522,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                               <span className="text-[11px] font-bold text-gray-700">
                                 {formatMoneySymbol(Number(currentForm.utilidad || 0))}
                               </span>
-
-                              {/* Porcentaje de utilidad / Input (Ahora ABAJO) */}
                               <div className="relative flex items-center justify-center w-full">
                                 <input
                                   type="number"
@@ -4313,17 +4530,9 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                   value={currentForm.porcentaje_utilidad === undefined || currentForm.porcentaje_utilidad === null ? "" : currentForm.porcentaje_utilidad}
                                   onChange={e => handleRowChange("porcentaje_utilidad", e.target.value, "add", grupo.codigo_grupo)}
                                   onFocus={(e) => e.target.select()}
-                                  onKeyDown={e => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      handleQuickAddSubmit(grupo.codigo_grupo);
-                                    }
-                                  }}
                                 />
-                                {/* Opcional: Un pequeño sufijo "%" si quieres que el usuario sepa que es un porcentaje al bajar la intensidad del texto */}
                                 <span className="absolute right-1 text-[9px] text-gray-400">%</span>
                               </div>
-
                             </div>
                           </td>
                           {/* Venta Precio */}
@@ -4337,13 +4546,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                           {/* Acciones */}
                           <td className="px-3 py-1.5 text-center">
                             <div className="flex justify-center items-center gap-1">
-                              <button
-                                onClick={() => handleQuickAddSubmit(grupo.codigo_grupo)}
-                                className="p-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded shadow-sm transition-colors flex items-center justify-center"
-                                title="Agregar ítem (Enter)"
-                              >
-                                <Icon name="plus" className="h-3 w-3" />
-                              </button>
                               <ActionMenu
                                 title="Logística y Detalles del Nuevo Ítem"
                                 align="end"
@@ -4359,16 +4561,44 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                   </button>
                                 }
                               >
-                                <div className="p-3 space-y-3 text-xs text-left">
+                                <div 
+                                  className="p-3 space-y-3 text-xs text-left"
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Alt") {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      
+                                      const detailsButton = document.querySelector("button[title='Detalles Adicionales'][data-state='open']") || document.querySelector("button[title='Detalles Adicionales']");
+                                      if (detailsButton) {
+                                        detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+                                        detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+                                        detailsButton.click();
+                                      }
+                                      
+                                      if (lastFocusedInput) {
+                                        setTimeout(() => {
+                                          lastFocusedInput.focus();
+                                          if (lastFocusedInput.select) lastFocusedInput.select();
+                                        }, 50);
+                                      }
+                                    }
+                                  }}
+                                >
                                   {/* U. Medida */}
                                   <div className="flex flex-col gap-1">
                                     <span className="font-bold text-gray-400 uppercase text-[9px]">U. Medida:</span>
-                                    <input
-                                      type="text"
-                                      className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 uppercase font-semibold text-gray-700"
-                                      value={currentForm.tipo_unidad || ""}
-                                      onChange={e => handleRowChange("tipo_unidad", e.target.value.toUpperCase(), "add", grupo.codigo_grupo)}
-                                      placeholder="UNI, GLN, etc."
+                                    <UnidadMedidaAutocomplete
+                                      idMedida={currentForm.id_medida}
+                                      unidadesMedida={unidadesMedida}
+                                      onSelect={(unit) => {
+                                        handleRowChange("id_medida", unit.id_medida, "add", grupo.codigo_grupo);
+                                        handleRowChange("tipo_unidad", unit.nombre, "add", grupo.codigo_grupo);
+                                      }}
+                                      onAddMedida={(newUnit) => {
+                                        setUnidadesMedida(prev => [...prev, newUnit]);
+                                        handleRowChange("id_medida", newUnit.id_medida, "add", grupo.codigo_grupo);
+                                        handleRowChange("tipo_unidad", newUnit.nombre, "add", grupo.codigo_grupo);
+                                      }}
                                     />
                                   </div>
                                   {/* Tiempo Entrega */}
@@ -4557,13 +4787,15 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   };
 
   // --- INLINE EDITING LOGIC ---
-  const startEditItem = (item) => {
+  const startEditItem = (item, fieldName = null) => {
     setEditingItemId(item.id_suministro || item.id);
     setEditForm({ ...item });
+    setActiveEditField(fieldName);
   };
 
   const cancelEditItem = () => {
     setEditingItemId(null);
+    setActiveEditField(null);
   };
 
   const formatMoney = (val) => `$ ${Number(val || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -5370,6 +5602,8 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                         handleStartEditingItemInline={handleStartEditingItemInline}
                                         handleEliminarItemServicio={handleEliminarItemServicio}
                                         formatMoneySymbol={formatMoneySymbol}
+                                        activeEditServicioField={activeEditServicioField}
+                                        setActiveEditServicioField={setActiveEditServicioField}
                                       />
                                     ))}
                                   </SortableContext>
@@ -6768,6 +7002,10 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                     isVenta={isVenta}
                     tipoVenta={data?.tipo_venta}
                     normalizarProductoDB={normalizarProductoDB}
+                    catalogoVersion={catalogoVersion}
+                    setCatalogoVersion={setCatalogoVersion}
+                    unidadesMedida={unidadesMedida}
+                    setUnidadesMedida={setUnidadesMedida}
                   />
 
                   {/* Renderizado de Grupos de Suministros */}
@@ -6864,6 +7102,10 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                       tiposGasto={tiposGasto}
                       notasComunes={notasComunes}
                       idArea={data?.id_area}
+                      catalogoVersion={catalogoVersion}
+                      setCatalogoVersion={setCatalogoVersion}
+                      unidadesMedida={unidadesMedida}
+                      setUnidadesMedida={setUnidadesMedida}
                     />
                   )}
 
@@ -9125,6 +9367,10 @@ const SortableItemRow = ({
   tipoMoneda,
   isVenta,
   tipoVenta,
+  catalogoVersion,
+  unidadesMedida = [],
+  setUnidadesMedida,
+  activeEditField
 }) => {
   const {
     attributes,
@@ -9150,26 +9396,220 @@ const SortableItemRow = ({
   const itemId = item.id_suministro || item.id;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const hoverTimer = useRef(null);
+  const deleteConfirmRef = useRef(null);
+  const rowRef = useRef(null);
 
-  const proveedoresOptions = (proveedores || []).map(p => ({
-    id: String(p.id_marca).padStart(2, '0'),
-    nombre: p.nombre
-  }));
+  const setMergedRef = (el) => {
+    setNodeRef(el);
+    rowRef.current = el;
+  };
+
+  const adjustHeight = (el) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
+  useEffect(() => {
+    if (editingItemId === itemId && activeEditField) {
+      const timer = setTimeout(() => {
+        const rowEl = rowRef.current;
+        if (rowEl) {
+          let input = rowEl.querySelector(`[data-field="${activeEditField}"], [name="${activeEditField}"]`);
+          if (input && input.tagName !== 'INPUT' && input.tagName !== 'TEXTAREA' && input.tagName !== 'SELECT') {
+            input = input.querySelector('input, textarea, select') || input;
+          }
+          if (input) {
+            input.focus();
+            if (typeof input.select === 'function') {
+              input.select();
+            }
+          }
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [editingItemId, itemId, activeEditField]);
+
+  useEffect(() => {
+    if (editingItemId !== itemId) return;
+
+    const handleClickOutside = (e) => {
+      const rowEl = rowRef.current;
+      if (rowEl && rowEl.contains(e.target)) return;
+
+      if (e.target.closest(
+        '[data-radix-popper-content-wrapper], ' +
+        '[data-radix-portal], ' +
+        '.Toastify, ' +
+        '.react-datepicker-popper, ' +
+        '.quill, ' +
+        '.ql-snow, ' +
+        '[role="dialog"], ' +
+        '[role="menu"], ' +
+        '[role="listbox"]'
+      )) {
+        return;
+      }
+
+      if (!document.body.contains(e.target)) {
+        return;
+      }
+
+      cancelEditItem();
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [editingItemId, itemId, cancelEditItem]);
+
+  useEffect(() => {
+    if (!showDeleteConfirm) return;
+
+    const handleClickOutside = (e) => {
+      if (deleteConfirmRef.current && !deleteConfirmRef.current.contains(e.target)) {
+        setShowDeleteConfirm(false);
+      }
+    };
+
+    const handleKeyDownGlobal = (e) => {
+      if (e.key === "Escape") {
+        setShowDeleteConfirm(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDownGlobal);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDownGlobal);
+    };
+  }, [showDeleteConfirm]);
+
+  const handleMouseEnter = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setIsHovered(true);
+  };
+
+  const handleMouseLeave = () => {
+    hoverTimer.current = setTimeout(() => {
+      setIsHovered(false);
+    }, 150);
+  };
+
+  const proveedoresOptions = useMemo(() => {
+    const list = (proveedores || []).map(p => ({
+      id: String(p.id_marca).padStart(2, '0'),
+      nombre: p.nombre
+    }));
+
+    if (item.id_marca && !list.some(p => parseInt(p.id, 10) === item.id_marca)) {
+      list.push({
+        id: String(item.id_marca).padStart(2, '0'),
+        nombre: item.marca_nombre || `Marca #${item.id_marca}`
+      });
+    }
+
+    if (editForm.id_marca && !list.some(p => parseInt(p.id, 10) === editForm.id_marca)) {
+      list.push({
+        id: String(editForm.id_marca).padStart(2, '0'),
+        nombre: editForm.marca_nombre || editForm.marca || `Marca #${editForm.id_marca}`
+      });
+    }
+
+    return list;
+  }, [proveedores, item.id_marca, item.marca_nombre, editForm.id_marca, editForm.marca_nombre, editForm.marca]);
+
+  const getFocusableInputs = () => {
+    const rowEl = rowRef.current;
+    if (!rowEl) return [];
+    const selectors = [
+      'select[data-field="id_marca"]',
+      'div[data-field="codigo_item"] input',
+      'textarea[data-field="descripcion"]',
+      'textarea[data-field="observacion"]',
+      'input[data-field="cantidad"]',
+      'input[data-field="costo_precio"]',
+      'input[data-field="porcentaje_utilidad"]'
+    ];
+    return selectors
+      .map(sel => rowEl.querySelector(sel))
+      .filter(el => el !== null && !el.disabled);
+  };
 
   const handleKeyDown = (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       cancelEditItem();
+      return;
     }
     if (e.key === 'Enter') {
       e.preventDefault();
       saveEditItem();
+      return;
+    }
+
+    // Arrow Navigation
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      const isSelectOrNumber = e.target.tagName === 'SELECT' || e.target.type === 'number';
+      const isAtStart = isSelectOrNumber || e.target.selectionStart === 0;
+      const isAtEnd = isSelectOrNumber || e.target.selectionEnd === e.target.value.length;
+
+      let fieldName = e.target.getAttribute('data-field') || e.target.getAttribute('name');
+      if (!fieldName) {
+        const parentWithField = e.target.closest('[data-field]');
+        if (parentWithField) {
+          fieldName = parentWithField.getAttribute('data-field');
+        }
+      }
+      if (!fieldName) return;
+
+      const order = ['id_marca', 'codigo_item', 'descripcion', 'observacion', 'cantidad', 'costo_precio', 'porcentaje_utilidad'];
+      const idx = order.indexOf(fieldName);
+
+      if (e.key === 'ArrowRight' && isAtEnd) {
+        if (idx !== -1 && idx < order.length - 1) {
+          e.preventDefault();
+          const inputs = getFocusableInputs();
+          const nextField = order[idx + 1];
+          const nextInput = inputs.find(el => {
+            const elField = el.getAttribute('data-field') || el.getAttribute('name') || el.closest('[data-field]')?.getAttribute('data-field');
+            return elField === nextField;
+          });
+          if (nextInput) {
+            nextInput.focus();
+            if (typeof nextInput.select === 'function') {
+              nextInput.select();
+            }
+          }
+        }
+      } else if (e.key === 'ArrowLeft' && isAtStart) {
+        if (idx > 0) {
+          e.preventDefault();
+          const inputs = getFocusableInputs();
+          const prevField = order[idx - 1];
+          const prevInput = inputs.find(el => {
+            const elField = el.getAttribute('data-field') || el.getAttribute('name') || el.closest('[data-field]')?.getAttribute('data-field');
+            return elField === prevField;
+          });
+          if (prevInput) {
+            prevInput.focus();
+            if (typeof prevInput.select === 'function') {
+              prevInput.select();
+            }
+          }
+        }
+      }
     }
   };
 
   if (editingItemId === itemId) {
     return (
-      <tr ref={setNodeRef} style={style} className="bg-indigo-50/50">
+      <tr ref={setMergedRef} style={style} className="bg-indigo-50/50">
         <td className="px-2 text-center align-middle">
           <Icon name="grip-vertical" className="h-3.5 w-3.5 text-gray-200 mx-auto" />
         </td>
@@ -9177,8 +9617,9 @@ const SortableItemRow = ({
         <td className="px-3 py-1">
           <div className="flex flex-col gap-1 items-center justify-center text-center relative">
             <select
+              data-field="id_marca"
               className="w-full text-[10.5px] border border-gray-300 rounded px-1 py-0.5 uppercase font-bold text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
-              value={editForm.proveedor || ""}
+              value={editForm.id_marca ? String(editForm.id_marca).padStart(2, '0') : (editForm.proveedor || "")}
               onKeyDown={handleKeyDown}
               onChange={e => {
                 const code = e.target.value;
@@ -9195,52 +9636,66 @@ const SortableItemRow = ({
                 <option key={p.id} value={p.id} className="text-center">{p.nombre}</option>
               ))}
             </select>
-            <ProductoAutocomplete
-              value={editForm.codigo_item || ""}
-              idMarca={editForm.id_marca}
-              tcamb={tcamb}
-              tipoMoneda={tipoMoneda}
-              onSelect={(prod) => {
-                if (prod.isCustom) {
-                  setEditForm(prev => ({ ...prev, codigo_item: prod.codigo }));
-                } else {
-                  const normalizado = normalizarProductoDB(prod, tipoMoneda, tcamb, Number(editForm.cantidad || 1));
-                  setEditForm(prev => {
-                    const updated = {
-                      ...prev,
-                      proveedor: normalizado.proveedor,
-                      id_marca: prod.id_marca,
-                      codigo_item: normalizado.codigo,
-                      descripcion: normalizado.descripcion,
-                      tipo_unidad: normalizado.unidad,
-                      costo_precio: normalizado.costoPrecio,
-                      porcentaje_utilidad: prev.porcentaje_utilidad || 20
-                    };
-                    return recalculateRowValues(updated, 'porcentaje_utilidad');
-                  });
-                }
-              }}
-            />
+            <div data-field="codigo_item" className="w-full">
+              <ProductoAutocomplete
+                value={editForm.codigo_item || ""}
+                idMarca={editForm.id_marca}
+                tcamb={tcamb}
+                tipoMoneda={tipoMoneda}
+                catalogoVersion={catalogoVersion}
+                onKeyDown={handleKeyDown}
+                onSelect={(prod) => {
+                  if (prod.isCustom) {
+                    setEditForm(prev => ({ ...prev, codigo_item: prod.codigo }));
+                  } else {
+                    const normalizado = normalizarProductoDB(prod, tipoMoneda, tcamb, Number(editForm.cantidad || 1));
+                    setEditForm(prev => {
+                      const updated = {
+                        ...prev,
+                        proveedor: normalizado.proveedor,
+                        id_marca: prod.id_marca,
+                        codigo_item: normalizado.codigo,
+                        descripcion: normalizado.descripcion,
+                        tipo_unidad: normalizado.unidad,
+                        costo_precio: normalizado.costoPrecio,
+                        porcentaje_utilidad: prev.porcentaje_utilidad || 20
+                      };
+                      return recalculateRowValues(updated, 'porcentaje_utilidad');
+                    });
+                  }
+                }}
+              />
+            </div>
           </div>
         </td>
         {/* Descripción / Observación */}
         <td className="px-3 py-1">
           <div className="flex flex-col gap-1 items-center justify-center text-center">
-            <input
-              type="text"
-              className="w-full text-[11px] border border-gray-300 rounded px-1.5 py-0.5 font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
+            <textarea
+              ref={adjustHeight}
+              data-field="descripcion"
+              className="w-full text-[11px] border border-gray-300 rounded px-1.5 py-0.5 font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center resize-none overflow-hidden h-auto"
               value={editForm.descripcion || ''}
               placeholder="Descripción..."
               onKeyDown={handleKeyDown}
-              onChange={e => setEditForm({ ...editForm, descripcion: e.target.value.toUpperCase() })}
+              onChange={e => {
+                setEditForm({ ...editForm, descripcion: e.target.value.toUpperCase() });
+                adjustHeight(e.target);
+              }}
+              rows={1}
             />
-            <input
-              type="text"
-              className="w-full text-[9px] border border-gray-200 text-gray-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
+            <textarea
+              ref={adjustHeight}
+              data-field="observacion"
+              className="w-full text-[9px] border border-gray-200 text-gray-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center resize-none overflow-hidden h-auto"
               value={editForm.observacion || ''}
               placeholder="Observación..."
               onKeyDown={handleKeyDown}
-              onChange={e => setEditForm({ ...editForm, observacion: e.target.value.toUpperCase() })}
+              onChange={e => {
+                setEditForm({ ...editForm, observacion: e.target.value.toUpperCase() });
+                adjustHeight(e.target);
+              }}
+              rows={1}
             />
           </div>
         </td>
@@ -9248,6 +9703,7 @@ const SortableItemRow = ({
         <td className="px-3 py-1">
           <input
             type="number"
+            data-field="cantidad"
             className="w-full text-[11px] border border-gray-300 text-center rounded px-1 py-0.5 font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
             value={editForm.cantidad === undefined || editForm.cantidad === null ? '' : editForm.cantidad}
             onChange={e => handleRowChange('cantidad', e.target.value, 'edit')}
@@ -9260,6 +9716,7 @@ const SortableItemRow = ({
           <input
             type="text"
             placeholder="0.00"
+            data-field="costo_precio"
             className="w-full text-[11px] border border-gray-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
             value={editForm.costo_precio === undefined || editForm.costo_precio === null ? '' : editForm.costo_precio}
             onChange={(e) => handleDecimalChange(e, (val) => handleRowChange('costo_precio', val, 'edit'))}
@@ -9294,6 +9751,7 @@ const SortableItemRow = ({
             <div className="relative flex items-center justify-center w-full">
               <input
                 type="text"
+                data-field="porcentaje_utilidad"
                 className="w-full text-[10px] border border-gray-300 text-center rounded px-1 py-0.5 font-medium text-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
                 value={editForm.porcentaje_utilidad === undefined || editForm.porcentaje_utilidad === null ? '' : editForm.porcentaje_utilidad}
                 onChange={(e) => handleDecimalChange(e, (val) => handleRowChange('porcentaje_utilidad', val, 'edit'))}
@@ -9315,20 +9773,6 @@ const SortableItemRow = ({
         {/* Actions */}
         <td className="px-3 py-1">
           <div className="flex justify-center items-center gap-1">
-            <button
-              onClick={saveEditItem}
-              className="p-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded shadow-sm transition-colors flex items-center justify-center"
-              title="Guardar (Enter)"
-            >
-              <Icon name="check" className="h-3 w-3" />
-            </button>
-            <button
-              onClick={cancelEditItem}
-              className="p-1 bg-gray-200 hover:bg-gray-300 text-gray-600 rounded transition-colors flex items-center justify-center"
-              title="Cancelar"
-            >
-              <Icon name="x" className="h-3 w-3" />
-            </button>
             <ActionMenu
               title="Logística y Detalles del Ítem"
               align="end"
@@ -9344,17 +9788,50 @@ const SortableItemRow = ({
                 </button>
               }
             >
-              <div className="p-3 space-y-3 text-xs text-left">
+              <div 
+                className="p-3 space-y-3 text-xs text-left"
+                onKeyDown={(e) => {
+                  if (e.key === "Alt") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const detailsButton = document.querySelector("button[title='Detalles Adicionales'][data-state='open']") || document.querySelector("button[title='Detalles Adicionales']");
+                    if (detailsButton) {
+                      detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+                      detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+                      detailsButton.click();
+                    }
+                    
+                    if (lastFocusedInput) {
+                      setTimeout(() => {
+                        lastFocusedInput.focus();
+                        if (lastFocusedInput.select) lastFocusedInput.select();
+                      }, 50);
+                    }
+                  }
+                }}
+              >
                 {/* U. Medida */}
                 <div className="flex flex-col gap-1">
                   <span className="font-bold text-gray-400 uppercase text-[9px]">U. Medida:</span>
-                  <input
-                    type="text"
-                    className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 uppercase font-semibold text-gray-700"
-                    value={editForm.tipo_unidad || ""}
-                    onChange={e => handleRowChange("tipo_unidad", e.target.value.toUpperCase(), "edit")}
-                    onKeyDown={handleKeyDown}
-                    placeholder="UNI, GLN, etc."
+                  <UnidadMedidaAutocomplete
+                    idMedida={editForm.id_medida || editForm.id_unidad}
+                    unidadesMedida={unidadesMedida}
+                    onSelect={(unit) => {
+                      setEditForm(prev => ({
+                        ...prev,
+                        id_medida: unit.id_medida,
+                        tipo_unidad: unit.nombre
+                      }));
+                    }}
+                    onAddMedida={(newUnit) => {
+                      setUnidadesMedida(prev => [...prev, newUnit]);
+                      setEditForm(prev => ({
+                        ...prev,
+                        id_medida: newUnit.id_medida,
+                        tipo_unidad: newUnit.nombre
+                      }));
+                    }}
                   />
                 </div>
                 {/* Tiempo Entrega */}
@@ -9469,7 +9946,7 @@ const SortableItemRow = ({
   // Visualizar Renglón en la Tabla
   return (
     <tr
-      ref={setNodeRef}
+      ref={setMergedRef}
       style={style}
       {...attributes}
       className={cn(
@@ -9483,25 +9960,65 @@ const SortableItemRow = ({
           {...listeners}
           data-drag-handle
           className="px-2 text-center align-middle cursor-grab active:cursor-grabbing hover:bg-gray-100/50"
+          onDoubleClick={(e) => e.stopPropagation()}
         >
           <Icon name="grip-vertical" className="h-3.5 w-3.5 text-gray-300 group-hover:text-gray-500 mx-auto transition-colors" />
         </td>
       ) : (
-        <td className="px-2 text-center align-middle cursor-default">
+        <td 
+          className="px-2 text-center align-middle cursor-default"
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
           <Icon name="grip-vertical" className="h-3.5 w-3.5 text-gray-100 mx-auto" />
         </td>
       )}
       {/* P/N / Marca */}
-      <td className="px-3 py-1 text-center">
+      <td 
+        className="px-3 py-1 text-center"
+        onDoubleClick={(e) => {
+          if (!isReadOnly) {
+            e.stopPropagation();
+            startEditItem(item, 'codigo_item');
+          }
+        }}
+      >
         <div className="flex flex-col items-center justify-center text-center">
-          <span className="text-[12px] font-bold text-gray-900">{item.codigo_item}</span>
+          <span 
+            className="text-[12px] font-bold text-gray-900 cursor-pointer"
+            onDoubleClick={(e) => {
+              if (!isReadOnly) {
+                e.stopPropagation();
+                startEditItem(item, 'codigo_item');
+              }
+            }}
+          >
+            {item.codigo_item}
+          </span>
           {item.marca_nombre && (
-            <span className="text-[9.5px] font-semibold text-teal-600 uppercase tracking-tighter">{item.marca_nombre}</span>
+            <span 
+              className="text-[9.5px] font-semibold text-teal-600 uppercase tracking-tighter cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  startEditItem(item, 'id_marca');
+                }
+              }}
+            >
+              {item.marca_nombre}
+            </span>
           )}
         </div>
       </td>
       {/* Descripción / Observación */}
-      <td className="px-3 py-1 text-center">
+      <td 
+        className="px-3 py-1 text-center"
+        onDoubleClick={(e) => {
+          if (!isReadOnly) {
+            e.stopPropagation();
+            startEditItem(item, 'descripcion');
+          }
+        }}
+      >
         <div className="flex flex-col items-center justify-center text-center">
           <span className="text-[12px] text-gray-600 font-semibold leading-tight line-clamp-2" title={item.descripcion}>
             {item.descripcion}
@@ -9512,14 +10029,35 @@ const SortableItemRow = ({
         </div>
       </td>
       {/* Cantidad */}
-      <td className="px-3 py-1 text-[12px] text-gray-900 text-center font-bold">{item.cantidad}</td>
+      <td 
+        className="px-3 py-1 text-[12px] text-gray-900 text-center font-bold"
+        onDoubleClick={(e) => {
+          if (!isReadOnly) {
+            e.stopPropagation();
+            startEditItem(item, 'cantidad');
+          }
+        }}
+      >
+        {item.cantidad}
+      </td>
       {/* Costo Unitario */}
-      <td className="px-3 py-1 text-[12.5px] text-slate-700 font-semibold text-center">
+      <td 
+        className="px-3 py-1 text-[12.5px] text-slate-700 font-semibold text-center"
+        onDoubleClick={(e) => {
+          if (!isReadOnly) {
+            e.stopPropagation();
+            startEditItem(item, 'costo_precio');
+          }
+        }}
+      >
         {formatMoney(item.costo_precio)}
       </td>
       {/* Envío */}
       {isVenta && (
-        <td className="px-3 py-1 text-center text-[12.5px] text-slate-700 font-semibold">
+        <td 
+          className="px-3 py-1 text-center text-[12.5px] text-slate-700 font-semibold"
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
           <div className="flex flex-col items-center justify-center text-center gap-0.5">
             <span>{formatMoney(item.costo_envio)}</span>
             {tipoVenta === "T" && (
@@ -9531,7 +10069,15 @@ const SortableItemRow = ({
         </td>
       )}
       {/* % Utilidad */}
-      <td className="px-3 py-1 text-center">
+      <td 
+        className="px-3 py-1 text-center"
+        onDoubleClick={(e) => {
+          if (!isReadOnly) {
+            e.stopPropagation();
+            startEditItem(item, 'porcentaje_utilidad');
+          }
+        }}
+      >
         <div className="flex flex-col items-center justify-center text-center gap-0.5">
           <span className="text-[12.5px] font-extrabold text-slate-800">
             {formatMoneySymbol(Number(item.utilidad || 0))}
@@ -9542,175 +10088,160 @@ const SortableItemRow = ({
         </div>
       </td>
       {/* Precio Unitario */}
-      <td className="px-3 py-1 text-[12.5px] text-slate-700 font-semibold text-center">
+      <td 
+        className="px-3 py-1 text-[12.5px] text-slate-700 font-semibold text-center"
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
         {formatMoney(item.precio_venta)}
       </td>
       {/* Venta Total */}
-      <td className="px-3 py-1 text-[12.5px] font-black text-slate-900 text-center">
+      <td 
+        className="px-3 py-1 text-[12.5px] font-black text-slate-900 text-center"
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
         {formatMoney(item.venta_total)}
       </td>
       {/* Acciones */}
-      <td className="px-3 py-1 align-middle text-center w-[45px] relative">
-        <div onClick={e => e.stopPropagation()} className="flex justify-center items-center">
-          <ActionMenu
-            title="Opciones del Item"
-            align="end"
-            open={menuOpen}
-            onOpenChange={(isOpen) => {
-              setMenuOpen(isOpen);
-              if (!isOpen) {
-                setShowDeleteConfirm(false);
-              }
-            }}
-            closeOnSelect={false}
-            contentClassName="min-w-[210px] bg-white rounded-xl shadow-xl border border-gray-100/80 p-1 tracking-tight z-50 animate-in fade-in-50 duration-100"
-            customTrigger={
+      <td 
+        className="px-3 py-1 align-middle text-center w-[60px] relative"
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
+        <div onClick={e => e.stopPropagation()} className="flex justify-center items-center gap-1">
+          {/* Resumen Venta popover on hover */}
+          <div 
+            className="relative"
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          >
+            <button
+              type="button"
+              className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-all"
+              title="Resumen de Venta"
+            >
+              <Icon name="trending-up" className="h-3.5 w-3.5" />
+            </button>
+            {isHovered && (
+              <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-fit min-w-[320px] max-w-[450px] bg-white rounded-xl shadow-xl border border-gray-200 p-3.5 text-left text-xs space-y-3.5 z-50 animate-in fade-in zoom-in-95 duration-100 select-none">
+                <div className="flex items-center gap-1.5 text-slate-500 font-bold text-[10px] uppercase tracking-wider border-b border-gray-100 pb-1.5">
+                  <Icon name="info" className="h-3.5 w-3.5 text-slate-400" />
+                  <span>Especificaciones de Suministro</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <span className="block font-bold text-gray-400 text-[9px] uppercase tracking-wide mb-0.5">U. Medida</span>
+                    <span className="font-bold text-gray-700 uppercase">{item.tipo_unidad || "UNI"}</span>
+                  </div>
+                  <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <span className="block font-bold text-gray-400 text-[9px] uppercase tracking-wide mb-0.5">Tiempo Entrega</span>
+                    <span className="font-bold text-gray-700">
+                      {item.tiempo_entrega ?? 0} {item.id_unidad_tiempo_entrega === 3 ? 'Meses' : item.id_unidad_tiempo_entrega === 2 ? 'Semanas' : 'Días'}
+                    </span>
+                  </div>
+                </div>
+
+                {item.observacion && (
+                  <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-[11px]">
+                    <span className="block font-bold text-gray-400 text-[9px] uppercase tracking-wide mb-0.5">Observación</span>
+                    <span className="text-gray-600 italic font-medium">{item.observacion}</span>
+                  </div>
+                )}
+
+                {/* PANEL CÁLCULO MONETARIO */}
+                {(() => {
+                  const itemCantidad = Number(item.cantidad || 0);
+                  const itemCostoPrecio = Number(item.costo_precio || 0);
+                  const itemCostoEnvio = Number(item.costo_envio || 0);
+                  const itemCostoConEnvio = Number(item.costo_con_envio || 0);
+                  const itemPrecioVenta = Number(item.precio_venta || 0);
+                  const itemVentaTotal = Number(item.venta_total || 0);
+                  const itemUtilidad = Number(item.utilidad || 0);
+
+                  const costoTotal = itemCostoPrecio * itemCantidad;
+                  const costoConEnvioPorUnidad = itemCostoPrecio + itemCostoEnvio;
+                  const costoConEnvioTotal = itemCostoConEnvio * itemCantidad;
+                  const precioVentaUnit = itemPrecioVenta;
+                  const ventaTotal = itemVentaTotal;
+                  const utilidadTotal = itemUtilidad * itemCantidad;
+
+                  return (
+                    <div className="bg-emerald-50/40 border border-emerald-100 rounded-xl p-3 space-y-2 shadow-inner">
+                      <div className="flex items-center gap-1.5 text-emerald-800 font-extrabold text-[10px] uppercase tracking-wider">
+                        <Icon name="calculator" className="h-3.5 w-3.5" />
+                        <span>Resumen de Venta</span>
+                      </div>
+                      <div className="space-y-1 text-[11px]">
+                        <div className="flex justify-between items-center text-gray-500 py-0.5 border-b border-gray-200/30">
+                          <span>Costo Total:</span>
+                          <span className="font-semibold text-gray-700">{formatMoney(costoTotal)}</span>
+                        </div>
+                        {isVenta && (
+                          <div className="flex justify-between items-center text-gray-500 py-0.5 border-b border-gray-200/30">
+                            <span>Costo con Envío:</span>
+                            <span className="font-semibold text-gray-700">{formatMoney(costoConEnvioPorUnidad)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-center text-gray-500 py-0.5 border-b border-gray-200/30">
+                          <span>Precio Venta:</span>
+                          <span className="font-semibold text-gray-700">{formatMoney(precioVentaUnit)}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-800 py-0.5 border-b border-slate-200/50 font-bold">
+                          <span>Venta Total:</span>
+                          <span className="text-slate-900 font-black text-xs">{formatMoney(ventaTotal)}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-emerald-900 pt-0.5 font-bold">
+                          <span>Utilidad Total:</span>
+                          <span className="text-emerald-600 font-black text-xs">{formatMoney(utilidadTotal)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+
+          {/* Eliminar Item Direct Button & Inline Confirm */}
+          {!isReadOnly && (
+            <div className="relative flex items-center" ref={deleteConfirmRef}>
               <button
                 type="button"
-                className="p-1.5 text-gray-400 hover:text-slate-700 hover:bg-slate-100/80 rounded-lg transition-all flex items-center justify-center group-hover:scale-105"
-                title="Menú de opciones"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setShowDeleteConfirm(prev => !prev);
+                }}
+                className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-all"
+                title="Eliminar Ítem"
               >
-                <Icon name="ellipsis-vertical" className="h-4 w-4" />
+                <Icon name="trash-2" className="h-3.5 w-3.5" />
               </button>
-            }
-            options={[
-              {
-                label: "Resumen de Venta",
-                icon: LucideIcons.TrendingUp,
-                hasSubmenu: true,
-                submenuContent: (
-                  <div className="w-fit min-w-[320px] max-w-[450px] p-3.5 text-left text-xs space-y-3.5 animate-in fade-in zoom-in-95 duration-100 select-none">
-                    <div className="flex items-center gap-1.5 text-slate-500 font-bold text-[10px] uppercase tracking-wider border-b border-gray-100 pb-1.5">
-                      <Icon name="info" className="h-3.5 w-3.5 text-slate-400" />
-                      <span>Especificaciones de Suministro</span>
-                    </div>
 
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
-                      <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                        <span className="block font-bold text-gray-400 text-[9px] uppercase tracking-wide mb-0.5">U. Medida</span>
-                        <span className="font-bold text-gray-700 uppercase">{item.tipo_unidad || "UNI"}</span>
-                      </div>
-                      <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                        <span className="block font-bold text-gray-400 text-[9px] uppercase tracking-wide mb-0.5">Tiempo Entrega</span>
-                        <span className="font-bold text-gray-700">
-                          {item.tiempo_entrega ?? 0} {item.id_unidad_tiempo_entrega === 3 ? 'Meses' : item.id_unidad_tiempo_entrega === 2 ? 'Semanas' : 'Días'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {item.observacion && (
-                      <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-[11px]">
-                        <span className="block font-bold text-gray-400 text-[9px] uppercase tracking-wide mb-0.5">Observación</span>
-                        <span className="text-gray-600 italic font-medium">{item.observacion}</span>
-                      </div>
-                    )}
-
-                    {/* PANEL CÁLCULO MONETARIO */}
-                    {(() => {
-                      const itemCantidad = Number(item.cantidad || 0);
-                      const itemCostoPrecio = Number(item.costo_precio || 0);
-                      const itemCostoEnvio = Number(item.costo_envio || 0);
-                      const itemCostoConEnvio = Number(item.costo_con_envio || 0);
-                      const itemPrecioVenta = Number(item.precio_venta || 0);
-                      const itemVentaTotal = Number(item.venta_total || 0);
-                      const itemUtilidad = Number(item.utilidad || 0);
-
-                      const costoTotal = itemCostoPrecio * itemCantidad;
-                      const costoConEnvioPorUnidad = itemCostoPrecio + itemCostoEnvio;
-                      const costoConEnvioTotal = itemCostoConEnvio * itemCantidad;
-                      const precioVentaUnit = itemPrecioVenta;
-                      const ventaTotal = itemVentaTotal;
-                      const utilidadTotal = itemUtilidad * itemCantidad;
-
-                      return (
-                        <div className="bg-emerald-50/40 border border-emerald-100 rounded-xl p-3 space-y-2 shadow-inner">
-                          <div className="flex items-center gap-1.5 text-emerald-800 font-extrabold text-[10px] uppercase tracking-wider">
-                            <Icon name="calculator" className="h-3.5 w-3.5" />
-                            <span>Resumen de Venta</span>
-                          </div>
-                          <div className="space-y-1 text-[11px]">
-                            <div className="flex justify-between items-center text-gray-500 py-0.5 border-b border-gray-200/30">
-                              <span>Costo Total:</span>
-                              <span className="font-semibold text-gray-700">{formatMoneySymbol(costoTotal)}</span>
-                            </div>
-                            {isVenta && (
-                              <div className="flex justify-between items-center text-gray-500 py-0.5 border-b border-gray-200/30">
-                                <span>Costo con Envío:</span>
-                                <span className="font-semibold text-gray-700">{formatMoneySymbol(costoConEnvioPorUnidad)}</span>
-                              </div>
-                            )}
-                            <div className="flex justify-between items-center text-gray-500 py-0.5 border-b border-gray-200/30">
-                              <span>Precio Venta:</span>
-                              <span className="font-semibold text-gray-700">{formatMoneySymbol(precioVentaUnit)}</span>
-                            </div>
-                            <div className="flex justify-between items-center text-slate-800 py-0.5 border-b border-slate-200/50 font-bold">
-                              <span>Venta Total:</span>
-                              <span className="text-slate-900 font-black text-xs">{formatMoneySymbol(ventaTotal)}</span>
-                            </div>
-                            <div className="flex justify-between items-center text-emerald-900 pt-0.5 font-bold">
-                              <span>Utilidad Total:</span>
-                              <span className="text-emerald-600 font-black text-xs">{formatMoneySymbol(utilidadTotal)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )
-              }
-            ]}
-          >
-            <div className="flex flex-col p-1 space-y-0.5">
-
-              {/* 2. OPCIÓN: ELIMINAR ÍTEM (Con Confirmación inline estilo Adjuntos) */}
-              {!isReadOnly && (
-                <div className="w-full" onClick={e => e.stopPropagation()}>
-                  {showDeleteConfirm ? (
-                    <div className="flex items-center justify-between w-full bg-red-50/80 border border-red-100 rounded-lg p-2 text-[11px] animate-in fade-in zoom-in-95 duration-100">
-                      <span className="font-bold text-red-700 select-none">¿Remover?</span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handleEliminarItem(item.id_suministro, item.codigo_grupo, tipoVenta, true);
-                            setMenuOpen(false);
-                          }}
-                          className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white font-black text-[9px] rounded uppercase tracking-wider transition-colors shadow-sm"
-                        >
-                          Sí
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setShowDeleteConfirm(false);
-                          }}
-                          className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-600 font-bold text-[9px] rounded uppercase tracking-wider transition-colors"
-                        >
-                          No
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setShowDeleteConfirm(true);
-                      }}
-                      className="group/item w-full flex items-center gap-2.5 px-3 py-2 text-[11.5px] font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors text-left"
-                    >
-                      <Icon
-                        name="trash-2"
-                        className="h-3.5 w-3.5 text-red-400 group-hover/item:text-red-500 transition-colors"
-                      />
-                      <span>Eliminar Ítem</span>
-                    </button>
-                  )}
+              {showDeleteConfirm && (
+                <div className="absolute right-0 bottom-full mb-1 flex items-center gap-1.5 bg-white border border-gray-100 rounded-lg p-1.5 shadow-lg z-50 whitespace-nowrap animate-in fade-in slide-in-from-bottom-1 duration-100">
+                  <span className="text-[10px] font-black text-gray-700 px-1">¿Borrar?</span>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleEliminarItem(item.id_suministro, item.codigo_grupo, tipoVenta, true);
+                      setShowDeleteConfirm(false);
+                    }}
+                    className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white font-black text-[9px] rounded uppercase transition-colors"
+                  >
+                    Sí
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setShowDeleteConfirm(false);
+                    }}
+                    className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[9px] rounded uppercase transition-colors"
+                  >
+                    No
+                  </button>
                 </div>
               )}
-
             </div>
-          </ActionMenu>
+          )}
         </div>
       </td>
     </tr>
@@ -9734,6 +10265,8 @@ const SortableItemServicioRow = ({
   handleStartEditingItemInline,
   handleEliminarItemServicio,
   formatMoneySymbol,
+  activeEditServicioField,
+  setActiveEditServicioField,
 }) => {
   const {
     attributes,
@@ -9757,11 +10290,113 @@ const SortableItemServicioRow = ({
   };
 
   const isEditingItem = editingItemServicioId === item.id_servicio;
+  const rowRef = useRef(null);
+
+  const setMergedRef = (el) => {
+    setNodeRef(el);
+    rowRef.current = el;
+  };
+
+  useEffect(() => {
+    if (editingItemServicioId === item.id_servicio && activeEditServicioField) {
+      const timer = setTimeout(() => {
+        const rowEl = rowRef.current;
+        if (rowEl) {
+          let input = rowEl.querySelector(`[data-field="${activeEditServicioField}"], [name="${activeEditServicioField}"]`);
+          if (input && input.tagName !== 'INPUT' && input.tagName !== 'TEXTAREA' && input.tagName !== 'SELECT') {
+            input = input.querySelector('input, textarea, select') || input;
+          }
+          if (input) {
+            input.focus();
+            if (typeof input.select === 'function') {
+              input.select();
+            }
+          }
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [editingItemServicioId, item.id_servicio, activeEditServicioField]);
+
+  useEffect(() => {
+    if (editingItemServicioId !== item.id_servicio) return;
+
+    const handleClickOutside = (e) => {
+      const rowEl = rowRef.current;
+      if (rowEl && rowEl.contains(e.target)) return;
+
+      if (e.target.closest(
+        '[data-radix-popper-content-wrapper], ' +
+        '[data-radix-portal], ' +
+        '.Toastify, ' +
+        '.react-datepicker-popper, ' +
+        '.quill, ' +
+        '.ql-snow, ' +
+        '[role="dialog"], ' +
+        '[role="menu"], ' +
+        '[role="listbox"]'
+      )) {
+        return;
+      }
+
+      if (!document.body.contains(e.target)) {
+        return;
+      }
+
+      setEditingItemServicioId(null);
+      setActiveEditServicioField(null);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [editingItemServicioId, item.id_servicio, setEditingItemServicioId, setActiveEditServicioField]);
+
+  const getFocusableInputs = () => {
+    const rowEl = rowRef.current;
+    if (!rowEl) return [];
+    
+    let selectors = [];
+    if (sg.tipoCodigo === "04") {
+      selectors = [
+        'div[data-field="codigo_item"] input',
+        'input[data-field="descripcion_item"]',
+        'input[data-field="cantidad_hombres"]',
+        'input[data-field="cantidad_dias"]',
+        'input[data-field="horas"]',
+        'input[data-field="costo_hombre_dia"]',
+        'input[data-field="porcentaje"]'
+      ];
+    } else if (sg.tipoCodigo === "05") {
+      selectors = [
+        'div[data-field="codigo_item"] input',
+        'input[data-field="descripcion_item"]',
+        'input[data-field="cantidad_hombres"]',
+        'input[data-field="cantidad_dias"]',
+        'input[data-field="cotizado_hombre_dia"]'
+      ];
+    } else if (sg.tipoCodigo === "06") {
+      selectors = [
+        'div[data-field="codigo_item"] input',
+        'input[data-field="descripcion_item"]',
+        'input[data-field="cantidad_hombres"]',
+        'input[data-field="costo_hombre_dia"]',
+        'input[data-field="porcentaje"]'
+      ];
+    }
+    
+    return selectors
+      .map(sel => rowEl.querySelector(sel))
+      .filter(el => el !== null && !el.disabled);
+  };
 
   const handleKeyDown = (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       setEditingItemServicioId(null);
+      setActiveEditServicioField(null);
+      return;
     }
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -9771,6 +10406,68 @@ const SortableItemServicioRow = ({
         handleConfirmGastosServicioInline(editingServicioForm, grupo.id_servicio, sg.id_servicio);
       } else if (sg.tipoCodigo === "06") {
         handleConfirmOtrosInline(editingServicioForm, grupo.id_servicio, sg.id_servicio);
+      }
+      return;
+    }
+
+    // Arrow Navigation
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      const isSelectOrNumber = e.target.tagName === 'SELECT' || e.target.type === 'number';
+      const isAtStart = isSelectOrNumber || e.target.selectionStart === 0;
+      const isAtEnd = isSelectOrNumber || e.target.selectionEnd === e.target.value.length;
+
+      let fieldName = e.target.getAttribute('data-field') || e.target.getAttribute('name');
+      if (!fieldName) {
+        const parentWithField = e.target.closest('[data-field]');
+        if (parentWithField) {
+          fieldName = parentWithField.getAttribute('data-field');
+        }
+      }
+      if (!fieldName) return;
+
+      let order = [];
+      if (sg.tipoCodigo === "04") {
+        order = ['codigo_item', 'descripcion_item', 'cantidad_hombres', 'cantidad_dias', 'horas', 'costo_hombre_dia', 'porcentaje'];
+      } else if (sg.tipoCodigo === "05") {
+        order = ['codigo_item', 'descripcion_item', 'cantidad_hombres', 'cantidad_dias', 'cotizado_hombre_dia'];
+      } else if (sg.tipoCodigo === "06") {
+        order = ['codigo_item', 'descripcion_item', 'cantidad_hombres', 'costo_hombre_dia', 'porcentaje'];
+      }
+      
+      const idx = order.indexOf(fieldName);
+
+      if (e.key === 'ArrowRight' && isAtEnd) {
+        if (idx !== -1 && idx < order.length - 1) {
+          e.preventDefault();
+          const inputs = getFocusableInputs();
+          const nextField = order[idx + 1];
+          const nextInput = inputs.find(el => {
+            const elField = el.getAttribute('data-field') || el.getAttribute('name') || el.closest('[data-field]')?.getAttribute('data-field');
+            return elField === nextField;
+          });
+          if (nextInput) {
+            nextInput.focus();
+            if (typeof nextInput.select === 'function') {
+              nextInput.select();
+            }
+          }
+        }
+      } else if (e.key === 'ArrowLeft' && isAtStart) {
+        if (idx > 0) {
+          e.preventDefault();
+          const inputs = getFocusableInputs();
+          const prevField = order[idx - 1];
+          const prevInput = inputs.find(el => {
+            const elField = el.getAttribute('data-field') || el.getAttribute('name') || el.closest('[data-field]')?.getAttribute('data-field');
+            return elField === prevField;
+          });
+          if (prevInput) {
+            prevInput.focus();
+            if (typeof prevInput.select === 'function') {
+              prevInput.select();
+            }
+          }
+        }
       }
     }
   };
@@ -9788,41 +10485,44 @@ const SortableItemServicioRow = ({
       const calculatedCotizadoHD = formCosto * (1 + formPorcentaje / 100);
 
       return (
-        <tr ref={setNodeRef} style={style} className="bg-indigo-50/30">
+        <tr ref={setMergedRef} style={style} className="bg-indigo-50/30">
           <td className="px-2 text-center align-middle">
             <Icon name="grip-vertical" className="h-3.5 w-3.5 text-gray-200 mx-auto" />
           </td>
           <td className="px-2 py-1">
-            <TipoPersonalAutocomplete
-              value={editingServicioForm.codigo_item || ""}
-              idArea={item.id_area || data?.id_area}
-              onKeyDown={handleKeyDown}
-              onSelect={(personal) => {
-                if (!personal) {
+            <div data-field="codigo_item" className="w-full">
+              <TipoPersonalAutocomplete
+                value={editingServicioForm.codigo_item || ""}
+                idArea={item.id_area || data?.id_area}
+                onKeyDown={handleKeyDown}
+                onSelect={(personal) => {
+                  if (!personal) {
+                    setEditingServicioForm(prev => ({
+                      ...prev,
+                      codigo_item: '',
+                      descripcion_item: '',
+                      costo_hombre_dia: 0,
+                      costo_min: 0,
+                      costo_max: 0
+                    }));
+                    return;
+                  }
                   setEditingServicioForm(prev => ({
                     ...prev,
-                    codigo_item: '',
+                    codigo_item: `${personal.codigo}-${personal.nombre}`,
                     descripcion_item: '',
-                    costo_hombre_dia: 0,
-                    costo_min: 0,
-                    costo_max: 0
+                    costo_hombre_dia: parseFloat(personal.costo_max || personal.costo_min || 0),
+                    costo_min: parseFloat(personal.costo_min || 0),
+                    costo_max: parseFloat(personal.costo_max || 0)
                   }));
-                  return;
-                }
-                setEditingServicioForm(prev => ({
-                  ...prev,
-                  codigo_item: `${personal.codigo}-${personal.nombre}`,
-                  descripcion_item: '',
-                  costo_hombre_dia: parseFloat(personal.costo_max || personal.costo_min || 0),
-                  costo_min: parseFloat(personal.costo_min || 0),
-                  costo_max: parseFloat(personal.costo_max || 0)
-                }));
-              }}
-            />
+                }}
+              />
+            </div>
           </td>
           <td className="px-2 py-1">
             <input
               type="text"
+              data-field="descripcion_item"
               onKeyDown={handleKeyDown}
               className="w-full text-[10.5px] border border-gray-300 rounded px-1.5 py-0.5 uppercase font-semibold text-gray-700 bg-white"
               value={editingServicioForm.descripcion_item || ""}
@@ -9832,6 +10532,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-center">
             <input
               type="number"
+              data-field="cantidad_hombres"
               onKeyDown={handleKeyDown}
               className="w-full text-center text-[10.5px] border border-gray-300 text-center rounded px-1 py-0.5 font-bold bg-white"
               value={editingServicioForm.cantidad_hombres === undefined || editingServicioForm.cantidad_hombres === null ? "" : editingServicioForm.cantidad_hombres}
@@ -9842,6 +10543,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-center">
             <input
               type="number"
+              data-field="cantidad_dias"
               onKeyDown={handleKeyDown}
               className="w-full text-center text-[10.5px] border border-gray-300 text-center rounded px-1 py-0.5 font-semibold bg-white"
               value={editingServicioForm.cantidad_dias === undefined || editingServicioForm.cantidad_dias === null ? "" : editingServicioForm.cantidad_dias}
@@ -9852,6 +10554,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-center">
             <input
               type="number"
+              data-field="horas"
               onKeyDown={handleKeyDown}
               className="w-full text-center text-[10.5px] border border-gray-300 text-center rounded px-1 py-0.5 bg-white"
               value={editingServicioForm.horas === undefined || editingServicioForm.horas === null ? "" : editingServicioForm.horas}
@@ -9862,6 +10565,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-right">
             <input
               type="text"
+              data-field="costo_hombre_dia"
               onKeyDown={handleKeyDown}
               className="w-full text-[10.5px] border border-gray-300 text-right rounded px-1 py-0.5 bg-white"
               value={editingServicioForm.costo_hombre_dia === undefined || editingServicioForm.costo_hombre_dia === null ? "" : editingServicioForm.costo_hombre_dia}
@@ -9877,6 +10581,7 @@ const SortableItemServicioRow = ({
               <div className="relative flex items-center justify-center w-full">
                 <input
                   type="text"
+                  data-field="porcentaje"
                   onKeyDown={handleKeyDown}
                   className="w-full text-[10px] border border-gray-300 text-center rounded px-1 py-0.5 font-medium text-gray-500 bg-white"
                   value={editingServicioForm.porcentaje === undefined || editingServicioForm.porcentaje === null ? "" : editingServicioForm.porcentaje}
@@ -9894,22 +10599,7 @@ const SortableItemServicioRow = ({
             {formatMoneySymbol(calculatedCotizadoTotal)}
           </td>
           <td className="px-3 py-1 text-right">
-            <div className="flex justify-end gap-1.5">
-              <button
-                onClick={() => handleConfirmManoObraInline(editingServicioForm, grupo.id_servicio, sg.id_servicio)}
-                className="p-1 bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 rounded-lg transition-all"
-                title="Guardar"
-              >
-                <Icon name="check" className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={() => setEditingItemServicioId(null)}
-                className="p-1 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 rounded-lg transition-all"
-                title="Cancelar"
-              >
-                <Icon name="x" className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <div className="h-4" />
           </td>
         </tr>
       );
@@ -9922,35 +10612,38 @@ const SortableItemServicioRow = ({
       const calculatedCotizadoTotal = formHombres * formDias * formPrecio;
 
       return (
-        <tr ref={setNodeRef} style={style} className="bg-indigo-50/30">
+        <tr ref={setMergedRef} style={style} className="bg-indigo-50/30">
           <td className="px-2 text-center align-middle">
             <Icon name="grip-vertical" className="h-3.5 w-3.5 text-gray-200 mx-auto" />
           </td>
           <td className="px-2 py-1">
-            <TipoGastoDetalleAutocomplete
-              value={editingServicioForm.codigo_item || ""}
-              codePrefix="05"
-              onKeyDown={handleKeyDown}
-              onSelect={(gasto) => {
-                if (!gasto) {
+            <div data-field="codigo_item" className="w-full">
+              <TipoGastoDetalleAutocomplete
+                value={editingServicioForm.codigo_item || ""}
+                codePrefix="05"
+                onKeyDown={handleKeyDown}
+                onSelect={(gasto) => {
+                  if (!gasto) {
+                    setEditingServicioForm(prev => ({
+                      ...prev,
+                      codigo_item: '',
+                      descripcion_item: ''
+                    }));
+                    return;
+                  }
                   setEditingServicioForm(prev => ({
                     ...prev,
-                    codigo_item: '',
-                    descripcion_item: ''
+                    codigo_item: gasto.codigo,
+                    descripcion_item: gasto.nombre
                   }));
-                  return;
-                }
-                setEditingServicioForm(prev => ({
-                  ...prev,
-                  codigo_item: gasto.codigo,
-                  descripcion_item: gasto.nombre
-                }));
-              }}
-            />
+                }}
+              />
+            </div>
           </td>
           <td className="px-2 py-1">
             <input
               type="text"
+              data-field="descripcion_item"
               onKeyDown={handleKeyDown}
               className="w-full text-[10.5px] border border-gray-300 rounded px-1.5 py-0.5 uppercase font-semibold text-gray-700 bg-white"
               value={editingServicioForm.descripcion_item || ""}
@@ -9960,6 +10653,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-center">
             <input
               type="number"
+              data-field="cantidad_hombres"
               onKeyDown={handleKeyDown}
               className="w-full text-center text-[10.5px] border border-gray-300 text-center rounded px-1 py-0.5 font-bold bg-white"
               value={editingServicioForm.cantidad_hombres === undefined || editingServicioForm.cantidad_hombres === null ? "" : editingServicioForm.cantidad_hombres}
@@ -9970,6 +10664,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-center">
             <input
               type="number"
+              data-field="cantidad_dias"
               onKeyDown={handleKeyDown}
               className="w-full text-center text-[10.5px] border border-gray-300 text-center rounded px-1 py-0.5 font-semibold bg-white"
               value={editingServicioForm.cantidad_dias === undefined || editingServicioForm.cantidad_dias === null ? "" : editingServicioForm.cantidad_dias}
@@ -9980,6 +10675,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-right">
             <input
               type="text"
+              data-field="cotizado_hombre_dia"
               onKeyDown={handleKeyDown}
               className="w-full text-[10.5px] border border-gray-300 text-right rounded px-1 py-0.5 bg-white"
               value={editingServicioForm.cotizado_hombre_dia === undefined || editingServicioForm.cotizado_hombre_dia === null ? "" : editingServicioForm.cotizado_hombre_dia}
@@ -9991,22 +10687,7 @@ const SortableItemServicioRow = ({
             {formatMoneySymbol(calculatedCotizadoTotal)}
           </td>
           <td className="px-3 py-1 text-right">
-            <div className="flex justify-end gap-1.5">
-              <button
-                onClick={() => handleConfirmGastosServicioInline(editingServicioForm, grupo.id_servicio, sg.id_servicio)}
-                className="p-1 bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 rounded-lg transition-all"
-                title="Guardar"
-              >
-                <Icon name="check" className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={() => setEditingItemServicioId(null)}
-                className="p-1 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 rounded-lg transition-all"
-                title="Cancelar"
-              >
-                <Icon name="x" className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <div className="h-4" />
           </td>
         </tr>
       );
@@ -10023,35 +10704,38 @@ const SortableItemServicioRow = ({
       const calculatedCotizadoHD = formCosto * (1 + formPorcentaje / 100);
 
       return (
-        <tr ref={setNodeRef} style={style} className="bg-indigo-50/30">
+        <tr ref={setMergedRef} style={style} className="bg-indigo-50/30">
           <td className="px-2 text-center align-middle">
             <Icon name="grip-vertical" className="h-3.5 w-3.5 text-gray-200 mx-auto" />
           </td>
           <td className="px-2 py-1">
-            <TipoGastoDetalleAutocomplete
-              value={editingServicioForm.codigo_item || ""}
-              codePrefix="06"
-              onKeyDown={handleKeyDown}
-              onSelect={(gasto) => {
-                if (!gasto) {
+            <div data-field="codigo_item" className="w-full">
+              <TipoGastoDetalleAutocomplete
+                value={editingServicioForm.codigo_item || ""}
+                codePrefix="06"
+                onKeyDown={handleKeyDown}
+                onSelect={(gasto) => {
+                  if (!gasto) {
+                    setEditingServicioForm(prev => ({
+                      ...prev,
+                      codigo_item: '',
+                      descripcion_item: ''
+                    }));
+                    return;
+                  }
                   setEditingServicioForm(prev => ({
                     ...prev,
-                    codigo_item: '',
-                    descripcion_item: ''
+                    codigo_item: gasto.codigo,
+                    descripcion_item: gasto.nombre
                   }));
-                  return;
-                }
-                setEditingServicioForm(prev => ({
-                  ...prev,
-                  codigo_item: gasto.codigo,
-                  descripcion_item: gasto.nombre
-                }));
-              }}
-            />
+                }}
+              />
+            </div>
           </td>
           <td className="px-2 py-1">
             <input
               type="text"
+              data-field="descripcion_item"
               onKeyDown={handleKeyDown}
               className="w-full text-[10.5px] border border-gray-300 rounded px-1.5 py-0.5 uppercase font-semibold text-gray-700 bg-white"
               value={editingServicioForm.descripcion_item || ""}
@@ -10061,6 +10745,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-center">
             <input
               type="number"
+              data-field="cantidad_hombres"
               onKeyDown={handleKeyDown}
               className="w-full text-center text-[10.5px] border border-gray-300 text-center rounded px-1 py-0.5 font-bold bg-white"
               value={editingServicioForm.cantidad_hombres === undefined || editingServicioForm.cantidad_hombres === null ? "" : editingServicioForm.cantidad_hombres}
@@ -10071,6 +10756,7 @@ const SortableItemServicioRow = ({
           <td className="px-2 py-1 text-right">
             <input
               type="text"
+              data-field="costo_hombre_dia"
               onKeyDown={handleKeyDown}
               className="w-full text-[10.5px] border border-gray-300 text-right rounded px-1 py-0.5 bg-white"
               value={editingServicioForm.costo_hombre_dia === undefined || editingServicioForm.costo_hombre_dia === null ? "" : editingServicioForm.costo_hombre_dia}
@@ -10086,6 +10772,7 @@ const SortableItemServicioRow = ({
               <div className="relative flex items-center justify-center w-full">
                 <input
                   type="text"
+                  data-field="porcentaje"
                   onKeyDown={handleKeyDown}
                   className="w-full text-[10px] border border-gray-300 text-center rounded px-1 py-0.5 font-medium text-gray-500 bg-white"
                   value={editingServicioForm.porcentaje === undefined || editingServicioForm.porcentaje === null ? "" : editingServicioForm.porcentaje}
@@ -10103,22 +10790,7 @@ const SortableItemServicioRow = ({
             {formatMoneySymbol(calculatedCotizadoTotal)}
           </td>
           <td className="px-3 py-1 text-right">
-            <div className="flex justify-end gap-1.5">
-              <button
-                onClick={() => handleConfirmOtrosInline(editingServicioForm, grupo.id_servicio, sg.id_servicio)}
-                className="p-1 bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 rounded-lg transition-all"
-                title="Guardar"
-              >
-                <Icon name="check" className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={() => setEditingItemServicioId(null)}
-                className="p-1 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 rounded-lg transition-all"
-                title="Cancelar"
-              >
-                <Icon name="x" className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <div className="h-4" />
           </td>
         </tr>
       );
@@ -10127,12 +10799,15 @@ const SortableItemServicioRow = ({
 
   return (
     <tr
-      ref={setNodeRef}
+      ref={setMergedRef}
       style={style}
       onDoubleClick={() => !isReadOnly && handleStartEditingItemInline(item)}
       className="hover:bg-gray-50/70 group transition-colors cursor-pointer animate-in fade-in duration-150 border-b border-gray-100"
     >
-      <td className="px-2 text-center align-middle">
+      <td 
+        className="px-2 text-center align-middle"
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
         {!isReadOnly ? (
           <div
             {...listeners}
@@ -10160,15 +10835,82 @@ const SortableItemServicioRow = ({
 
         return (
           <>
-            <td className="px-3 py-1.5 text-[12px] font-bold text-gray-900 text-center uppercase whitespace-nowrap">{item.codigo_item}</td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-650 text-center uppercase font-semibold truncate max-w-0" title={item.descripcion_item}>
+            <td 
+              className="px-3 py-1.5 text-[12px] font-bold text-gray-900 text-center uppercase whitespace-nowrap cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'codigo_item');
+                }
+              }}
+            >
+              {item.codigo_item}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-655 text-center uppercase font-semibold truncate max-w-0 cursor-pointer" 
+              title={item.descripcion_item}
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'descripcion_item');
+                }
+              }}
+            >
               {item.descripcion_item}
             </td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-900 text-center font-bold">{rowHombres}</td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-600 text-center font-semibold">{rowDias}</td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-600 text-center">{item.horas}</td>
-            <td className="px-3 py-1.5 text-[12.5px] text-slate-700 text-center font-semibold whitespace-nowrap">{formatMoneySymbol(item.costo_hombre_dia)}</td>
-            <td className="px-3 py-1.5 text-center">
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-900 text-center font-bold cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'cantidad_hombres');
+                }
+              }}
+            >
+              {rowHombres}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-600 text-center font-semibold cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'cantidad_dias');
+                }
+              }}
+            >
+              {rowDias}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-600 text-center cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'horas');
+                }
+              }}
+            >
+              {item.horas}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12.5px] text-slate-700 text-center font-semibold whitespace-nowrap cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'costo_hombre_dia');
+                }
+              }}
+            >
+              {formatMoneySymbol(item.costo_hombre_dia)}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-center cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'porcentaje');
+                }
+              }}
+            >
               <div className="flex flex-col items-center justify-center gap-0.5 whitespace-nowrap">
                 <span className="text-[12.5px] font-extrabold text-slate-800">{formatMoneySymbol(rowUtilidad)}</span>
                 <span className="text-[10px] font-black text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded-full border border-indigo-100">
@@ -10176,8 +10918,18 @@ const SortableItemServicioRow = ({
                 </span>
               </div>
             </td>
-            <td className="px-3 py-1.5 text-[12.5px] text-slate-750 text-center font-semibold whitespace-nowrap">{formatMoneySymbol(rowCotizadoHD)}</td>
-            <td className="px-3 py-1.5 text-[12.5px] text-slate-900 text-center font-black whitespace-nowrap">{formatMoneySymbol(rowCotizadoTotal)}</td>
+            <td 
+              className="px-3 py-1.5 text-[12.5px] text-slate-755 text-center font-semibold whitespace-nowrap"
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              {formatMoneySymbol(rowCotizadoHD)}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12.5px] text-slate-900 text-center font-black whitespace-nowrap"
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              {formatMoneySymbol(rowCotizadoTotal)}
+            </td>
           </>
         );
       })()}
@@ -10190,14 +10942,68 @@ const SortableItemServicioRow = ({
 
         return (
           <>
-            <td className="px-3 py-1.5 text-[12px] font-bold text-gray-900 text-center uppercase whitespace-nowrap">{item.codigo_item}</td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-650 text-center uppercase font-semibold truncate max-w-0" title={item.descripcion_item}>
+            <td 
+              className="px-3 py-1.5 text-[12px] font-bold text-gray-900 text-center uppercase whitespace-nowrap cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'codigo_item');
+                }
+              }}
+            >
+              {item.codigo_item}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-655 text-center uppercase font-semibold truncate max-w-0 cursor-pointer" 
+              title={item.descripcion_item}
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'descripcion_item');
+                }
+              }}
+            >
               {item.descripcion_item}
             </td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-900 text-center font-bold">{rowHombres}</td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-600 text-center font-semibold">{rowDias}</td>
-            <td className="px-3 py-1.5 text-[12.5px] text-slate-700 text-center font-semibold whitespace-nowrap">{formatMoneySymbol(rowPrecio)}</td>
-            <td className="px-3 py-1.5 text-[12.5px] text-slate-900 text-center font-black whitespace-nowrap">{formatMoneySymbol(rowCotizadoTotal)}</td>
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-900 text-center font-bold cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'cantidad_hombres');
+                }
+              }}
+            >
+              {rowHombres}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-600 text-center font-semibold cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'cantidad_dias');
+                }
+              }}
+            >
+              {rowDias}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12.5px] text-slate-700 text-center font-semibold whitespace-nowrap cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'cotizado_hombre_dia');
+                }
+              }}
+            >
+              {formatMoneySymbol(rowPrecio)}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12.5px] text-slate-900 text-center font-black whitespace-nowrap"
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              {formatMoneySymbol(rowCotizadoTotal)}
+            </td>
           </>
         );
       })()}
@@ -10213,13 +11019,60 @@ const SortableItemServicioRow = ({
 
         return (
           <>
-            <td className="px-3 py-1.5 text-[12px] font-bold text-gray-900 text-center uppercase whitespace-nowrap">{item.codigo_item}</td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-650 text-center uppercase font-semibold truncate max-w-0" title={item.descripcion_item}>
+            <td 
+              className="px-3 py-1.5 text-[12px] font-bold text-gray-900 text-center uppercase whitespace-nowrap cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'codigo_item');
+                }
+              }}
+            >
+              {item.codigo_item}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-655 text-center uppercase font-semibold truncate max-w-0 cursor-pointer" 
+              title={item.descripcion_item}
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'descripcion_item');
+                }
+              }}
+            >
               {item.descripcion_item}
             </td>
-            <td className="px-3 py-1.5 text-[12px] text-gray-900 text-center font-bold">{rowHombres}</td>
-            <td className="px-3 py-1.5 text-[12.5px] text-slate-700 text-center font-semibold whitespace-nowrap">{formatMoneySymbol(rowCosto)}</td>
-            <td className="px-3 py-1.5 text-center">
+            <td 
+              className="px-3 py-1.5 text-[12px] text-gray-900 text-center font-bold cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'cantidad_hombres');
+                }
+              }}
+            >
+              {rowHombres}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12.5px] text-slate-700 text-center font-semibold whitespace-nowrap cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'costo_hombre_dia');
+                }
+              }}
+            >
+              {formatMoneySymbol(rowCosto)}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-center cursor-pointer"
+              onDoubleClick={(e) => {
+                if (!isReadOnly) {
+                  e.stopPropagation();
+                  handleStartEditingItemInline(item, 'porcentaje');
+                }
+              }}
+            >
               <div className="flex flex-col items-center justify-center gap-0.5 whitespace-nowrap">
                 <span className="text-[12.5px] font-extrabold text-slate-800">{formatMoneySymbol(rowUtilidad)}</span>
                 <span className="text-[10px] font-black text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded-full border border-indigo-100">
@@ -10227,13 +11080,26 @@ const SortableItemServicioRow = ({
                 </span>
               </div>
             </td>
-            <td className="px-3 py-1.5 text-[12.5px] text-slate-750 text-center font-semibold whitespace-nowrap">{formatMoneySymbol(rowCotizadoHD)}</td>
-            <td className="px-3 py-1.5 text-[12.5px] text-slate-900 text-center font-black whitespace-nowrap">{formatMoneySymbol(rowCotizadoTotal)}</td>
+            <td 
+              className="px-3 py-1.5 text-[12.5px] text-slate-755 text-center font-semibold whitespace-nowrap"
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              {formatMoneySymbol(rowCotizadoHD)}
+            </td>
+            <td 
+              className="px-3 py-1.5 text-[12.5px] text-slate-900 text-center font-black whitespace-nowrap"
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              {formatMoneySymbol(rowCotizadoTotal)}
+            </td>
           </>
         );
       })()}
 
-      <td className="px-3 py-1.5 text-right">
+      <td 
+        className="px-3 py-1.5 text-right"
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
         {!isReadOnly ? (
           <div className="flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <button

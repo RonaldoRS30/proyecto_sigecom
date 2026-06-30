@@ -87,10 +87,6 @@ urlpatterns = [
     path("alertas/generar/", views.generar_alertas, name="generar_alertas"),
 
     # DB_VC
-    path("rittal/", views.lista_rittal, name="lista_rittal"),
-    path("rockwell/", views.lista_rockwell, name="lista_rockwell"),
-    path("ceyesa/", views.lista_ceyesa, name="lista_ceyesa"),
-    path("hoffman/", views.lista_hoffman, name="lista_hoffman"),
     path("alm-articulos/", views.lista_alm_articulos, name="lista_alm_articulos"),
     
     # GUARDAR COTIZACIÓN

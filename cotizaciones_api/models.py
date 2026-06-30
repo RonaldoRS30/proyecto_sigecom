@@ -127,7 +127,6 @@ class CotizacionSuministro(models.Model):
     id_suministro = models.AutoField(primary_key=True)
     
     # ── RELACIÓN PADRE (Vínculo con Cotización) ──
-    # Usamos related_name para acceder desde la cotización: coti.suministros.all()
     id_registro = models.ForeignKey(
         'Cotizacion', 
         on_delete=models.CASCADE, 
@@ -188,7 +187,7 @@ class CotizacionSuministro(models.Model):
     total_por_grupo = models.IntegerField(null=True, blank=True)
 
     class Meta:
-        managed = False  # Apunta a tu tabla física en MySQL
+        managed = False
         db_table = 'cotizaciones_suministros'
         verbose_name = "Suministro"
         verbose_name_plural = "Suministros"
@@ -339,6 +338,11 @@ class CotizacionSeguimiento(models.Model):
         managed = False
         db_table = 'cotizaciones_seguimiento'
         ordering = ['-fecha']
+
+    def save(self, *args, **kwargs):
+        if self.detalle and len(self.detalle) > 1000:
+            self.detalle = self.detalle[:997] + "..."
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Seguimiento {self.id_seguimiento} - Cot: {self.id_registro_id}"
@@ -501,97 +505,6 @@ class Notificacion(models.Model):
 ##================##
 ## DATOS DE BD_VC ##
 ##================##
-
-# vc_tab_rittal
-class vc_tab_rittal(models.Model):
-    codigo = models.CharField(max_length=10, primary_key=True)  # Código del cliente o registro
-    nombre = models.CharField(max_length=100, blank=True, null=True)
-    grupo = models.CharField(max_length=5, blank=True, null=True)
-    um = models.CharField(max_length=10, blank=True, null=True)
-    descripcion = models.CharField(max_length=100, blank=True, null=True)
-    precio_s = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
-    precio_d = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
-    cantidad = models.DecimalField(max_digits=9, decimal_places=2, blank=True, null=True)
-    ocodigo = models.CharField(max_length=15, blank=True, null=True)
-    stock_min = models.DecimalField(max_digits=9, decimal_places=2, blank=True, null=True)
-    stock_max = models.DecimalField(max_digits=9, decimal_places=2, blank=True, null=True)
-    descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
-    proveedor = models.CharField(max_length=70, blank=True, null=True)
-    activo = models.BooleanField(default=True)  # Indicador de activo/inactivo
-
-    class Meta:
-        managed = False
-        db_table = "vc_tab_rittal"
-        ordering = ["codigo"]
-
-    def __str__(self):
-        return f"{self.codigo} ({self.nombre})"
-
-# vc_tab_rockwell
-class vc_tab_rockwell(models.Model):
-    codigo = models.CharField(max_length=60, primary_key=True)  # Código del cliente o registro
-    codigo2 = models.CharField(max_length=60, blank=True, null=True)
-    descripcion = models.CharField(max_length=100, blank=True, null=True)
-    ds = models.CharField(max_length=2, blank=True, null=True)
-    pgc = models.CharField(max_length=3, blank=True, null=True)
-    precio = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-    proveedor = models.CharField(max_length=20, blank=True, null=True)
-    activo = models.BooleanField(default=True)  # Indicador de activo/inactivo
-    cprimario = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-    x = models.CharField(max_length=1, blank=True, null=True)
-
-    class Meta:
-        managed = False
-        db_table = "vc_tab_rockwell"
-        ordering = ["codigo"]
-
-    def __str__(self):
-        return f"{self.codigo} ({self.codigo2})"
-
-# vc_tab_ceyesa
-class vc_tab_ceyesa(models.Model):
-    codigo = models.CharField(max_length=60, primary_key=True)  # Código del cliente o registro
-    codigo2 = models.CharField(max_length=60, blank=True, null=True)
-    descripcion = models.CharField(max_length=150, blank=True, null=True)
-    ds = models.CharField(max_length=2, blank=True, null=True)
-    pgc = models.CharField(max_length=3, blank=True, null=True)
-    precio = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-    proveedor = models.CharField(max_length=20, blank=True, null=True)
-    activo = models.BooleanField(default=True)  # Indicador de activo/inactivo
-    cprimario = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-
-    class Meta:
-        managed = False
-        db_table = "vc_tab_ceyesa"
-        ordering = ["codigo"]
-
-    def __str__(self):
-        return f"{self.codigo} ({self.codigo2})"
-
-# vc_tab_hoffman
-class vc_tab_hoffman(models.Model):
-    codigo = models.CharField(max_length=10, primary_key=True)  # Código del cliente o registro
-    nombre = models.CharField(max_length=100, blank=True, null=True)
-    grupo = models.CharField(max_length=5, blank=True, null=True)
-    um = models.CharField(max_length=10, blank=True, null=True)
-    descripcion = models.CharField(max_length=100, blank=True, null=True)
-    precio_s = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
-    precio_d = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
-    cantidad = models.DecimalField(max_digits=9, decimal_places=2, blank=True, null=True)
-    ocodigo = models.CharField(max_length=15, blank=True, null=True)
-    stock_min = models.DecimalField(max_digits=9, decimal_places=2, blank=True, null=True)
-    stock_max = models.DecimalField(max_digits=9, decimal_places=2, blank=True, null=True)
-    descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
-    proveedor = models.CharField(max_length=70, blank=True, null=True)
-    activo = models.BooleanField(default=True)  # Indicador de activo/inactivo
-
-    class Meta:
-        managed = False
-        db_table = "vc_tab_hoffman"
-        ordering = ["codigo"]
-
-    def __str__(self):
-        return f"{self.codigo} ({self.nombre})"
 
 # alm_articulos
 class alm_articulos(models.Model):

@@ -15,4 +15,5 @@ urlpatterns = [
     path("tipo_gasto_detalle/", views.lista_tgasto_detalle, name="lista_tgasto_detalle"),
     path("productos/", views.lista_productos, name="lista_productos"),
     path("notas/", views.lista_notas, name="lista_notas"),
+    path("unidades_medida/", views.lista_unidades_medida, name="lista_unidades_medida"),
 ]

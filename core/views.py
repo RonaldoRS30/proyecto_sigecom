@@ -16,6 +16,7 @@ from .models import (
     TipoGastoDetalle,
     Producto,
     Nota,
+    UnidadMedida,
 )
 from .serializers import (
     ClienteSerializer,
@@ -27,6 +28,7 @@ from .serializers import (
     TipoGastoDetalleSerializer,
     ProductoSerializer,
     NotaSerializer,
+    UnidadMedidaSerializer,
 )
 
 # CLIENTE
@@ -124,7 +126,6 @@ def buscar_clientes_inline(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-# REPRESENTANTES
 @api_view(["GET", "POST", "PUT", "DELETE"])
 @permission_classes([IsAuthenticated])
 def lista_representantes(request):
@@ -219,7 +220,6 @@ def buscar_representantes_inline(request):
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# ESTADOS
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def lista_estados(request):
@@ -261,19 +261,106 @@ def lista_tipo_gasto(request):
     serializer = TipoGastoSerializer(tipo_gasto, many=True)
     return Response(serializer.data)
 
-@api_view(["GET"])
+def obtener_siguiente_id_marca():
+    # Obtener todos los IDs de marca actuales
+    existing_ids = set(TipoMarca.objects.values_list('id_marca', flat=True))
+    # Buscar el primer ID libre entre 8 y 98
+    for candidate in range(8, 99):
+        if candidate not in existing_ids:
+            return candidate
+    # Si todo del 8 al 98 está lleno, buscar desde 100 en adelante (evitando 99)
+    candidate = 100
+    while candidate in existing_ids or candidate == 99:
+        candidate += 1
+    return candidate
+
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def lista_tipo_marca(request):
-    tipo_marca = TipoMarca.objects.filter(activo="1").order_by("nombre")
-    serializer = TipoMarcaSerializer(tipo_marca, many=True)
-    return Response(serializer.data)
+    if request.method == "GET":
+        tipo_marca = TipoMarca.objects.filter(activo="1").order_by("nombre")
+        serializer = TipoMarcaSerializer(tipo_marca, many=True)
+        return Response(serializer.data)
+    elif request.method == "POST":
+        nombre = request.data.get("nombre", "").strip().upper()
+        if not nombre:
+            return Response({"ok": False, "error": "El nombre de la marca es requerido"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if brand already exists (case-insensitive)
+        exists = TipoMarca.objects.filter(nombre__iexact=nombre).first()
+        if exists:
+            if exists.activo != "1":
+                exists.activo = "1"
+                exists.save()
+            serializer = TipoMarcaSerializer(exists)
+            return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_200_OK)
+        
+        next_id = obtener_siguiente_id_marca()
+        nueva_marca = TipoMarca.objects.create(id_marca=next_id, nombre=nombre, activo="1")
+        return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_201_CREATED)
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def lista_tipo_personal(request):
     """
-    Lista todos los tipos de personal activos para SIGECOM 5.
+    Lista todos los tipos de personal activos para SIGECOM 5 o crea uno nuevo.
     """
+    if request.method == "POST":
+        try:
+            nombre = request.data.get("nombre")
+            id_area = request.data.get("id_area")
+            costo_min = request.data.get("costo_min", 0)
+            costo_max = request.data.get("costo_max", 0)
+            
+            if not nombre or not id_area:
+                return Response({"ok": False, "error": "Nombre y Área son requeridos"}, status=400)
+            
+            import re
+            from core.models import Area
+            try:
+                area = Area.objects.get(pk=id_area)
+            except Area.DoesNotExist:
+                return Response({"ok": False, "error": "El Área especificada no existe"}, status=400)
+                
+            prefix = str(id_area).zfill(2)
+            existing_codes = TipoPersonal.objects.filter(id_area=id_area).values_list('codigo', flat=True)
+            
+            max_num = 0
+            has_separator = False
+            for code in existing_codes:
+                if not code:
+                    continue
+                match = re.match(r'^' + prefix + r'(-?)(\d+)$', code)
+                if match:
+                    sep, num_str = match.groups()
+                    if sep == '-':
+                        has_separator = True
+                    try:
+                        num = int(num_str)
+                        if num > max_num:
+                            max_num = num
+                    except ValueError:
+                        pass
+            
+            next_num = max_num + 1
+            if has_separator or any('-' in c for c in existing_codes if c.startswith(prefix)):
+                next_code = f"{prefix}-{str(next_num).zfill(3)}"
+            else:
+                next_code = f"{prefix}{str(next_num).zfill(3)}"
+                
+            nuevo_personal = TipoPersonal.objects.create(
+                codigo=next_code,
+                nombre=nombre.strip().upper(),
+                costo_min=costo_min,
+                costo_max=costo_max,
+                id_area=area,
+                activo=1
+            )
+            serializer = TipoPersonalSerializer(nuevo_personal)
+            return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
     try:
         personal = TipoPersonal.objects.select_related('id_area').filter(activo=1)
         
@@ -289,12 +376,65 @@ def lista_tipo_personal(request):
             "error": str(e)
         }, status=500)
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def lista_tgasto_detalle(request):
     """
-    Lista el detalle de tipos de gasto activos para SIGECOM 5.
+    Lista el detalle de tipos de gasto activos para SIGECOM 5 o crea uno nuevo.
     """
+    if request.method == "POST":
+        try:
+            nombre = request.data.get("nombre")
+            code_prefix = request.data.get("code_prefix") # "05" o "06"
+            
+            if not nombre or not code_prefix:
+                return Response({"ok": False, "error": "Nombre y Prefijo de Código son requeridos"}, status=400)
+                
+            import re
+            from core.models import TipoGasto
+            
+            parent_gasto = TipoGasto.objects.filter(codigo=code_prefix).first()
+            if not parent_gasto:
+                parent_gasto = TipoGasto.objects.all().first()
+                if not parent_gasto:
+                    return Response({"ok": False, "error": f"No se encontró TipoGasto para el prefijo {code_prefix}"}, status=400)
+            
+            existing_codes = TipoGastoDetalle.objects.filter(codigo__startswith=code_prefix).values_list('codigo', flat=True)
+            
+            max_num = 0
+            has_separator = False
+            for code in existing_codes:
+                if not code:
+                    continue
+                match = re.match(r'^' + code_prefix + r'(-?)(\d+)$', code)
+                if match:
+                    sep, num_str = match.groups()
+                    if sep == '-':
+                        has_separator = True
+                    try:
+                        num = int(num_str)
+                        if num > max_num:
+                            max_num = num
+                    except ValueError:
+                        pass
+            
+            next_num = max_num + 1
+            if has_separator or any('-' in c for c in existing_codes if c.startswith(code_prefix)):
+                next_code = f"{code_prefix}-{str(next_num).zfill(3)}"
+            else:
+                next_code = f"{code_prefix}{str(next_num).zfill(3)}"
+                
+            nuevo_gasto = TipoGastoDetalle.objects.create(
+                codigo=next_code,
+                nombre=nombre.strip().upper(),
+                id_tipo_gasto=parent_gasto,
+                activo=1
+            )
+            serializer = TipoGastoDetalleSerializer(nuevo_gasto)
+            return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
     try:
         # Usamos select_related para traer el nombre del padre en una sola consulta
         detalles = TipoGastoDetalle.objects.select_related('id_tipo_gasto').filter(activo=1)
@@ -311,45 +451,174 @@ def lista_tgasto_detalle(request):
             "error": str(e)
         }, status=500)
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def lista_productos(request):
     """
-    Lista todos los productos activos. 
+    Lista todos los productos activos o crea uno nuevo.
     Soporta búsqueda opcional mediante el parámetro 'search' e 'id_marca'.
     """
-    try:
-        search = request.query_params.get('search', None)
-        id_marca = request.query_params.get('id_marca', None)
-        
-        # Optimizamos con select_related para traer marca y unidad de medida
-        productos = Producto.objects.select_related('id_marca', 'id_medida').filter(activo=1)
-        
-        if id_marca:
-            productos = productos.filter(id_marca=id_marca)
+    if request.method == "GET":
+        try:
+            search = request.query_params.get('search', None)
+            id_marca = request.query_params.get('id_marca', None)
             
-        if search:
-            productos = productos.filter(
-                Q(nombre__icontains=search) | 
-                Q(codigo__icontains=search) |
-                Q(ocodigo__icontains=search)
-            )
-        
-        # Limitamos a los primeros 100 para no saturar si no hay búsqueda
-        if not search:
-            productos = productos[:100]
+            # Optimizamos con select_related para traer marca y unidad de medida
+            productos = Producto.objects.select_related('id_marca', 'id_medida').filter(activo=1)
+            
+            if id_marca:
+                productos = productos.filter(id_marca=id_marca)
+                
+            if search:
+                productos = productos.filter(
+                    Q(nombre__icontains=search) | 
+                    Q(codigo__icontains=search)
+                )
+            
+            # Limitamos a los primeros 100 para no saturar si no hay búsqueda
+            if not search:
+                productos = productos[:100]
 
-        serializer = ProductoSerializer(productos, many=True)
-        return Response({
-            "ok": True,
-            "data": serializer.data
-        })
-        
-    except Exception as e:
-        return Response({
-            "ok": False,
-            "error": str(e)
-        }, status=500)
+            serializer = ProductoSerializer(productos, many=True)
+            return Response({
+                "ok": True,
+                "data": serializer.data
+            })
+            
+        except Exception as e:
+            return Response({
+                "ok": False,
+                "error": str(e)
+            }, status=500)
+            
+    elif request.method == "POST":
+        try:
+            id_marca = request.data.get("id_marca")
+            codigo = request.data.get("codigo", "").strip().upper()
+            nombre = request.data.get("nombre", "").strip().upper()
+            precio_dolares = request.data.get("precio_dolares", 0)
+
+            if not id_marca:
+                return Response({"ok": False, "error": "El id_marca es requerido"}, status=status.HTTP_400_BAD_REQUEST)
+            if not codigo:
+                return Response({"ok": False, "error": "El código de producto es requerido"}, status=status.HTTP_400_BAD_REQUEST)
+            if not nombre:
+                return Response({"ok": False, "error": "La descripción (nombre) es requerida"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Verificar si la marca existe
+            try:
+                marca = TipoMarca.objects.get(id_marca=id_marca)
+            except TipoMarca.DoesNotExist:
+                return Response({"ok": False, "error": "La marca especificada no existe"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Obtener campos adicionales
+            codigo2 = request.data.get("codigo2", None)
+            if isinstance(codigo2, str):
+                codigo2 = codigo2.strip().upper() or None
+            
+            contenido_valor = request.data.get("contenido_valor", 1.00)
+            try:
+                contenido_valor = float(contenido_valor)
+            except (ValueError, TypeError):
+                contenido_valor = 1.00
+
+            id_medida = request.data.get("id_medida", None)
+            medida = None
+            if id_medida:
+                try:
+                    id_medida_int = int(id_medida)
+                    medida = UnidadMedida.objects.get(id_medida=id_medida_int)
+                except (ValueError, TypeError, UnidadMedida.DoesNotExist):
+                    medida_str = str(id_medida).strip().upper()
+                    if medida_str:
+                        medida = UnidadMedida.objects.filter(
+                            Q(nombre__iexact=medida_str) | Q(codigo__iexact=medida_str)
+                        ).first()
+                        if not medida:
+                            medida = UnidadMedida.objects.create(
+                                codigo=medida_str[:50],
+                                nombre=medida_str[:100],
+                                activo=1
+                            )
+
+            descripcion = request.data.get("descripcion", None)
+            if isinstance(descripcion, str):
+                descripcion = descripcion.strip().upper() or None
+
+            stock_min = request.data.get("stock_min", 0)
+            try:
+                stock_min = int(stock_min)
+            except (ValueError, TypeError):
+                stock_min = 0
+
+            stock_max = request.data.get("stock_max", 0)
+            try:
+                stock_max = int(stock_max)
+            except (ValueError, TypeError):
+                stock_max = 0
+
+            descuento = request.data.get("descuento", 0.00)
+            try:
+                descuento = float(descuento)
+            except (ValueError, TypeError):
+                descuento = 0.00
+
+            proveedor = request.data.get("proveedor", None)
+            if isinstance(proveedor, str):
+                proveedor = proveedor.strip() or None
+
+            tipo_cambio = request.data.get("tipo_cambio", 1.0)
+            try:
+                tipo_cambio = float(tipo_cambio)
+            except (ValueError, TypeError):
+                tipo_cambio = 1.0
+            precio_soles = float(precio_dolares) * tipo_cambio
+
+            # Verificar si ya existe un producto con el mismo código para esta marca (insensible a mayúsculas)
+            exists = Producto.objects.filter(id_marca=id_marca, codigo__iexact=codigo).first()
+            if exists:
+                if exists.activo != 1:
+                    exists.activo = 1
+                exists.nombre = nombre
+                exists.precio_dolares = precio_dolares
+                exists.precio_soles = precio_soles
+                exists.codigo2 = codigo2
+                exists.contenido_valor = contenido_valor
+                exists.id_medida = medida
+                exists.descripcion = descripcion
+                exists.stock_min = stock_min
+                exists.stock_max = stock_max
+                exists.descuento = descuento
+                exists.proveedor = proveedor
+                exists.save()
+                serializer = ProductoSerializer(exists)
+                return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_200_OK)
+
+            # Si no existe, crearlo
+            nuevo_producto = Producto.objects.create(
+                id_marca=marca,
+                codigo=codigo,
+                nombre=nombre,
+                precio_dolares=precio_dolares,
+                precio_soles=precio_soles,
+                codigo2=codigo2,
+                contenido_valor=contenido_valor,
+                id_medida=medida,
+                descripcion=descripcion,
+                stock_min=stock_min,
+                stock_max=stock_max,
+                descuento=descuento,
+                proveedor=proveedor,
+                activo=1
+            )
+            serializer = ProductoSerializer(nuevo_producto)
+            return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({
+                "ok": False,
+                "error": str(e)
+            }, status=500)
 
 @api_view(["GET", "POST", "PUT"])
 @permission_classes([IsAuthenticated])
@@ -395,4 +664,31 @@ def lista_notas(request):
                 "ok": False, 
                 "error": "Nota técnica no encontrada"
             }, status=404)
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def lista_unidades_medida(request):
+    if request.method == "GET":
+        unidades = UnidadMedida.objects.filter(activo=1).order_by("nombre")
+        serializer = UnidadMedidaSerializer(unidades, many=True)
+        return Response(serializer.data)
+    elif request.method == "POST":
+        codigo = request.data.get("codigo", "").strip().upper()
+        nombre = request.data.get("nombre", "").strip().upper()
+        if not codigo or not nombre:
+            return Response({"ok": False, "error": "El código y nombre de unidad son requeridos"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if already exists (case-insensitive)
+        exists = UnidadMedida.objects.filter(Q(codigo__iexact=codigo) | Q(nombre__iexact=nombre)).first()
+        if exists:
+            if exists.activo != 1:
+                exists.activo = 1
+                exists.save()
+            serializer = UnidadMedidaSerializer(exists)
+            return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_200_OK)
+        
+        nueva_unidad = UnidadMedida.objects.create(codigo=codigo, nombre=nombre, activo=1)
+        serializer = UnidadMedidaSerializer(nueva_unidad)
+        return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_201_CREATED)
+
 

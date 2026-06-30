@@ -38,6 +38,14 @@ const ActionMenu = ({
           sideOffset={8}
           className={`z-[9999] min-w-[220px] bg-white rounded-2xl p-1.5 shadow-[0_10px_38px_-10px_rgba(22,23,24,0.35),0_10px_20px_-15px_rgba(22,23,24,0.2)] border border-slate-100 animate-in fade-in zoom-in duration-200 ${contentClassName}`}
           onCloseAutoFocus={(e) => e.preventDefault()}
+          onOpenAutoFocus={(e) => {
+            const uMedida = e.currentTarget.querySelector(".u-medida-input");
+            if (uMedida) {
+              e.preventDefault();
+              uMedida.focus();
+              if (uMedida.select) uMedida.select();
+            }
+          }}
         >
           {title && (
             <div className="px-3 py-2 mb-1 border-b border-slate-50">
