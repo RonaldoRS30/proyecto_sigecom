@@ -24,6 +24,7 @@ urlpatterns = [
     # PRODUCTOS Y CATÁLOGOS LOGÍSTICA
     path('logistica/dashboard/productos/', views.logistica_productos_view, name="logistica_productos"),
     path('logistica/dashboard/umed/', views.logistica_umed_view, name="logistica_umed"),
+    path('logistica/stock/', views.logistica_stock_view, name="logistica_stock"),
     path('logistica/movimiento/', views.logistica_movimiento, name='logistica_movimiento'),
     path('logistica/movimiento/<int:num_reg>/', views.logistica_movimiento_update, name='logistica_movimiento_update'),
     path('logistica/movimiento/<int:num_reg>/anular/', views.logistica_movimiento_anular, name='logistica_movimiento_anular'),

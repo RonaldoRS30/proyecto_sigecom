@@ -920,8 +920,10 @@ from django.db.models.functions import Trim
 @permission_classes([IsAuthenticated])
 def logistica_productos_view(request):
     q = (request.GET.get("q", "") or "").strip()
+    almacen_id = request.GET.get("almacen_id")
+    operacion = request.GET.get("operacion", "E")
 
-    productos = Producto.objects.select_related("id_medida").filter(activo=1).exclude(cantidad=0)
+    productos = Producto.objects.select_related("id_medida").filter(activo=1)
 
     if q:
         productos = productos.filter(
@@ -932,8 +934,33 @@ def logistica_productos_view(request):
 
     productos = productos.order_by("codigo")[:100]
 
-    data = [
-        {
+    from django.db.models import Sum
+    data = []
+    for p in productos:
+        stock_val = 0
+        if almacen_id and str(almacen_id).strip() not in ("", "%"):
+            try:
+                entradas = LogisticaDashboardDetalle.objects.filter(
+                    cod=str(p.id_producto),
+                    num_reg__in=LogisticaDashboard.objects.filter(alm_id=almacen_id, ope='E').exclude(est='2').values_list('num_reg', flat=True)
+                ).aggregate(total=Sum('can'))['total'] or 0
+
+                salidas = LogisticaDashboardDetalle.objects.filter(
+                    cod=str(p.id_producto),
+                    num_reg__in=LogisticaDashboard.objects.filter(alm_id=almacen_id, ope='S').exclude(est='2').values_list('num_reg', flat=True)
+                ).aggregate(total=Sum('can'))['total'] or 0
+
+                stock_val = float(entradas - salidas)
+            except Exception:
+                stock_val = 0
+        else:
+            stock_val = float(p.cantidad or 0)
+
+        # Si es Salida y la cantidad es 0 (o menor), no se lista si es 0
+        if operacion == "S" and stock_val <= 0:
+            continue
+
+        data.append({
             "id_producto": p.id_producto,
             "codigo": p.codigo or "",
             "nombre": p.nombre or "",
@@ -943,10 +970,35 @@ def logistica_productos_view(request):
             "unidad_nombre": p.id_medida.nombre if p.id_medida else "",
             "valor_soles": float(p.precio_soles or 0),
             "valor_dolares": float(p.precio_dolares or 0),
-        }
-        for p in productos
-    ]
+            "stock": stock_val,
+        })
     return Response(data)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def logistica_stock_view(request):
+    producto_id = request.GET.get("producto_id")
+    almacen_id = request.GET.get("almacen_id")
+    if not producto_id or not almacen_id or str(almacen_id).strip() in ("", "%"):
+        return Response({"cantidad": 0})
+
+    from django.db.models import Sum
+    try:
+        entradas = LogisticaDashboardDetalle.objects.filter(
+            cod=str(producto_id),
+            num_reg__in=LogisticaDashboard.objects.filter(alm_id=almacen_id, ope='E').exclude(est='2').values_list('num_reg', flat=True)
+        ).aggregate(total=Sum('can'))['total'] or 0
+
+        salidas = LogisticaDashboardDetalle.objects.filter(
+            cod=str(producto_id),
+            num_reg__in=LogisticaDashboard.objects.filter(alm_id=almacen_id, ope='S').exclude(est='2').values_list('num_reg', flat=True)
+        ).aggregate(total=Sum('can'))['total'] or 0
+
+        cantidad = float(entradas - salidas)
+    except Exception:
+        cantidad = 0
+
+    return Response({"cantidad": cantidad})
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -1326,6 +1378,30 @@ def logistica_tipo_cambio_view(request):
     tc = _resolver_tc(fecha, request.GET.get("tc"))
     return Response({"fecha": fecha_str, "tipo_cambio": tc})
 
+def check_stock_disponible(prod_id, alm_id, quantity, num_reg=None, item_codigo=None):
+    from django.db.models import Sum
+    entradas = LogisticaDashboardDetalle.objects.filter(
+        cod=str(prod_id),
+        num_reg__in=LogisticaDashboard.objects.filter(alm_id=alm_id, ope='E').exclude(est='2').values_list('num_reg', flat=True)
+    ).aggregate(total=Sum('can'))['total'] or 0
+
+    salidas_qs = LogisticaDashboard.objects.filter(alm_id=alm_id, ope='S').exclude(est='2')
+    if num_reg:
+        salidas_qs = salidas_qs.exclude(num_reg=num_reg)
+
+    salidas = LogisticaDashboardDetalle.objects.filter(
+        cod=str(prod_id),
+        num_reg__in=salidas_qs.values_list('num_reg', flat=True)
+    ).aggregate(total=Sum('can'))['total'] or 0
+
+    stock_disponible = float(entradas - salidas)
+    if stock_disponible < float(quantity):
+        codigo_str = item_codigo or str(prod_id)
+        raise ValidationError(
+            f"Stock insuficiente para el producto {codigo_str}. "
+            f"Disponible: {stock_disponible}, Requerido: {quantity}."
+        )
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
@@ -1356,6 +1432,15 @@ def logistica_movimiento(request):
 
         alm_id = _parse_fk_id(data.get("almacen"))
         cor_id = _parse_fk_id(data.get("cor_id") or data.get("cliente_id"))
+
+        # Validar stock si es salida
+        if ope == "S":
+            for item in items:
+                prod_id_int = resolver_producto_id_item(item)
+                if prod_id_int:
+                    cant = int(float(item.get("cant") or item.get("cantidad") or 0))
+                    codigo = item.get("codigo") or str(prod_id_int)
+                    check_stock_disponible(prod_id_int, alm_id, cant, item_codigo=codigo)
 
         usuario_id = data.get("usuario_id") or data.get("responsable_id")
         if not usuario_id:
@@ -1430,6 +1515,20 @@ def logistica_movimiento_update(request, num_reg):
 
         alm_id = _parse_fk_id(data.get("almacen"))
         cor_id = _parse_fk_id(data.get("cor_id") or data.get("cliente_id"))
+
+        # Validar stock si es salida
+        if cabecera.ope == "S":
+            for item in items:
+                prod_id_int = resolver_producto_id_item(item)
+                if not prod_id_int:
+                    det_id = _parse_fk_id(item.get("id_detalle"))
+                    existing = LogisticaDashboardDetalle.objects.filter(id=det_id).first() if det_id else None
+                    if existing:
+                        prod_id_int = _parse_fk_id(existing.cod)
+                if prod_id_int:
+                    cant = int(float(item.get("cant") or item.get("cantidad") or 0))
+                    codigo = item.get("codigo") or str(prod_id_int)
+                    check_stock_disponible(prod_id_int, alm_id, cant, num_reg=num_reg, item_codigo=codigo)
 
         usuario_id = data.get("usuario_id") or data.get("responsable_id")
         reg = str(usuario_id) if usuario_id not in (None, "", []) else cabecera.reg

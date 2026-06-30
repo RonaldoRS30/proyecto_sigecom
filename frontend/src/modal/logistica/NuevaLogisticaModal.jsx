@@ -176,15 +176,26 @@ export default function NuevaLogisticaModal({
   const buscarProductos = useCallback(async (q = "") => {
     setLoadingProductos(true);
     try {
-      const { data } = await api.get("logistica/dashboard/productos/", { params: { q } });
+      const { data } = await api.get("logistica/dashboard/productos/", {
+        params: {
+          q,
+          almacen_id: form.almacen || "",
+          operacion: operacion || "E",
+        }
+      });
       setProductosLista(Array.isArray(data) ? data : []);
     } catch { setProductosLista([]); }
     finally { setLoadingProductos(false); }
-  }, []);
+  }, [form.almacen, operacion]);
 
   useEffect(() => {
     if (!open && !asPage) return;
     setModo(modoProp);
+    // Limpiar siempre el nuevo item y el buscador al abrir
+    setNewItem(ITEM_VACIO);
+    setOpenBuscador(false);
+    setBusqQuery("");
+    setProductosLista([]);
     if (logistica && logistica.num_reg) {
       cargarDetalle(logistica.num_reg);
     } else {
@@ -298,6 +309,14 @@ export default function NuevaLogisticaModal({
       toast.warning("La cantidad debe ser mayor a 0");
       return;
     }
+    // Validar stock en salida (frontend)
+    if (operacion === "S" && newItem._stock != null) {
+      const stockDisp = Number(newItem._stock || 0);
+      if (cant > stockDisp) {
+        toast.error(`Stock insuficiente. Disponible: ${stockDisp}, Solicitado: ${cant}`);
+        return;
+      }
+    }
     const valor = Number(newItem.valor || 0);
     setItems((prev) => [
       ...prev,
@@ -315,6 +334,7 @@ export default function NuevaLogisticaModal({
       um: p.unidad || "",
       cant: newItem.cant || 1,
       valor: form.moneda === "D" ? (p.valor_dolares || p.valor_soles) : (p.valor_soles || p.valor_dolares),
+      _stock: p.stock != null ? Number(p.stock) : null,
     });
     setOpenBuscador(false);
   }
@@ -425,13 +445,14 @@ export default function NuevaLogisticaModal({
     }
   }, [editable, open, asPage, buscarClientes, buscarUsuarios]);
 
-  const colorBtn    = operacion === "E" ? "bg-teal-600 hover:bg-teal-700"   : "bg-rose-600 hover:bg-rose-700";
-  const colorHeader = operacion === "E" ? "bg-teal-600"                     : "bg-rose-600";
+  const colorBtn    = operacion === "E" ? "bg-teal-600 hover:bg-teal-700 shadow-teal-200"   : "bg-rose-600 hover:bg-rose-700 shadow-rose-200";
+  const colorHeader = operacion === "E" ? "bg-gradient-to-r from-teal-600 to-teal-500"      : "bg-gradient-to-r from-rose-600 to-rose-500";
+  const headerBg    = operacion === "E" ? "bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900" : "bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900";
 
   const content = (
     <>
         {/* HEADER */}
-        <div className="shrink-0 bg-slate-900 px-6 py-4 flex items-center justify-between">
+        <div className={`shrink-0 ${headerBg} px-6 py-4 flex items-center justify-between`}>
           <div className="flex items-center gap-3">
             {asPage && (
               <button
@@ -669,7 +690,14 @@ export default function NuevaLogisticaModal({
                       <td className="px-2 py-1.5">
                         <div className="flex gap-1">
                           <button
-                            onClick={() => { setBusqQuery(""); setOpenBuscador(true); }}
+                            onClick={() => {
+                              if (!form.almacen) {
+                                toast.warning("Debe seleccionar un almacén antes de buscar productos");
+                                return;
+                              }
+                              setBusqQuery("");
+                              setOpenBuscador(true);
+                            }}
                             className="shrink-0 bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
                             bus.
                           </button>
@@ -711,7 +739,7 @@ export default function NuevaLogisticaModal({
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-                  {items.map((it, idx) => (
+                  {items.filter(it => Number(it.cant) > 0).map((it, idx) => (
                     <tr key={it.id} className="hover:bg-slate-50 text-xs">
                       <td className="px-4 py-2 text-center text-slate-400 font-bold">{it.id_detalle || idx + 1}</td>
                       <td className="px-4 py-2 font-bold text-slate-700">{it.codigo}</td>
@@ -863,36 +891,61 @@ export default function NuevaLogisticaModal({
 
         {/* BUSCADOR DE PRODUCTOS */}
         {openBuscador && (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="bg-white rounded-xl shadow-2xl w-[520px] max-h-[420px] flex flex-col border border-slate-200">
-              <div className="px-4 py-3 bg-slate-800 text-white flex justify-between items-center rounded-t-xl">
-                <span className="text-[11px] font-black uppercase">Buscar Producto</span>
-                <button onClick={() => setOpenBuscador(false)} className="hover:text-slate-300">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-[580px] max-h-[480px] flex flex-col border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+              <div className="px-5 py-3.5 bg-gradient-to-r from-slate-800 to-slate-900 text-white flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <Package size={16} className="text-teal-400" />
+                  <span className="text-[11px] font-black uppercase tracking-wider">Buscar Producto</span>
+                </div>
+                <button onClick={() => setOpenBuscador(false)} className="p-1 rounded-lg hover:bg-white/10 transition-colors">
                   <X size={16} />
                 </button>
               </div>
-              <div className="p-3">
+              <div className="p-3 bg-slate-50 border-b border-slate-200">
                 <input
                   autoFocus
                   type="text"
                   value={busqQuery}
                   onChange={(e) => setBusqQuery(e.target.value)}
-                  className="w-full border p-2 text-xs rounded-lg"
-                  placeholder="Codigo o nombre del producto..." />
+                  className="w-full border border-slate-300 p-2.5 text-xs rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
+                  placeholder="Código o nombre del producto..." />
+                {form.almacen && (
+                  <p className="text-[10px] text-slate-400 mt-1.5 font-medium">
+                    📦 Stock mostrado para: <span className="font-bold text-slate-600">{form.almacen_nombre || `Almacén ${form.almacen}`}</span>
+                  </p>
+                )}
               </div>
-              <div className="flex-1 overflow-y-auto px-3 pb-3 divide-y divide-slate-100">
-                {productosLista.map((p) => (
-                  <div
-                    key={p.id_producto || p.codigo}
-                    onClick={() => selectProducto(p)}
-                    className="p-2 text-xs hover:bg-teal-50 cursor-pointer flex justify-between gap-4">
-                    <span className="font-bold text-slate-700 w-32 shrink-0">{p.codigo}</span>
-                    <span className="text-slate-600 truncate flex-1">{p.nombre}</span>
-                    <span className="text-slate-400 shrink-0">{p.unidad}</span>
+              <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                {loadingProductos && (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="w-5 h-5 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
                   </div>
-                ))}
-                {productosLista.length === 0 && (
-                  <p className="text-center text-xs text-slate-400 py-6">Sin resultados</p>
+                )}
+                {!loadingProductos && productosLista.map((p) => {
+                  const stockVal = p.stock != null ? Number(p.stock) : null;
+                  const stockColor = stockVal == null ? "bg-slate-100 text-slate-400"
+                    : stockVal <= 0 ? "bg-red-100 text-red-700"
+                    : stockVal <= 5 ? "bg-amber-100 text-amber-700"
+                    : "bg-emerald-100 text-emerald-700";
+                  return (
+                    <div
+                      key={p.id_producto || p.codigo}
+                      onClick={() => selectProducto(p)}
+                      className="px-4 py-2.5 text-xs hover:bg-teal-50/70 cursor-pointer flex items-center gap-3 transition-colors group">
+                      <span className="font-bold text-slate-700 w-28 shrink-0 group-hover:text-teal-700 transition-colors">{p.codigo}</span>
+                      <span className="text-slate-600 truncate flex-1">{p.nombre}</span>
+                      <span className="text-slate-400 shrink-0 w-10 text-center">{p.unidad}</span>
+                      {stockVal != null && (
+                        <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${stockColor}`}>
+                          {stockVal}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                {!loadingProductos && productosLista.length === 0 && (
+                  <p className="text-center text-xs text-slate-400 py-8">Sin resultados</p>
                 )}
               </div>
             </div>
