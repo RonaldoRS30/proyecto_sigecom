@@ -168,6 +168,8 @@ from .movimiento_helpers import (
     moneda_to_db,
     moneda_from_db,
     MONEDA_LABEL,
+    resolver_um_id_item,
+    resolver_producto_id_item,
 )
 from core.models import Producto, UnidadMedida
 
@@ -919,7 +921,7 @@ from django.db.models.functions import Trim
 def logistica_productos_view(request):
     q = (request.GET.get("q", "") or "").strip()
 
-    productos = Producto.objects.select_related("id_medida").filter(activo=1)
+    productos = Producto.objects.select_related("id_medida").filter(activo=1).exclude(cantidad=0)
 
     if q:
         productos = productos.filter(
@@ -1101,6 +1103,48 @@ from django.db.models import Max
 from .models import TipoCambio, LogisticaDashboard, LogisticaDashboardDetalle
 from datetime import datetime
 
+def _parse_fk_id(raw):
+    if raw in (None, "", []):
+        return None
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _opt_str(val, default=""):
+    if val is None:
+        return default
+    s = str(val).strip()
+    return s if s else default
+
+
+def _obs_on_update(data, current):
+    """Mantiene la observación de cabecera si el cliente no envía un valor nuevo."""
+    obs_in = data.get("obs_doc")
+    if obs_in is None:
+        obs_in = data.get("observacion")
+    if obs_in is None:
+        return _opt_str(current)
+    if str(obs_in).strip():
+        return _opt_str(obs_in)
+    return _opt_str(current)
+
+
+def _obs_item_on_save(item, index, existing_obs_by_idx=None, existing_obs_by_id=None):
+    obs_in = item.get("obs")
+    if obs_in is None:
+        obs_in = item.get("observacion")
+    if obs_in is not None and str(obs_in).strip():
+        return _opt_str(obs_in)
+    det_id = item.get("id_detalle")
+    if det_id and existing_obs_by_id and det_id in existing_obs_by_id:
+        return _opt_str(existing_obs_by_id[det_id])
+    if existing_obs_by_idx and index in existing_obs_by_idx:
+        return _opt_str(existing_obs_by_idx[index])
+    return ""
+
+
 def _calcular_totales_items(items, moneda, tc):
     moneda_db = moneda_to_db(moneda)
     total_soles = 0
@@ -1115,36 +1159,147 @@ def _calcular_totales_items(items, moneda, tc):
             total_soles += total * tc
     return round(total_soles, 2), round(total_dolares, 2)
 
-def _insertar_detalles(num_reg, items, moneda, tc):
+def _calcular_linea_item(item, moneda_db, tc):
+    total = float(item.get("total") or 0)
+    if moneda_db == "S":
+        soles = total
+        dolares = total / tc if tc > 0 else 0
+    elif moneda_db == "D":
+        dolares = total
+        soles = total * tc
+    else:
+        soles = dolares = 0
+    return round(total, 2), round(soles, 2), round(dolares, 2)
+
+
+def _insertar_detalles(num_reg, items, moneda, tc, existing_obs_by_idx=None, existing_obs_by_id=None, existing_um_by_idx=None, existing_um_by_id=None):
     moneda_db = moneda_to_db(moneda)
     for index, item in enumerate(items, start=1):
-        total = float(item.get("total") or 0)
-        if moneda_db == "S":
-            soles = total
-            dolares = total / tc if tc > 0 else 0
-        elif moneda_db == "D":
-            dolares = total
-            soles = total * tc
-        else:
-            soles = dolares = 0
+        total, soles, dolares = _calcular_linea_item(item, moneda_db, tc)
 
         prod_id = item.get("id_producto") or item.get("producto_id")
-        um_id = item.get("id_unidad_medida") or item.get("um_id")
         descripcion = item.get("descripcion") or item.get("nombre") or ""
+        um_val = resolver_um_id_item(
+            item, index, existing_um_by_idx, existing_um_by_id
+        )
+        if not um_val:
+            codigo = item.get("codigo") or prod_id or index
+            raise ValidationError(
+                f"Unidad de medida no válida para el ítem {codigo}. "
+                "Seleccione un producto del catálogo o una UM registrada."
+            )
+
+        prod_id_int = resolver_producto_id_item(item)
+        if not prod_id_int or not Producto.objects.filter(id_producto=prod_id_int).exists():
+            codigo = item.get("codigo") or prod_id or index
+            raise ValidationError(
+                f"Producto no válido para el ítem {codigo}. "
+                "Seleccione un producto del catálogo."
+            )
 
         LogisticaDashboardDetalle.objects.create(
             num_reg=num_reg,
-            num=index,
-            cod=str(prod_id) if prod_id else None,
-            nom=descripcion[:100] if descripcion else None,
-            um=str(um_id) if um_id else (item.get("um") or None),
+            num=str(index),
+            cod=str(prod_id_int),
+            nom=_opt_str(descripcion[:100] if descripcion else ""),
+            um=str(int(um_val)),
             can=int(float(item.get("cant") or item.get("cantidad") or 0)),
             val=float(item.get("valor") or item.get("valor_unitario") or 0),
-            tot=round(total, 2),
-            sol=round(soles, 2),
-            dol=round(dolares, 2),
-            obs=item.get("obs") or item.get("observacion") or None,
+            tot=total,
+            sol=soles,
+            dol=dolares,
+            obs=_obs_item_on_save(item, index, existing_obs_by_idx, existing_obs_by_id),
         )
+
+
+def _actualizar_detalles(num_reg, items, moneda, tc):
+    """Actualiza líneas in-place para no romper FKs de productos históricos."""
+    moneda_db = moneda_to_db(moneda)
+    existing_by_id = {
+        d.id: d
+        for d in LogisticaDashboardDetalle.objects.filter(num_reg=num_reg).order_by("id")
+    }
+    existing_obs_by_idx = {
+        i: (d.obs or "") for i, d in enumerate(existing_by_id.values(), start=1)
+    }
+    existing_obs_by_id = {d.id: (d.obs or "") for d in existing_by_id.values()}
+    existing_um_by_idx = {
+        i: (d.um or "") for i, d in enumerate(existing_by_id.values(), start=1)
+    }
+    existing_um_by_id = {d.id: (d.um or "") for d in existing_by_id.values()}
+    seen_ids = set()
+    nuevos = []
+
+    for index, item in enumerate(items, start=1):
+        total, soles, dolares = _calcular_linea_item(item, moneda_db, tc)
+        descripcion = item.get("descripcion") or item.get("nombre") or ""
+        det_id = _parse_fk_id(item.get("id_detalle"))
+        existing = existing_by_id.get(det_id) if det_id else None
+
+        um_val = resolver_um_id_item(
+            item, index, existing_um_by_idx, existing_um_by_id
+        )
+        if not um_val and existing and existing.um:
+            um_val = str(int(existing.um)) if str(existing.um).isdigit() else existing.um
+        if not um_val:
+            codigo = item.get("codigo") or item.get("id_producto") or index
+            raise ValidationError(
+                f"Unidad de medida no válida para el ítem {codigo}."
+            )
+
+        if existing:
+            prod_id_int = resolver_producto_id_item(item, existing.cod)
+            if not prod_id_int:
+                prod_id_int = _parse_fk_id(existing.cod)
+            existing.num = str(index)
+            existing.cod = str(prod_id_int)
+            existing.nom = _opt_str(descripcion[:100] if descripcion else existing.nom or "")
+            existing.um = str(int(um_val))
+            existing.can = int(float(item.get("cant") or item.get("cantidad") or 0))
+            existing.val = float(item.get("valor") or item.get("valor_unitario") or 0)
+            existing.tot = total
+            existing.sol = soles
+            existing.dol = dolares
+            existing.obs = _obs_item_on_save(
+                item, index, existing_obs_by_idx, existing_obs_by_id
+            )
+            existing.save()
+            seen_ids.add(existing.id)
+            continue
+
+        prod_id_int = resolver_producto_id_item(item)
+        if not prod_id_int or not Producto.objects.filter(id_producto=prod_id_int).exists():
+            codigo = item.get("codigo") or item.get("id_producto") or index
+            raise ValidationError(
+                f"Producto no válido para el ítem {codigo}. "
+                "Seleccione un producto del catálogo."
+            )
+
+        nuevos.append({
+            "num": str(index),
+            "cod": str(prod_id_int),
+            "nom": _opt_str(descripcion[:100] if descripcion else ""),
+            "um": str(int(um_val)),
+            "can": int(float(item.get("cant") or item.get("cantidad") or 0)),
+            "val": float(item.get("valor") or item.get("valor_unitario") or 0),
+            "tot": total,
+            "sol": soles,
+            "dol": dolares,
+            "obs": _obs_item_on_save(item, index, existing_obs_by_idx, existing_obs_by_id),
+        })
+
+    if not items:
+        LogisticaDashboardDetalle.objects.filter(num_reg=num_reg).delete()
+        return
+
+    if seen_ids:
+        LogisticaDashboardDetalle.objects.filter(num_reg=num_reg).exclude(id__in=seen_ids).delete()
+    else:
+        LogisticaDashboardDetalle.objects.filter(num_reg=num_reg).delete()
+
+    for row in nuevos:
+        LogisticaDashboardDetalle.objects.create(num_reg=num_reg, **row)
+
 
 def _resolver_tc(fecha, tc_enviado):
     tc = float(tc_enviado or 0)
@@ -1199,9 +1354,8 @@ def logistica_movimiento(request):
 
         total_soles, total_dolares = _calcular_totales_items(items, moneda, tc)
 
-        alm_val = str(data.get("almacen")).strip() if data.get("almacen") not in (None, "", []) else None
-        cor_raw = data.get("cor_id") or data.get("cliente_id")
-        cor_val = str(cor_raw).strip() if cor_raw not in (None, "", []) else None
+        alm_id = _parse_fk_id(data.get("almacen"))
+        cor_id = _parse_fk_id(data.get("cor_id") or data.get("cliente_id"))
 
         usuario_id = data.get("usuario_id") or data.get("responsable_id")
         if not usuario_id:
@@ -1211,18 +1365,18 @@ def logistica_movimiento(request):
         cabecera = LogisticaDashboard.objects.create(
             ope=ope,
             fec=fecha,
-            oco=data.get("orden_compra") or None,
-            nfa=data.get("numero_doc") or None,
-            ngu=data.get("nro_guia") or None,
-            cor=cor_val,
-            alm=alm_val,
+            oco=_opt_str(data.get("orden_compra")),
+            nfa=_opt_str(data.get("numero_doc")),
+            ngu=_opt_str(data.get("nro_guia")),
+            cor_id=cor_id,
+            alm_id=alm_id,
             tmo=moneda,
             tc=tc,
             reg=reg,
-            nom2=data.get("obs_doc") or data.get("observacion") or None,
+            nom2=_opt_str(data.get("obs_doc") or data.get("observacion")),
             sol=total_soles,
             dol=total_dolares,
-            mov=data.get("referencia") or None,
+            mov=_opt_str(data.get("referencia")),
             est="0",
         )
 
@@ -1236,6 +1390,8 @@ def logistica_movimiento(request):
             "total_dolares": total_dolares,
         })
 
+    except ValidationError as e:
+        return Response({"error": str(e.message if hasattr(e, "message") else e)}, status=400)
     except Exception as e:
         import traceback
         logger.error("Error en logistica_movimiento POST: %s", traceback.format_exc())
@@ -1272,30 +1428,28 @@ def logistica_movimiento_update(request, num_reg):
 
         total_soles, total_dolares = _calcular_totales_items(items, moneda, tc)
 
-        alm_val = str(data.get("almacen")).strip() if data.get("almacen") not in (None, "", []) else None
-        cor_raw = data.get("cor_id") or data.get("cliente_id")
-        cor_val = str(cor_raw).strip() if cor_raw not in (None, "", []) else None
+        alm_id = _parse_fk_id(data.get("almacen"))
+        cor_id = _parse_fk_id(data.get("cor_id") or data.get("cliente_id"))
 
         usuario_id = data.get("usuario_id") or data.get("responsable_id")
         reg = str(usuario_id) if usuario_id not in (None, "", []) else cabecera.reg
 
         cabecera.fec  = fecha
-        cabecera.oco  = data.get("orden_compra") or None
-        cabecera.nfa  = data.get("numero_doc")   or None
-        cabecera.ngu  = data.get("nro_guia")     or None
-        cabecera.cor  = cor_val
-        cabecera.alm  = alm_val
+        cabecera.oco  = _opt_str(data.get("orden_compra"))
+        cabecera.nfa  = _opt_str(data.get("numero_doc"))
+        cabecera.ngu  = _opt_str(data.get("nro_guia"))
+        cabecera.cor_id = cor_id
+        cabecera.alm_id = alm_id
         cabecera.tmo  = moneda
         cabecera.tc   = tc
         cabecera.reg  = reg
-        cabecera.nom2 = data.get("obs_doc") or data.get("observacion") or None
+        cabecera.nom2 = _obs_on_update(data, cabecera.nom2)
         cabecera.sol  = total_soles
         cabecera.dol  = total_dolares
-        cabecera.mov  = data.get("referencia")   or None
+        cabecera.mov  = _opt_str(data.get("referencia"))
         cabecera.save()
 
-        LogisticaDashboardDetalle.objects.filter(num_reg=num_reg).delete()
-        _insertar_detalles(num_reg, items, moneda, tc)
+        _actualizar_detalles(num_reg, items, moneda, tc)
 
         return Response({
             "message": "Movimiento actualizado correctamente",
@@ -1304,6 +1458,8 @@ def logistica_movimiento_update(request, num_reg):
             "total_dolares": total_dolares,
         })
 
+    except ValidationError as e:
+        return Response({"error": str(e.message if hasattr(e, "message") else e)}, status=400)
     except Exception as e:
         import traceback
         logger.error("Error en logistica_movimiento_update: %s", traceback.format_exc())

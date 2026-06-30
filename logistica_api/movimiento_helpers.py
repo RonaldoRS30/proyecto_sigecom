@@ -52,6 +52,59 @@ def _umed_por_id(um_id):
     return UnidadMedida.objects.filter(codigo=str(um_id).strip()).first()
 
 
+def resolver_um_id_item(item, index=None, existing_um_by_idx=None, existing_um_by_id=None):
+    """Devuelve idunidad_medida (FK numérico) válido para movimiento_detalle."""
+    for raw in (item.get("id_unidad_medida"), item.get("um_id"), item.get("um")):
+        umed = _umed_por_id(raw)
+        if umed:
+            return str(umed.id_medida)
+
+    prod_id = item.get("id_producto") or item.get("producto_id")
+    producto = _producto_por_id(prod_id)
+    if producto and producto.id_medida_id:
+        return str(producto.id_medida_id)
+
+    det_id = item.get("id_detalle")
+    if det_id and existing_um_by_id and det_id in existing_um_by_id:
+        umed = _umed_por_id(existing_um_by_id[det_id])
+        if umed:
+            return str(umed.id_medida)
+
+    if index and existing_um_by_idx and index in existing_um_by_idx:
+        umed = _umed_por_id(existing_um_by_idx[index])
+        if umed:
+            return str(umed.id_medida)
+
+    return None
+
+
+def resolver_producto_id_item(item, existing_cod=None):
+    """Devuelve producto_idproducto válido o conserva el existente en actualizaciones."""
+    for raw in (item.get("id_producto"), item.get("producto_id")):
+        pid = None
+        try:
+            if raw not in (None, "", []):
+                pid = int(str(raw).strip())
+        except (TypeError, ValueError):
+            pid = None
+        if pid and Producto.objects.filter(id_producto=pid).exists():
+            return pid
+
+    codigo = item.get("codigo")
+    if codigo and str(codigo).strip():
+        producto = Producto.objects.filter(codigo=str(codigo).strip()).first()
+        if producto:
+            return producto.id_producto
+
+    if existing_cod not in (None, "", []):
+        try:
+            return int(str(existing_cod).strip())
+        except (TypeError, ValueError):
+            pass
+
+    return None
+
+
 def build_movimiento_detalle_response(num_reg):
     cabecera = (
         LogisticaDashboard.objects.select_related("cor", "alm")
@@ -72,10 +125,14 @@ def build_movimiento_detalle_response(num_reg):
             "id_detalle": d.id,
             "id_movimiento": d.num_reg,
             "id_producto": int(d.cod) if d.cod and str(d.cod).isdigit() else d.cod,
-            "codigo": producto.codigo if producto else (d.cod or ""),
+            "codigo": producto.codigo if producto else (
+                str(d.cod) if d.cod and not str(d.cod).isdigit() else ""
+            ),
             "nombre": producto.nombre if producto else (d.nom or ""),
             "descripcion": producto.nombre if producto else (d.nom or ""),
-            "id_unidad_medida": umed.id_medida if umed else d.um,
+            "id_unidad_medida": umed.id_medida if umed else (
+                int(d.um) if d.um and str(d.um).strip().isdigit() else None
+            ),
             "unidad": umed.codigo if umed else (d.um or ""),
             "unidad_nombre": umed.nombre if umed else "",
             "cantidad": d.can,

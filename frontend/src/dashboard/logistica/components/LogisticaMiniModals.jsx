@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import api from "@/services/api";
-import { toast } from "sonner";
+import { toast } from "react-toastify";
 
 const CLIENTE_VACIO = {
   nombre: "",

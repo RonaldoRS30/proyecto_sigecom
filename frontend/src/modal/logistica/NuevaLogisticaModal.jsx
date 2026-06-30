@@ -3,7 +3,7 @@ import logoImg from "@/assets/logo.png";
 import api from "@/services/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { toast } from "sonner";
+import { toast } from "react-toastify";
 import { Button } from "@/components/ui/button";
 import { Package, Trash2, Plus, X, Pencil, Ban, Save, ArrowLeft } from "lucide-react";
 import SearchableSelect from "@/dashboard/logistica/components/SearchableSelect";
@@ -35,7 +35,7 @@ const FORM_VACIO = {
   _dolares: 0,
 };
 
-const ITEM_VACIO = { id_producto: "", codigo: "", descripcion: "", um_id: "", um: "", cant: "", valor: "" };
+const ITEM_VACIO = { id_producto: "", codigo: "", descripcion: "", um_id: "", um: "", cant: 1, valor: "" };
 
 function roundN(v, d = 2) {
   const f = 10 ** d;
@@ -237,11 +237,12 @@ export default function NuevaLogisticaModal({
           id_producto:   it.id_producto || "",
           codigo:        it.codigo || "",
           descripcion:   it.descripcion || it.nombre || "",
-          um_id:         it.id_unidad_medida || "",
+          um_id:         it.id_unidad_medida != null ? String(it.id_unidad_medida) : "",
           um:            it.unidad || "",
           cant:          Number(it.cantidad || 0),
           valor:         Number(it.valor_unitario || 0),
           total:         Number(it.total || 0),
+          observacion:   it.observacion || "",
         }))
       );
     } catch {
@@ -281,12 +282,22 @@ export default function NuevaLogisticaModal({
       return false;
     }
     if (items.length === 0) { toast.warning("Agregue al menos un ítem"); return false; }
+    for (const it of items) {
+      if (Number(it.cant || 0) <= 0) {
+        toast.warning(`La cantidad para el ítem "${it.descripcion || it.codigo}" debe ser mayor a 0`);
+        return false;
+      }
+    }
     return true;
   }
 
   function addItem() {
     if (!newItem.codigo && !newItem.descripcion) return;
     const cant  = Number(newItem.cant  || 0);
+    if (cant <= 0) {
+      toast.warning("La cantidad debe ser mayor a 0");
+      return;
+    }
     const valor = Number(newItem.valor || 0);
     setItems((prev) => [
       ...prev,
@@ -302,7 +313,7 @@ export default function NuevaLogisticaModal({
       descripcion: p.nombre || p.descripcion,
       um_id: p.id_unidad_medida || "",
       um: p.unidad || "",
-      cant: newItem.cant || "",
+      cant: newItem.cant || 1,
       valor: form.moneda === "D" ? (p.valor_dolares || p.valor_soles) : (p.valor_soles || p.valor_dolares),
     });
     setOpenBuscador(false);
@@ -312,7 +323,9 @@ export default function NuevaLogisticaModal({
     ...form,
     cliente_id: form.cor_id,
     usuario_id: form.usuario_id,
+    observacion: form.obs_doc ?? "",
     items: items.map((it) => ({
+      id_detalle: it.id_detalle,
       id_producto: it.id_producto,
       producto_id: it.id_producto,
       codigo: it.codigo,
@@ -325,6 +338,8 @@ export default function NuevaLogisticaModal({
       valor: it.valor,
       valor_unitario: it.valor,
       total: it.total,
+      obs: it.observacion || "",
+      observacion: it.observacion || "",
     })),
   });
 
@@ -366,7 +381,9 @@ export default function NuevaLogisticaModal({
       const { data } = await api.put(`logistica/movimiento/${numReg}/`, {
         ...buildPayload(), ope: operacion,
       });
-      toast.success("Movimiento actualizado correctamente");
+      toast.success(
+        `${operacion === "E" ? "Entrada" : "Salida"} N° ${numReg} actualizada correctamente`
+      );
       invalidarListas();
       if (asPage) {
         await cargarDetalle(numReg);

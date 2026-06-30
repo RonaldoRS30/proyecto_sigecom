@@ -114,7 +114,7 @@ export default function EntradaView() {
           </div>
         )}
         <Table
-          headers={["N", "Fecha", "O/Compra", "Proveedor / Razon Social", "Factura", "Guia", "Almacen", "Mon.", "Soles", "Dolares", "", ""].map(h => (
+          headers={["N° Registro", "Fecha", "O/Compra", "Nombre", "Factura", "Guia", "Almacen", "Mon.", "Soles", "Dolares", "", ""].map(h => (
             <span key={h} className="text-[10px] font-black uppercase tracking-wider text-slate-800 text-center block">{h}</span>
           ))}
           data={movimientos}
@@ -166,12 +166,14 @@ export default function EntradaView() {
         </Button>
       </div>
 
-      <NuevaLogisticaModal
-        open={openNueva}
-        onClose={() => { setOpenNueva(false); onRefresh(); }}
-        operacion="E"
-        modo="N"
-      />
+      {openNueva && (
+        <NuevaLogisticaModal
+          open={openNueva}
+          onClose={() => { setOpenNueva(false); onRefresh(); }}
+          operacion="E"
+          modo="N"
+        />
+      )}
     </div>
   );
 }

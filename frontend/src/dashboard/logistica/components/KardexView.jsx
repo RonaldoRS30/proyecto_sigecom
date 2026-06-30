@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import api from "@/services/api";
 import { Loader, Package, AlertCircle } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "react-toastify";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import Table from "@/components/ui/table";

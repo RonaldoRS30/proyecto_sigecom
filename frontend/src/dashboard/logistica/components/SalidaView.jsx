@@ -114,7 +114,7 @@ export default function SalidaView() {
           </div>
         )}
         <Table
-          headers={["N", "Fecha", "Referencia", "Destinatario / Nombre", "Factura", "Guia", "Almacen", "Mon.", "Soles", "Dolares", "", ""].map(h => (
+          headers={["N° Registro", "Fecha", "O/Compra", "Nombre", "Factura", "Guia", "Almacen", "Mon.", "Soles", "Dolares", "", ""].map(h => (
             <span key={h} className="text-[10px] font-black uppercase tracking-wider text-slate-800 text-center block">{h}</span>
           ))}
           data={movimientos}
@@ -122,8 +122,8 @@ export default function SalidaView() {
           renderRow={c => [
             <span className="text-xs font-bold text-rose-700 tabular-nums">{c.num_reg}</span>,
             <span className="text-xs text-slate-700">{c.fec}</span>,
-            <span className="text-xs text-slate-600">{c.mov || "."}</span>,
-            <span className="text-xs font-semibold text-slate-800 uppercase">{c.dor || c.nom1 || "."}</span>,
+            <span className="text-xs text-slate-600">{c.oco || "."}</span>,
+            <span className="text-xs font-semibold text-slate-800 uppercase">{c.dor || "."}</span>,
             <span className="text-xs text-slate-600">{c.nfa || "."}</span>,
             <span className="text-xs text-slate-600">{c.ngu || "."}</span>,
             <span className="text-xs text-slate-600">{c.nom_alm || "."}</span>,
@@ -166,12 +166,14 @@ export default function SalidaView() {
         </Button>
       </div>
 
-      <NuevaLogisticaModal
-        open={openNueva}
-        onClose={() => { setOpenNueva(false); onRefresh(); }}
-        operacion="S"
-        modo="N"
-      />
+      {openNueva && (
+        <NuevaLogisticaModal
+          open={openNueva}
+          onClose={() => { setOpenNueva(false); onRefresh(); }}
+          operacion="S"
+          modo="N"
+        />
+      )}
     </div>
   );
 }
