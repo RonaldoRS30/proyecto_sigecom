@@ -28,6 +28,7 @@ import GastosAnalisis from "./dashboard/Tablas/Gastos_Analisis/GastosAnalisis";
 
 // LOGISTICA
 import LogisticaDashboard from "./dashboard/logistica/LogisticaDashboard";
+import LogisticaDetallePage from "./dashboard/logistica/LogisticaDetallePage";
 
 import { KeyboardProvider } from "@/context/KeyboardContext.jsx";
 import MockModulePage from "@/dashboard/layout/MockModulePage";
@@ -95,7 +96,16 @@ export default function App() {
 
               {/* Módulo Logistica */}
               <Route path="logistica">
-                <Route index element={<LogisticaDashboard />} />
+                <Route index element={<Navigate to="entradas" replace />} />
+                <Route path="entradas">
+                  <Route index element={<LogisticaDashboard defaultTab="entrada" />} />
+                  <Route path=":numReg" element={<LogisticaDetallePage operacion="E" />} />
+                </Route>
+                <Route path="salidas">
+                  <Route index element={<LogisticaDashboard defaultTab="salida" />} />
+                  <Route path=":numReg" element={<LogisticaDetallePage operacion="S" />} />
+                </Route>
+                <Route path="kardex" element={<LogisticaDashboard defaultTab="kardex" />} />
               </Route>
 
               {/* Módulo Maestro / Tablas */}

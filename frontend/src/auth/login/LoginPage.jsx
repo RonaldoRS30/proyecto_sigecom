@@ -34,7 +34,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const response = await api.post("/users/login/", form);
+      const response = await api.post("users/login/", form);
       const { access, refresh, user } = response.data;
 
       if (!access || !refresh) {
@@ -44,7 +44,7 @@ export default function LoginPage() {
       // ✅ Guarda tokens primero
       localStorage.setItem("access_token", access);
       localStorage.setItem("refresh_token", refresh);
-      localStorage.setItem("usuario", JSON.stringify(user));
+      localStorage.setItem("auth_user", JSON.stringify(user));
 
       // ✅ Asegura que Axios los use inmediatamente
       api.defaults.headers.common["Authorization"] = `Bearer ${access}`;

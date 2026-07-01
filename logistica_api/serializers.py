@@ -1,9 +1,16 @@
-# logistica_api/serializers.py
+﻿# logistica_api/serializers.py
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 import uuid
 from .models import (
+    DashboardCotizacion,
+    CotiSuministros,
+    CotiServicios,
+    CotiMensajes,
+    CotiSeguimiento,
+    vc_tab_clientes,
+    vc_tab_clientes_d,
     vc_tab_estado,
     vc_tab_categorias,
     vc_tab_tproveedor,
@@ -21,6 +28,7 @@ from .models import (
     sis_alm_tab_articulos,
     AlmTabUmed,
     sis_alm_tab_ccosto,
+    AlmacenNew,
 )
 from django.contrib.auth import get_user_model
 from django.utils.timezone import localtime
@@ -204,6 +212,12 @@ class AlmacenSerializer(serializers.ModelSerializer):
         model = sis_alm_tab_almacen
         fields = "__all__"
 
+
+class AlmacenNewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AlmacenNew
+        fields = ["idalmacen", "nombre", "direccion", "activo", "usuario_id_usuario"]
+
 # AlmTabUmed
 class AlmTabUmedSerializer(serializers.ModelSerializer):
     class Meta:
@@ -233,3 +247,254 @@ class CcostoSerializer(serializers.ModelSerializer):
     class Meta:
         model = sis_alm_tab_ccosto
         fields = "__all__"
+
+# --- Missing serializers restored ---
+class DashboardCotizacionSerializer(serializers.ModelSerializer):
+    # ── Campos derivados (SOLO LECTURA) ─────────────────
+    cliente_nombre = serializers.CharField(source="nombr", required=False, allow_blank=True)
+    cargo = serializers.CharField(source="cargr", required=False, allow_blank=True)
+    codir = serializers.CharField(required=False, allow_blank=True)
+    area_nombre = serializers.SerializerMethodField(read_only=True)
+    estado_nombre = serializers.SerializerMethodField(read_only=True)
+    tipo_nombre = serializers.SerializerMethodField(read_only=True)
+    prob_nombre = serializers.SerializerMethodField(read_only=True)
+    moneda_nombre = serializers.SerializerMethodField(read_only=True)
+    unidad_suministro_nombre = serializers.SerializerMethodField(read_only=True)
+    unidad_servicio_nombre = serializers.SerializerMethodField(read_only=True)
+    unidad_validez_nombre = serializers.SerializerMethodField(read_only=True)
+    igv_nombre = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = DashboardCotizacion
+        fields = "__all__"
+        read_only_fields = [
+            "numero",
+            "num_reg",
+            "envio",
+            "tot_c",
+        ]
+
+    # ── Métodos derivados ───────────────────────────────
+    def get_area_nombre(self, obj):
+        return obj.area_nombre or ""
+
+    def get_estado_nombre(self, obj):
+        return obj.estado_nombre or ""
+
+    def get_tipo_nombre(self, obj):
+        return obj.tipo_nombre or ""
+
+    def get_prob_nombre(self, obj):
+        return obj.prob_nombre or ""
+
+    def get_moneda_nombre(self, obj):
+        return obj.moneda_nombre or ""
+
+    def get_unidad_suministro_nombre(self, obj):
+        return obj.unidad_suministro_nombre or ""
+
+    def get_unidad_servicio_nombre(self, obj):
+        return obj.unidad_servicio_nombre or ""
+
+    def get_unidad_validez_nombre(self, obj):
+        return obj.unidad_validez_nombre or ""
+
+    def validate_igv(self, value):
+        if value not in ["N", "S"]:
+            return "N"
+        return value
+
+    def get_igv_nombre(self, obj):
+        return obj.igv_nombre or ""
+
+class DashboardCotizacionTablaSerializer(serializers.ModelSerializer):
+    numero = serializers.SerializerMethodField()  # <-- aquí
+
+    class Meta:
+        model = DashboardCotizacion
+        fields = [
+            "fecha",         # Fecha
+            "numero",        # Cotización
+            "referencia",    # Referencia
+            "cliente_nombre",# Cliente/Representante
+            "area_nombre",   # Área
+            "estado_nombre", # Estado
+            "tot_c",         # Importe
+            "envio",
+            "prob",
+            "num_reg",
+            "nombt",
+            "cliente_codigo",
+            "nombr",
+            "tmone",
+            "cotit",
+            "regus",
+            "des_m",
+        ]
+
+    def get_numero(self, obj):
+        # Si el número está vacío o nulo, devuelve una cadena vacía
+        return obj.numero if obj.numero not in [None, ""] else ""
+
+class DashboardCotizacionModalSerializer(serializers.ModelSerializer):
+    # Campos derivados
+    cliente_nombre = serializers.SerializerMethodField()
+    cargo = serializers.SerializerMethodField()
+    area_nombre = serializers.SerializerMethodField()
+    estado_nombre = serializers.SerializerMethodField()
+    tipo_nombre = serializers.SerializerMethodField()
+
+    # Campos numéricos saneados
+    tot_c = serializers.SerializerMethodField()
+    igv = serializers.SerializerMethodField()
+    valid = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DashboardCotizacion
+        fields = [
+            # Campos normales
+            "numero",
+            "fecha",
+            "referencia",
+            "num_reg",
+            "cliente_codigo",
+            "nombr",
+            "teler",
+            "movir",
+            "mailr",
+            "prob",
+            "tot_c",
+            "cotit",
+            "area_codigo",
+            "fpago",
+            "estado_codigo",
+            "envio",
+            "lugar",
+
+            "plazo",
+            "tot_d",
+            "por_c",
+            "tot_s",
+            "valid",
+            "acu_s",
+
+            "acu_e",
+            "entrf",
+            "tmone",
+            "tcamb",
+            "igv",
+            "nombc",
+            "telec",
+            "mov1c",
+            "mov2c",
+            "mov3c",
+            "mailc",
+            "nombt",
+            "telet",
+            "mov1t",
+            "mov2t",
+            "mov3t",
+            "mailt",
+
+            "des_a",
+            "des_t",
+            "des_m",
+            "des_p",
+
+            # Campos derivados
+            "cliente_nombre",
+            "cargo",
+            "area_nombre",
+            "estado_nombre",
+            "tipo_nombre",  # <-- agregado
+            "igv_nombre"
+        ]
+        read_only_fields = fields
+
+    # ---------- Métodos derivados ----------
+    def get_cliente_nombre(self, obj):
+        return obj.cliente_nombre or ""
+
+    def get_cargo(self, obj):
+        try:
+            if not obj.cliente_codigo:
+                return obj.cargr or ""
+            from logistica_api.models import vc_tab_clientes_d
+            cliente = vc_tab_clientes_d.objects.get(codigo=obj.cliente_codigo)
+            return cliente.cargo or obj.cargr or ""
+        except Exception:
+            return obj.cargr or ""
+
+    def get_area_nombre(self, obj):
+        return obj.area_nombre or ""
+
+    def get_estado_nombre(self, obj):
+        return obj.estado_nombre or ""
+
+    def get_tipo_nombre(self, obj):
+        try:
+            return obj.tipo_nombre or ""
+        except Exception:
+            return ""
+
+    def get_igv_nombre(self, obj):
+        return obj.igv_nombre or ""
+    
+    # ---------- Saneamiento de decimales ----------
+    def get_tot_c(self, obj):
+        try:
+            if obj.tot_c in [None, "", " "]:
+                return 0
+            return float(obj.tot_c)
+        except Exception:
+            return 0
+
+    def get_igv(self, obj):
+        try:
+            if obj.igv in [None, "", " "]:
+                return 0
+            return float(obj.igv)
+        except Exception:
+            return 0
+
+    def get_valid(self, obj):
+        try:
+            if obj.valid in [None, "", " "]:
+                return 0
+            return int(obj.valid)
+        except Exception:
+            return 0
+
+class CotiSuministrosSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CotiSuministros
+        fields = "__all__"
+
+class CotiServiciosSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CotiServicios
+        fields = "__all__"
+
+class CotiMensajesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CotiMensajes
+        fields = "__all__"
+
+class CotiSeguimientoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CotiSeguimiento
+        fields = "__all__"
+
+#========================================================================================
+
+##================##
+## DATOS DE BD_VC ##
+##================##
+
+# vc_tab_clientes
+class ClientesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = vc_tab_clientes
+        fields = "__all__"
+
+# vc_tab_estado
