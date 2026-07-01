@@ -3094,6 +3094,13 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
     }
   };
 
+  const handleAddRowKeyDown = (e, groupCode) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleQuickAddSubmit(groupCode);
+    }
+  };
+
   const handleQuickAddSubmit = async (groupCode) => {
     const form = quickAddForm[groupCode];
     if (!form || !form.descripcion?.trim() || !form.cantidad) {
@@ -4413,6 +4420,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                               <select
                                 className="w-full text-[10.5px] border border-gray-300 rounded px-1 py-0.5 uppercase font-bold text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
                                 value={currentForm.proveedor || ""}
+                                onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                 onChange={e => {
                                   const code = e.target.value;
                                   const brandId = parseInt(code, 10) || null;
@@ -4430,6 +4438,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                 idMarca={currentForm.id_marca}
                                 tcamb={data?.tipo_cambio || 1}
                                 tipoMoneda={data?.tipo_moneda || "S"}
+                                onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                 onSelect={(prod) => {
                                   if (prod.isCustom) {
                                     handleRowChange("codigo_item", prod.codigo, "add", grupo.codigo_grupo);
@@ -4466,6 +4475,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                 className="w-full text-[11px] border border-gray-300 rounded px-1.5 py-0.5 font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
                                 value={currentForm.descripcion || ""}
                                 placeholder="Descripción..."
+                                onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                 onChange={e => handleRowChange("descripcion", e.target.value.toUpperCase(), "add", grupo.codigo_grupo)}
                               />
                               <input
@@ -4473,6 +4483,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                 className="w-full text-[9px] border border-gray-200 text-gray-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
                                 value={currentForm.observacion || ""}
                                 placeholder="Observación..."
+                                onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                 onChange={e => handleRowChange("observacion", e.target.value.toUpperCase(), "add", grupo.codigo_grupo)}
                               />
                             </div>
@@ -4485,6 +4496,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                               value={currentForm.cantidad === undefined || currentForm.cantidad === null ? "" : currentForm.cantidad}
                               onChange={e => handleRowChange("cantidad", e.target.value, "add", grupo.codigo_grupo)}
                               onFocus={(e) => e.target.select()}
+                              onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                             />
                           </td>
                           {/* Costo Unitario */}
@@ -4497,6 +4509,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                               value={currentForm.costo_precio === undefined || currentForm.costo_precio === null ? "" : currentForm.costo_precio}
                               onChange={e => handleRowChange("costo_precio", e.target.value, "add", grupo.codigo_grupo)}
                               onFocus={(e) => e.target.select()}
+                              onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                             />
                           </td>
                            {/* Envío */}
@@ -4530,6 +4543,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                   value={currentForm.porcentaje_utilidad === undefined || currentForm.porcentaje_utilidad === null ? "" : currentForm.porcentaje_utilidad}
                                   onChange={e => handleRowChange("porcentaje_utilidad", e.target.value, "add", grupo.codigo_grupo)}
                                   onFocus={(e) => e.target.select()}
+                                  onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                 />
                                 <span className="absolute right-1 text-[9px] text-gray-400">%</span>
                               </div>
@@ -4601,7 +4615,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                       }}
                                     />
                                   </div>
-                                  {/* Tiempo Entrega */}
                                   <div className="flex flex-col gap-1">
                                     <span className="font-bold text-gray-400 uppercase text-[9px]">Tiempo Entrega:</span>
                                     <div className="flex gap-2">
@@ -4610,12 +4623,14 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                         className="w-2/3 border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold text-gray-700"
                                         value={currentForm.tiempo_entrega === undefined || currentForm.tiempo_entrega === null ? "" : currentForm.tiempo_entrega}
                                         onChange={e => handleRowChange("tiempo_entrega", e.target.value, "add", grupo.codigo_grupo)}
+                                        onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                         placeholder="0"
                                       />
                                       <select
                                         className="w-1/3 border border-gray-200 rounded px-1 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold text-gray-700 bg-white"
                                         value={currentForm.id_unidad_tiempo_entrega || 1}
                                         onChange={e => handleRowChange("id_unidad_tiempo_entrega", parseInt(e.target.value, 10), "add", grupo.codigo_grupo)}
+                                        onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                       >
                                         <option value={1}>Días</option>
                                         <option value={2}>Semanas</option>
@@ -4631,6 +4646,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                       className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 text-gray-700"
                                       value={currentForm.observacion || ""}
                                       onChange={e => handleRowChange("observacion", e.target.value.toUpperCase(), "add", grupo.codigo_grupo)}
+                                      onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                       placeholder="Observación..."
                                     />
                                   </div>
