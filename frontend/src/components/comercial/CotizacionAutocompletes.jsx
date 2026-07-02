@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import * as LucideIcons from "lucide-react";
 import api from "@/services/api";
+import { toast } from "../../utils/toast";
 
 const Icon = ({ name, className }) => {
   const iconName = name
@@ -656,7 +657,9 @@ export const ProductoAutocomplete = ({
   placeholder = "Buscar código...",
   tabIndex,
   catalogoVersion = 0,
-  onKeyDown
+  onKeyDown,
+  onTriggerCreate,
+  id
 }) => {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -685,13 +688,6 @@ export const ProductoAutocomplete = ({
     }
   }, [value, isFocused]);
 
-  // Trigger onSelect to clear product when query is empty
-  useEffect(() => {
-    if (query === "" && value && isFocused) {
-      onSelect({ id_producto: null, codigo: "", nombre: "", isCustom: true });
-    }
-  }, [query, value, onSelect, isFocused]);
-
   // Measure text width dynamically
   useEffect(() => {
     if (spanRef.current) {
@@ -711,7 +707,7 @@ export const ProductoAutocomplete = ({
     }
   };
 
-  // Continuous viewport tracking loop when open (solves modal animation lag/gap)
+  // Continuous viewport tracking loop when open
   useEffect(() => {
     if (!showDropdown) return;
     
@@ -728,7 +724,7 @@ export const ProductoAutocomplete = ({
     };
   }, [showDropdown]);
 
-  // Scroll highlighted item into view automatically (keyboard arrow navigation scroll)
+  // Scroll highlighted item into view automatically
   useEffect(() => {
     if (showDropdown && highlightIndex >= 0 && dropdownRef.current) {
       const container = dropdownRef.current;
@@ -755,7 +751,13 @@ export const ProductoAutocomplete = ({
     if (cacheRef.current[cacheKey]) {
       const dataArray = cacheRef.current[cacheKey];
       setResults(dataArray);
-      if (dataArray.length > 0) {
+      
+      const exactMatch = dataArray.find(item => (item.codigo || "").toLowerCase().trim() === searchVal.toLowerCase().trim());
+      if (exactMatch) {
+        setHighlightIndex(dataArray.indexOf(exactMatch));
+      } else if (dataArray.length > 0) {
+        setHighlightIndex(0);
+      } else if (searchVal.trim()) {
         setHighlightIndex(0);
       } else {
         setHighlightIndex(-1);
@@ -769,7 +771,13 @@ export const ProductoAutocomplete = ({
       });
       const dataArray = res && res.ok && Array.isArray(res.data) ? res.data : [];
       setResults(dataArray);
-      if (dataArray.length > 0) {
+      
+      const exactMatch = dataArray.find(item => (item.codigo || "").toLowerCase().trim() === searchVal.toLowerCase().trim());
+      if (exactMatch) {
+        setHighlightIndex(dataArray.indexOf(exactMatch));
+      } else if (dataArray.length > 0) {
+        setHighlightIndex(0);
+      } else if (searchVal.trim()) {
         setHighlightIndex(0);
       } else {
         setHighlightIndex(-1);
@@ -795,6 +803,27 @@ export const ProductoAutocomplete = ({
     return () => clearTimeout(t);
   }, [query, showDropdown, idMarca, catalogoVersion]);
 
+  // Scroll highlighted item into view automatically
+  useEffect(() => {
+    if (showDropdown && highlightIndex >= 0 && dropdownRef.current) {
+      const container = dropdownRef.current;
+      const items = container.querySelectorAll(".cursor-pointer");
+      const activeItem = items[highlightIndex];
+      if (activeItem) {
+        const containerTop = container.scrollTop;
+        const containerBottom = containerTop + container.clientHeight;
+        const elemTop = activeItem.offsetTop;
+        const elemBottom = elemTop + activeItem.offsetHeight;
+
+        if (elemTop < containerTop) {
+          container.scrollTop = elemTop;
+        } else if (elemBottom > containerBottom) {
+          container.scrollTop = elemBottom - container.clientHeight;
+        }
+      }
+    }
+  }, [highlightIndex, showDropdown]);
+
   const handleFocus = () => {
     if (!idMarca) return;
     setShowDropdown(true);
@@ -802,45 +831,77 @@ export const ProductoAutocomplete = ({
     fetchResults(query.trim());
   };
 
+  const exactMatchExists = results.some(
+    (item) => (item.codigo || "").toLowerCase().trim() === query.toLowerCase().trim()
+  );
+
   const handleBlur = () => {
     setTimeout(() => {
       setIsFocused(false);
       setShowDropdown(false);
       setHighlightIndex(-1);
-      if (query !== value) {
-        onSelect({ codigo: query, isCustom: true });
+      if (query && query !== value) {
+        const match = results.find(item => (item.codigo || '').toUpperCase() === query.trim().toUpperCase());
+        if (match) {
+          onSelect(match);
+        } else {
+          onSelect({ codigo: query, isCustom: true });
+        }
       }
-    }, 150);
+    }, 200);
   };
 
   const handleKeyDown = (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      if (onKeyDown) onKeyDown(e);
+      return;
+    }
     if (!showDropdown) {
       if (onKeyDown) onKeyDown(e);
       return;
     }
+    const maxIndex = exactMatchExists ? results.length - 1 : results.length;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlightIndex((prev) => (prev + 1 < results.length ? prev + 1 : 0));
+      setHighlightIndex((prev) => (prev + 1 <= maxIndex ? prev + 1 : 0));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlightIndex((prev) => (prev - 1 >= 0 ? prev - 1 : results.length - 1));
+      setHighlightIndex((prev) => (prev - 1 >= 0 ? prev - 1 : maxIndex));
     } else if (e.key === "Enter") {
-      if (e.ctrlKey || e.metaKey) return;
       e.preventDefault();
-      if (highlightIndex >= 0 && results[highlightIndex]) {
+      if (highlightIndex >= 0 && highlightIndex < results.length && results[highlightIndex]) {
         handleSelectOption(results[highlightIndex]);
+      } else if (highlightIndex === results.length && !exactMatchExists && query.trim()) {
+        setShowDropdown(false);
+        setHighlightIndex(-1);
+        if (onTriggerCreate) {
+          onTriggerCreate(query);
+        } else {
+          onSelect({ codigo: query, isCustom: true });
+        }
       } else {
         setShowDropdown(false);
         setHighlightIndex(-1);
         if (query !== value) {
-          onSelect({ codigo: query, isCustom: true });
+          const match = results.find(item => (item.codigo || '').toUpperCase() === query.trim().toUpperCase());
+          if (match) {
+            onSelect(match);
+          } else {
+            onSelect({ codigo: query, isCustom: true });
+          }
         }
       }
     } else if (e.key === "Tab" || e.key === "Escape") {
+      e.stopPropagation();
       setShowDropdown(false);
       setHighlightIndex(-1);
       if (query !== value) {
-        onSelect({ codigo: query, isCustom: true });
+        const match = results.find(item => (item.codigo || '').toUpperCase() === query.trim().toUpperCase());
+        if (match) {
+          onSelect(match);
+        } else {
+          onSelect({ codigo: query, isCustom: true });
+        }
       }
     } else {
       if (onKeyDown) onKeyDown(e);
@@ -872,6 +933,7 @@ export const ProductoAutocomplete = ({
             {query || (idMarca ? placeholder : "Selecciona marca")}
           </span>
           <input
+            id={id}
             ref={inputRef}
             type="text"
             tabIndex={tabIndex}
@@ -896,7 +958,7 @@ export const ProductoAutocomplete = ({
             placeholder={idMarca ? placeholder : "Marca..."}
             disabled={!idMarca}
           />
-          {showDropdown && idMarca && (results.length > 0 || loading) && createPortal(
+          {showDropdown && idMarca && (results.length > 0 || (!exactMatchExists && query.trim()) || loading) && createPortal(
             <div
               ref={dropdownRef}
               style={{
@@ -915,31 +977,53 @@ export const ProductoAutocomplete = ({
               {loading ? (
                 <div className="p-3 text-center text-xs text-slate-400 font-bold uppercase tracking-wider animate-pulse">Buscando...</div>
               ) : (
-                results.map((prod, index) => (
-                  <div
-                    key={prod.id_producto}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      handleSelectOption(prod);
-                    }}
-                    className={`px-3 py-2 text-[10px] cursor-pointer rounded-lg mb-0.5 last:mb-0 transition-all duration-150 border-l-2
-                      ${highlightIndex === index 
-                        ? "bg-teal-50/80 text-teal-950 border-teal-500 font-semibold" 
-                        : "hover:bg-slate-50/80 text-slate-700 border-transparent"}`}
-                  >
-                    <div className="font-black uppercase">
-                      {highlightMatch(prod.codigo, query)}
+                <>
+                  {results.map((prod, index) => (
+                    <div
+                      key={prod.id_producto}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleSelectOption(prod);
+                      }}
+                      className={`px-3 py-2 text-[10px] cursor-pointer rounded-lg mb-0.5 last:mb-0 transition-all duration-150 border-l-2
+                        ${highlightIndex === index 
+                          ? "bg-teal-50/80 text-teal-950 border-teal-500 font-semibold" 
+                          : "hover:bg-slate-50/80 text-slate-700 border-transparent"}`}
+                    >
+                      <div className="font-black uppercase">
+                        {highlightMatch(prod.codigo, query)}
+                      </div>
+                      <div className={`text-[9px] font-semibold mt-0.5 line-clamp-1 transition-colors
+                        ${highlightIndex === index ? "text-teal-900" : "text-slate-500"}`}>
+                        {prod.nombre}
+                      </div>
+                      <div className={`text-[8px] mt-0.5 font-bold transition-colors
+                        ${highlightIndex === index ? "text-teal-700" : "text-slate-400"}`}>
+                        S/. {prod.precio_soles} | $ {prod.precio_dolares}
+                      </div>
                     </div>
-                    <div className={`text-[9px] font-semibold mt-0.5 line-clamp-1 transition-colors
-                      ${highlightIndex === index ? "text-teal-900" : "text-slate-500"}`}>
-                      {prod.nombre}
+                  ))}
+                  {!exactMatchExists && query.trim() && (
+                    <div
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setShowDropdown(false);
+                        setHighlightIndex(-1);
+                        if (onTriggerCreate) {
+                          onTriggerCreate(query);
+                        } else {
+                          onSelect({ codigo: query, isCustom: true });
+                        }
+                      }}
+                      className={`px-3 py-2 cursor-pointer rounded-lg mb-0.5 border border-dashed text-center font-bold text-[10px] tracking-wide uppercase transition-colors
+                        ${highlightIndex === results.length 
+                          ? "bg-teal-50 border-teal-500 text-teal-950" 
+                          : "hover:bg-slate-50 border-slate-200 text-slate-600"}`}
+                    >
+                      + Agregar Producto: "{query.toUpperCase()}"
                     </div>
-                    <div className={`text-[8px] mt-0.5 font-bold transition-colors
-                      ${highlightIndex === index ? "text-teal-700" : "text-slate-400"}`}>
-                      S/. {prod.precio_soles} | $ {prod.precio_dolares}
-                    </div>
-                  </div>
-                ))
+                  )}
+                </>
               )}
             </div>,
             document.body
@@ -1459,9 +1543,7 @@ export const TipoGastoDetalleAutocomplete = ({ value, codePrefix, onSelect, isRe
     const uppercaseName = gastoName.trim().toUpperCase();
     if (!uppercaseName) return;
 
-    if (!window.confirm(`¿Desea crear el tipo de gasto "${uppercaseName}" en la base de datos?`)) {
-      return;
-    }
+
 
     setCreating(true);
     try {
@@ -1737,6 +1819,27 @@ export const MarcaAutocomplete = ({
     };
   }, [showDropdown]);
 
+  // Scroll highlighted item into view automatically
+  useEffect(() => {
+    if (showDropdown && highlightIndex >= 0 && dropdownRef.current) {
+      const container = dropdownRef.current;
+      const items = container.querySelectorAll(".cursor-pointer");
+      const activeItem = items[highlightIndex];
+      if (activeItem) {
+        const containerTop = container.scrollTop;
+        const containerBottom = containerTop + container.clientHeight;
+        const elemTop = activeItem.offsetTop;
+        const elemBottom = elemTop + activeItem.offsetHeight;
+
+        if (elemTop < containerTop) {
+          container.scrollTop = elemTop;
+        } else if (elemBottom > containerBottom) {
+          container.scrollTop = elemBottom - container.clientHeight;
+        }
+      }
+    }
+  }, [highlightIndex, showDropdown]);
+
   // Filter results locally
   const filterResults = (searchVal) => {
     const trimmed = searchVal.trim();
@@ -1749,7 +1852,17 @@ export const MarcaAutocomplete = ({
       normalizeText(p.nombre).includes(normalizeText(trimmed))
     );
     setResults(filtered);
-    setHighlightIndex(filtered.length > 0 ? 0 : -1);
+    
+    const exactMatch = filtered.find(p => normalizeText(p.nombre) === normalizeText(trimmed));
+    if (exactMatch) {
+      setHighlightIndex(filtered.indexOf(exactMatch));
+    } else if (filtered.length > 0) {
+      setHighlightIndex(0);
+    } else if (trimmed) {
+      setHighlightIndex(0);
+    } else {
+      setHighlightIndex(-1);
+    }
   };
 
   useEffect(() => {
@@ -1768,13 +1881,13 @@ export const MarcaAutocomplete = ({
       setShowDropdown(false);
       setHighlightIndex(-1);
       
-      // If query does not match anything and is not empty, reset it
-      if (query !== brandName) {
+      // If query does not match anything and is not empty, reset or create it
+      if (query && query !== brandName) {
         const exactMatch = proveedores.find(p => normalizeText(p.nombre) === normalizeText(query));
         if (exactMatch) {
           handleSelectOption(exactMatch);
         } else {
-          setQuery(brandName);
+          handleCreateBrand(query);
         }
       }
     }, 200);
@@ -1787,13 +1900,14 @@ export const MarcaAutocomplete = ({
     onSelect(item);
   };
 
-  const handleCreateBrand = async (brandName) => {
-    const uppercaseName = brandName.trim().toUpperCase();
-    if (!uppercaseName) return;
-
-    if (!window.confirm(`¿Desea crear la marca "${uppercaseName}" en la base de datos?`)) {
+  const handleCreateBrand = async (brandNameVal) => {
+    const uppercaseName = brandNameVal.trim().toUpperCase();
+    if (!uppercaseName) {
+      setQuery(brandName);
       return;
     }
+
+
 
     setCreating(true);
     try {
@@ -1808,10 +1922,12 @@ export const MarcaAutocomplete = ({
         setShowDropdown(false);
       } else {
         toast.error("Error al crear la marca");
+        setQuery(brandName);
       }
     } catch (err) {
       console.error("Error al crear marca:", err);
       toast.error("Error al crear la marca");
+      setQuery(brandName);
     } finally {
       setCreating(false);
     }
@@ -1847,6 +1963,7 @@ export const MarcaAutocomplete = ({
         setHighlightIndex(-1);
       }
     } else if (e.key === "Tab" || e.key === "Escape") {
+      e.stopPropagation();
       setShowDropdown(false);
       setHighlightIndex(-1);
     } else {
@@ -1872,6 +1989,7 @@ export const MarcaAutocomplete = ({
             ref={inputRef}
             type="text"
             tabIndex={tabIndex}
+            data-field="id_marca"
             className="w-full text-[10.5px] border border-gray-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center uppercase font-bold text-gray-800 hover:bg-gray-50 focus:bg-white transition-all outline-none"
             style={{ width: `${width}px` }}
             value={query}
@@ -2126,6 +2244,16 @@ export const UnidadMedidaAutocomplete = ({
       return;
     }
     if (!showDropdown) {
+      if (e.key === "ArrowDown") {
+        if (onKeyDown) {
+          onKeyDown(e);
+          return;
+        }
+        e.preventDefault();
+        setShowDropdown(true);
+        filterResults(query);
+        return;
+      }
       if (onKeyDown) onKeyDown(e);
       return;
     }
@@ -2148,9 +2276,16 @@ export const UnidadMedidaAutocomplete = ({
         setShowDropdown(false);
         setHighlightIndex(-1);
       }
-    } else if (e.key === "Tab" || e.key === "Escape") {
+    } else if (e.key === "Tab") {
       setShowDropdown(false);
       setHighlightIndex(-1);
+    } else if (e.key === "Escape") {
+      if (showDropdown) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowDropdown(false);
+        setHighlightIndex(-1);
+      }
     } else {
       if (onKeyDown) onKeyDown(e);
     }
@@ -2168,11 +2303,11 @@ export const UnidadMedidaAutocomplete = ({
             ref={inputRef}
             type="text"
             tabIndex={tabIndex}
-            className="u-medida-input w-full text-[11px] border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 uppercase font-semibold text-gray-700 hover:bg-gray-50 focus:bg-white transition-all outline-none"
+            className="u-medida-input w-full text-[11px] border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-teal-500 uppercase font-semibold text-gray-700 hover:bg-slate-50 focus:bg-white transition-all outline-none"
             value={query}
             onFocus={(e) => {
               e.target.select();
-              handleFocus();
+              setIsFocused(true);
             }}
             onBlur={handleBlur}
             onClick={(e) => {

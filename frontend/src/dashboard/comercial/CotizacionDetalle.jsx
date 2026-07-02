@@ -6,7 +6,7 @@ import 'react-quill/dist/quill.snow.css';
 import { useParams, useNavigate } from 'react-router-dom';
 import * as LucideIcons from 'lucide-react';
 import api from '@/services/api';
-import { toast } from 'react-toastify';
+import { toast } from '../../utils/toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import SelectField from '../../components/ui/SelectField';
 import { CompactField } from '../../components/ui/CompactField';
@@ -39,7 +39,7 @@ import ServicioModal from '../Servicios/ServicioModal';
 import { useCotizacionAcciones } from '@/hook/useCotizacionAcciones';
 import { useCotizacionSuministros } from '@/hook/useCotizacionSuministros';
 import { useCotizacionServicios } from '@/hook/useCotizacionServicios';
-import { ClienteAutocomplete, RepresentanteAutocomplete, ProductoAutocomplete, TipoPersonalAutocomplete, TipoGastoDetalleAutocomplete, UnidadMedidaAutocomplete } from '@/components/comercial/CotizacionAutocompletes';
+import { ClienteAutocomplete, RepresentanteAutocomplete, ProductoAutocomplete, TipoPersonalAutocomplete, TipoGastoDetalleAutocomplete, UnidadMedidaAutocomplete, MarcaAutocomplete } from '@/components/comercial/CotizacionAutocompletes';
 import { calcularItemSegunProveedor, resolverEndpointPorProveedor } from '@/dashboard/Suministros/tables/tablaUtils';
 
 const Icon = ({ name, className }) => {
@@ -452,6 +452,83 @@ const NotasAutocomplete = ({ notasComunes = [], onSelect }) => {
 
 let lastFocusedInput = null;
 
+const handleDetailsKeyDown = (e) => {
+  const key = e.key;
+
+  // 1. Handle Alt and Escape to CLOSE the details panel and restore focus
+  if (key === "Alt" || key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Find the currently open trigger button
+    const detailsButton = document.querySelector("button[title='Detalles Adicionales'][data-state='open']") || 
+                          document.querySelector("button[title='Detalles Adicionales']");
+    if (detailsButton) {
+      // Toggle off the Radix Popover/Dropdown by dispatching pointerdown/mousedown/click
+      detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+      detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      detailsButton.click();
+    }
+
+    // Restore focus to the input that opened this details menu
+    if (lastFocusedInput) {
+      setTimeout(() => {
+        lastFocusedInput.focus();
+        if (lastFocusedInput.select) lastFocusedInput.select();
+      }, 50);
+    }
+    return;
+  }
+
+  // 2. Handle arrow navigation between inputs inside the details popover
+  if (key !== "ArrowRight" && key !== "ArrowLeft" && key !== "ArrowDown" && key !== "ArrowUp") {
+    return;
+  }
+
+  const target = e.target;
+  const container = e.currentTarget; // This is the div wrapper with onKeyDown
+
+  // Find all focusable inputs inside the details panel
+  const inputs = Array.from(container.querySelectorAll("input, select")).filter(input => {
+    return input.type !== "hidden" && !input.disabled && !input.readOnly;
+  });
+
+  const index = inputs.indexOf(target);
+  if (index === -1) return;
+
+  if (key === "ArrowRight") {
+    const isText = target.tagName === "INPUT" && (target.type === "text" || target.type === "search");
+    const canMove = !isText || target.selectionEnd === target.value.length;
+    if (canMove && index < inputs.length - 1) {
+      e.preventDefault();
+      inputs[index + 1].focus();
+      if (inputs[index + 1].select) inputs[index + 1].select();
+    }
+  } else if (key === "ArrowLeft") {
+    const isText = target.tagName === "INPUT" && (target.type === "text" || target.type === "search");
+    const canMove = !isText || target.selectionStart === 0;
+    if (canMove && index > 0) {
+      e.preventDefault();
+      inputs[index - 1].focus();
+      if (inputs[index - 1].select) inputs[index - 1].select();
+    }
+  } else if (key === "ArrowDown") {
+    if (target.tagName === "SELECT" || target.type === "number") return;
+    if (index < inputs.length - 1) {
+      e.preventDefault();
+      inputs[index + 1].focus();
+      if (inputs[index + 1].select) inputs[index + 1].select();
+    }
+  } else if (key === "ArrowUp") {
+    if (target.tagName === "SELECT" || target.type === "number") return;
+    if (index > 0) {
+      e.preventDefault();
+      inputs[index - 1].focus();
+      if (inputs[index - 1].select) inputs[index - 1].select();
+    }
+  }
+};
+
 const handleRowKeyDown = (e, submitFn) => {
   // Check if Alt key is pressed alone to toggle additional details
   if (e.key === "Alt") {
@@ -488,6 +565,16 @@ const handleRowKeyDown = (e, submitFn) => {
   });
   const currentIndex = inputs.indexOf(target);
   if (currentIndex === -1) return;
+
+  if (e.key === "Alt") {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = row.querySelector("button[title='Detalles Adicionales']");
+    if (btn) {
+      btn.click();
+    }
+    return;
+  }
 
   const supportsSelection = ["text", "search", "url", "tel", "password"].includes(target.type) || target.tagName === "TEXTAREA";
 
@@ -566,6 +653,7 @@ const EditableGroupRow = ({
   onSave,
   formatMoneySymbol,
   proveedores,
+  setProveedores,
   tipoCambio,
   tipoMoneda,
   isVenta,
@@ -578,7 +666,9 @@ const EditableGroupRow = ({
   catalogoVersion,
   setCatalogoVersion,
   unidadesMedida = [],
-  setUnidadesMedida
+  setUnidadesMedida,
+  handleTriggerCreateProduct,
+  renderInlineProductCreateForm
 }) => {
   const isSavingRef = useRef(false);
   const [tempData, setTempData] = useState({ titulo: '', cantidad: 1, costoEnvio: 0, detalle: '' });
@@ -668,6 +758,30 @@ const EditableGroupRow = ({
     utilidad: 0,
     cotizado_total: 0
   });
+
+  const handleProductCreatedLocal = (registro) => {
+    const normalizado = normalizarProductoDB(registro, tipoMoneda, tipoCambio || 1, Number(newItem.cantidad || 1));
+    setNewItem(prev => {
+      const next = {
+        ...prev,
+        proveedor: normalizado.proveedor,
+        id_marca: registro.id_marca,
+        codigo_item: normalizado.codigo,
+        descripcion: normalizado.descripcion,
+        tipo_unidad: normalizado.unidad,
+        costo_precio: normalizado.costoPrecio,
+        porcentaje_utilidad: prev.porcentaje_utilidad || 20
+      };
+      return recalculateItem(next, 'porcentaje_utilidad', tempData.costoEnvio || 0, 0);
+    });
+  };
+
+  const handleProductCancelLocal = (codigo) => {
+    setNewItem(prev => ({
+      ...prev,
+      codigo_item: codigo
+    }));
+  };
 
   const formatMoneySymbolSafe = formatMoneySymbol || ((val) => `$ ${Number(val || 0).toFixed(2)}`);
 
@@ -973,6 +1087,12 @@ const EditableGroupRow = ({
       e.preventDefault();
       e.stopPropagation();
       handleSaveGroup();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setTempData({ titulo: '', cantidad: 1, costoEnvio: 0, detalle: '' });
+      setTempItems([]);
+      setCategoryTitles({ "04": "MANO DE OBRA", "05": "GASTOS SERVICIO", "06": "OTROS" }); // Reset titles
     }
   };
 
@@ -1114,20 +1234,7 @@ const EditableGroupRow = ({
             </div>
           </div>
 
-          <div className="text-right flex justify-end ml-2">
-            <button
-              onClick={handleSaveGroup}
-              disabled={!tempData.titulo.trim()}
-              className={cn(
-                "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all duration-200 border shadow-sm",
-                tempData.titulo.trim()
-                  ? "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600 hover:shadow-md"
-                  : "bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed"
-              )}
-            >
-              {tempItems.length > 0 ? "Crear Partida + Ítems" : "Crear Partida"}
-            </button>
-          </div>
+
         </div>
       </div>
 
@@ -1981,7 +2088,8 @@ const EditableGroupRow = ({
                   </div>
                 </div>
               ) : (
-                <table className="min-w-full table-fixed divide-y divide-gray-100">
+                <>
+                  <table className="min-w-full table-fixed divide-y divide-gray-100">
                     <thead className="bg-slate-100 border-b border-slate-200">
                       <tr>
                         <th className="w-[3%] py-2"></th>
@@ -2057,28 +2165,34 @@ const EditableGroupRow = ({
                         <td className="px-4 py-1.5">
                           {canExpand ? (
                             <div className="flex flex-col gap-1 items-center justify-center text-center relative">
-                              <select
-                                className="w-full text-[10.5px] border border-gray-300 rounded px-1 py-0.5 uppercase font-bold text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
-                                value={newItem.proveedor || ""}
-                                onChange={e => {
-                                  const code = e.target.value;
-                                  const brandId = parseInt(code, 10) || null;
+                              <MarcaAutocomplete
+                                idMarca={newItem.id_marca}
+                                proveedores={proveedores}
+                                onSelect={(brand) => {
+                                  const code = String(brand.id_marca).padStart(2, '0');
                                   setNewItem(prev => {
-                                    const next = { ...prev, proveedor: code, id_marca: brandId };
-                                    return recalculateItem(next, 'id_marca', 0, 0);
+                                    const next = { ...prev, proveedor: code, id_marca: brand.id_marca };
+                                    return recalculateItem(next, 'id_marca', tempData.costoEnvio || 0, 0);
                                   });
                                 }}
-                              >
-                                <option value="" className="text-center">-- Marca --</option>
-                                {brandOptions.map(p => (
-                                  <option key={p.id} value={p.id} className="text-center">{p.nombre}</option>
-                                ))}
-                              </select>
+                                onAddBrand={(newBrand) => {
+                                  setProveedores(prev => [...prev, newBrand]);
+                                }}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+                                    e.preventDefault();
+                                    handleAddItem();
+                                  }
+                                }}
+                              />
                               <ProductoAutocomplete
+                                id="quick-add-codigo-new"
                                 value={newItem.codigo_item || ""}
                                 idMarca={newItem.id_marca}
                                 tcamb={tipoCambio}
                                 tipoMoneda={tipoMoneda}
+                                catalogoVersion={catalogoVersion}
+                                onTriggerCreate={(code) => handleTriggerCreateProduct(code, 'new', newItem.id_marca)}
                                 onSelect={(prod) => {
                                   if (prod.isCustom) {
                                     setNewItem(prev => ({
@@ -2125,6 +2239,7 @@ const EditableGroupRow = ({
                           {canExpand ? (
                             <div className="flex flex-col gap-1 items-center justify-center text-center">
                               <input
+                                id="quick-add-descripcion-new"
                                 type="text"
                                 className="w-full text-[11px] border border-gray-300 rounded px-1.5 py-0.5 font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
                                 value={newItem.descripcion || ""}
@@ -2201,37 +2316,33 @@ const EditableGroupRow = ({
                             </span>
                           </td>
                         )}
-                        {/* Utilidad condicional */}
-                        {isVenta && (
-                          <td className="px-4 py-1.5">
-                            <div className="flex flex-col gap-1 items-center justify-center text-center">
-                              <span className="text-[11px] font-bold text-gray-700">
-                                {formatMoneySymbolSafe(Number(newItem.utilidad || 0))}
-                              </span>
-                              <div className="relative flex items-center justify-center w-full">
-                                <input
-                                  type="text"
-                                  className="w-full text-[10px] border border-gray-300 text-center rounded px-1 py-0.5 font-medium text-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
-                                  value={newItem.porcentaje_utilidad === undefined || newItem.porcentaje_utilidad === null ? "" : newItem.porcentaje_utilidad}
-                                  onChange={(e) => handleDecimalChange(e, (val) => handleNewItemChange('porcentaje_utilidad', val))}
-                                  onKeyDown={e => {
-                                    if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
-                                      e.preventDefault();
-                                      handleAddItem();
-                                    }
-                                  }}
-                                />
-                                <span className="absolute right-1 text-[9px] text-gray-400">%</span>
-                              </div>
+                        {/* Utilidad */}
+                        <td className="px-4 py-1.5">
+                          <div className="flex flex-col gap-1 items-center justify-center text-center">
+                            <span className="text-[11px] font-bold text-gray-700">
+                              {formatMoneySymbolSafe(Number(newItem.utilidad || 0))}
+                            </span>
+                            <div className="relative flex items-center justify-center w-full">
+                              <input
+                                type="text"
+                                className="w-full text-[10px] border border-gray-300 text-center rounded px-1 py-0.5 font-medium text-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
+                                value={newItem.porcentaje_utilidad === undefined || newItem.porcentaje_utilidad === null ? "" : newItem.porcentaje_utilidad}
+                                onChange={(e) => handleDecimalChange(e, (val) => handleNewItemChange('porcentaje_utilidad', val))}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+                                    e.preventDefault();
+                                    handleAddItem();
+                                  }
+                                }}
+                              />
+                              <span className="absolute right-1 text-[9px] text-gray-400">%</span>
                             </div>
-                          </td>
-                        )}
-                        {/* Precio unitario condicional */}
-                        {isVenta && (
-                          <td className="px-4 py-1.5 text-center text-[11.5px] font-semibold text-gray-500">
-                            {formatMoneySymbolSafe(Number(newItem.precio_venta || 0))}
-                          </td>
-                        )}
+                          </div>
+                        </td>
+                        {/* Precio unitario */}
+                        <td className="px-4 py-1.5 text-center text-[11.5px] font-semibold text-gray-500">
+                          {formatMoneySymbolSafe(Number(newItem.precio_venta || 0))}
+                        </td>
                         {/* Total */}
                         <td className="px-4 py-1.5 text-right text-[11px] font-black text-indigo-600 align-middle">
                           {formatMoneySymbolSafe(isVenta ? (newItem.venta_total || 0) : (newItem.cantidad || 1) * (newItem.costo_precio || 0))}
@@ -2256,26 +2367,7 @@ const EditableGroupRow = ({
                               >
                                 <div 
                                   className="p-3 space-y-3 text-xs text-left bg-white"
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Alt") {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      
-                                      const detailsButton = document.querySelector("button[title='Detalles Adicionales'][data-state='open']") || document.querySelector("button[title='Detalles Adicionales']");
-                                      if (detailsButton) {
-                                        detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-                                        detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-                                        detailsButton.click();
-                                      }
-                                      
-                                      if (lastFocusedInput) {
-                                        setTimeout(() => {
-                                          lastFocusedInput.focus();
-                                          if (lastFocusedInput.select) lastFocusedInput.select();
-                                        }, 50);
-                                      }
-                                    }
-                                  }}
+                                  onKeyDown={handleDetailsKeyDown}
                                  >
                                   {/* U. Medida */}
                                   <div className="flex flex-col gap-1">
@@ -2378,10 +2470,12 @@ const EditableGroupRow = ({
                           </div>
                         </td>
                       </tr>
+                      {renderInlineProductCreateForm && renderInlineProductCreateForm('new', handleProductCreatedLocal, handleProductCancelLocal)}
                     </tbody>
                   </table>
-                )}
-              </div>
+                </>
+              )}
+            </div>
             </motion.div>
           )}
       </AnimatePresence>
@@ -2479,6 +2573,493 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
   const xlsInputRef = useRef(null);
   const [xlsImportGrupoActivo, setXlsImportGrupoActivo] = useState(null);
   const [quickAddForm, setQuickAddForm] = useState({});
+
+  // Product creation form states
+  const [productCreateState, setProductCreateState] = useState({
+    isOpen: false,
+    targetGroup: null, // 'new' or codigo_grupo (string)
+    idMarca: null,
+    codigo: "",
+    codigo2: "",
+    nombre: "",
+    id_medida: "",
+    contenido_valor: "1.00",
+    precio_dolares: "0.00",
+    stock_min: "0",
+    stock_max: "0",
+    proveedor: "",
+    descripcion: ""
+  });
+  const [productCreateCreating, setProductCreateCreating] = useState(false);
+  const inlineProductFormRef = useRef(null);
+  const inlineProductNombreInputRef = useRef(null);
+
+  useEffect(() => {
+    if (productCreateState.isOpen) {
+      setTimeout(() => {
+        if (inlineProductFormRef.current) {
+          inlineProductFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 150);
+    }
+  }, [productCreateState.isOpen]);
+
+  const handleTriggerCreateProduct = (code, targetGroup, idMarca) => {
+    const brandName = proveedores?.find(p => p.id_marca === idMarca)?.nombre || "";
+    setProductCreateState({
+      isOpen: true,
+      targetGroup,
+      idMarca,
+      codigo: code.toUpperCase(),
+      codigo2: "",
+      nombre: "",
+      id_medida: "",
+      contenido_valor: "1.00",
+      precio_dolares: "0.00",
+      stock_min: "0",
+      stock_max: "0",
+      proveedor: brandName,
+      descripcion: ""
+    });
+
+    setTimeout(() => {
+      if (inlineProductNombreInputRef.current) {
+        inlineProductNombreInputRef.current.focus();
+        inlineProductNombreInputRef.current.select();
+      }
+    }, 100);
+  };
+
+  const handleCancelCreateProduct = (onCancel) => {
+    const { targetGroup, codigo } = productCreateState;
+    setProductCreateState(prev => ({ ...prev, isOpen: false }));
+
+    if (onCancel) {
+      onCancel(codigo);
+    } else {
+      if (typeof targetGroup === 'string' && targetGroup.startsWith('edit-')) {
+        setEditForm(prev => ({
+          ...prev,
+          codigo_item: codigo
+        }));
+      } else {
+        handleRowChange("codigo_item", codigo, "add", targetGroup);
+      }
+    }
+  };
+
+  const handleSaveProductInline = async (onSuccess) => {
+    const { targetGroup, idMarca, codigo, codigo2, nombre, id_medida, contenido_valor, precio_dolares, stock_min, stock_max, proveedor, descripcion } = productCreateState;
+    
+    if (!idMarca) {
+      toast.error("Por favor, seleccione una Marca antes de crear el producto.");
+      return;
+    }
+    if (!nombre.trim()) {
+      toast.error("La descripción/nombre del producto es requerida.");
+      if (inlineProductNombreInputRef.current) {
+        inlineProductNombreInputRef.current.focus();
+        inlineProductNombreInputRef.current.select();
+      }
+      return;
+    }
+
+    if (!precio_dolares || isNaN(Number(precio_dolares)) || Number(precio_dolares) < 0) {
+      toast.error("El precio en dólares es requerido y debe ser mayor o igual a 0.");
+      const priceInput = inlineProductFormRef.current?.querySelector('[data-inline-field="precio_dolares"]');
+      if (priceInput) {
+        priceInput.focus();
+        if (typeof priceInput.select === 'function') {
+          priceInput.select();
+        }
+      }
+      return;
+    }
+
+    setProductCreateCreating(true);
+    try {
+      const { data: res } = await api.post("core/productos/", {
+        id_marca: idMarca,
+        codigo,
+        nombre: nombre.trim().toUpperCase(),
+        codigo2: codigo2.trim().toUpperCase() || null,
+        contenido_valor,
+        id_medida: id_medida || null,
+        descripcion: descripcion.trim().toUpperCase() || null,
+        stock_min,
+        stock_max,
+        proveedor: proveedor.trim().toUpperCase() || null,
+        precio_dolares,
+        tipo_cambio: data?.tipo_cambio || 1
+      });
+
+      if (res.ok && res.registro) {
+        toast.success(`Producto "${codigo}" creado con éxito.`);
+        setCatalogoVersion(prev => prev + 1);
+
+        if (onSuccess) {
+          onSuccess(res.registro);
+        } else {
+          if (typeof targetGroup === 'string' && targetGroup.startsWith('edit-')) {
+            const normalizado = normalizarProductoDB(res.registro, data?.tipo_moneda || "S", data?.tipo_cambio || 1, Number(editForm.cantidad || 1));
+            setEditForm(prev => {
+              const updated = {
+                ...prev,
+                proveedor: normalizado.proveedor,
+                id_marca: res.registro.id_marca,
+                codigo_item: normalizado.codigo,
+                descripcion: normalizado.descripcion,
+                tipo_unidad: normalizado.unidad,
+                costo_precio: normalizado.costoPrecio,
+                porcentaje_utilidad: prev.porcentaje_utilidad || 20
+              };
+              return recalculateRowValues(updated, 'porcentaje_utilidad');
+            });
+          } else {
+            const currentForm = quickAddForm[targetGroup] || { cantidad: 1 };
+            const normalizado = normalizarProductoDB(res.registro, data?.tipo_moneda, data?.tipo_cambio || 1, Number(currentForm.cantidad || 1));
+            setQuickAddForm(prev => {
+              const current = prev[targetGroup] || { cantidad: 1 };
+              const updated = {
+                ...current,
+                proveedor: normalizado.proveedor,
+                id_marca: res.registro.id_marca,
+                codigo_item: normalizado.codigo,
+                descripcion: normalizado.descripcion,
+                tipo_unidad: normalizado.unidad,
+                costo_precio: normalizado.costoPrecio,
+                porcentaje_utilidad: current.porcentaje_utilidad || 20
+              };
+
+              let groupCostoEnvio = 0;
+              let totalCostoItems = 0;
+              const foundGroup = gruposSuministros[targetGroup];
+              if (foundGroup) {
+                groupCostoEnvio = Number(data?.tipo_venta === "P" ? (foundGroup.costo_envio_unidad || foundGroup.costo_envio || 0) : (foundGroup.costo_envio_total || foundGroup.costo_envio || 0));
+                const items = foundGroup.items || [];
+                const existingCosto = items.reduce((acc, it) => acc + (Number(it.costo_precio || 0) * Number(it.cantidad || 0)), 0);
+                const addCost = Number(updated.costo_precio || 0);
+                const addQty = Number(updated.cantidad || 0);
+                totalCostoItems = existingCosto + (addCost * addQty);
+              }
+              const recalculated = recalculateRowValues(updated, 'porcentaje_utilidad', groupCostoEnvio, totalCostoItems);
+
+              return {
+                ...prev,
+                [targetGroup]: recalculated
+              };
+            });
+          }
+        }
+
+        setProductCreateState(prev => ({ ...prev, isOpen: false }));
+        
+        // Auto-focus and select the description input in the quick-add row
+        setTimeout(() => {
+          const inputId = targetGroup === "new" ? "quick-add-descripcion-new" : `quick-add-descripcion-${targetGroup}`;
+          const inputEl = document.getElementById(inputId);
+          if (inputEl) {
+            inputEl.focus();
+            if (inputEl.select) inputEl.select();
+          }
+        }, 100);
+      } else {
+        toast.error("Error al crear el producto.");
+      }
+    } catch (err) {
+      console.error("Error al crear producto:", err);
+      toast.error(err.response?.data?.error || "Error al crear el producto");
+    } finally {
+      setProductCreateCreating(false);
+    }
+  };
+
+  const renderInlineProductCreateForm = (targetGroup, onSuccess, onCancel) => {
+    if (!productCreateState.isOpen) return null;
+
+    let isMatch = false;
+    if (productCreateState.targetGroup === targetGroup) {
+      isMatch = true;
+    } else if (typeof productCreateState.targetGroup === 'string' && productCreateState.targetGroup.startsWith('edit-')) {
+      const idSuministro = Number(productCreateState.targetGroup.split('-')[1]);
+      let itemBelongsToGroup = false;
+      if (targetGroup === 'new') {
+        // newItem doesn't have ID yet
+      } else {
+        const gp = Object.values(gruposSuministros || {}).find(g => g.codigo_grupo === targetGroup);
+        if (gp && gp.items?.some(it => it.id_suministro === idSuministro)) {
+          itemBelongsToGroup = true;
+        }
+      }
+      if (itemBelongsToGroup) {
+        isMatch = true;
+      }
+    }
+
+    if (!isMatch) return null;
+
+    const brandId = productCreateState.idMarca;
+    const brandName = proveedores?.find(p => p.id_marca === brandId)?.nombre || "";
+
+    const colCount = isVenta ? 10 : 9;
+
+    const handleFormKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        handleCancelCreateProduct(onCancel);
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        // If U. Medida suggestions dropdown is currently open, don't trigger save
+        const isDropdownOpen = document.body.querySelector('.autocomplete-dropdown-portal');
+        if (isDropdownOpen) {
+          return; // Let UnidadMedidaAutocomplete handle selecting with Enter
+        }
+        if (e.target.closest('[role="listbox"]') || e.target.closest('.react-datepicker-popper') || document.querySelector('[data-radix-popper-content-wrapper]')) {
+          return;
+        }
+        e.stopPropagation();
+        e.preventDefault();
+        handleSaveProductInline(onSuccess);
+      } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+        let isAtStart = true;
+        let isAtEnd = true;
+        try {
+          if (e.target.selectionStart !== null && e.target.selectionStart !== undefined) {
+            isAtStart = e.target.selectionStart === 0;
+            isAtEnd = e.target.selectionStart === e.target.value?.length;
+          }
+        } catch (err) {
+          // input type="number" doesn't support selectionStart
+        }
+        const fieldKey = e.target.getAttribute('data-inline-field') || (e.target.classList.contains('u-medida-input') ? 'id_medida' : null);
+
+        const navMap = {
+          nombre: {
+            ArrowRight: "id_medida",
+            ArrowDown: "descripcion"
+          },
+          descripcion: {
+            ArrowRight: "codigo2",
+            ArrowUp: "nombre"
+          },
+          id_medida: {
+            ArrowLeft: "nombre",
+            ArrowRight: "precio_dolares",
+            ArrowDown: "codigo2"
+          },
+          precio_dolares: {
+            ArrowLeft: "id_medida",
+            ArrowDown: "proveedor"
+          },
+          codigo2: {
+            ArrowLeft: "descripcion",
+            ArrowRight: "proveedor",
+            ArrowUp: "id_medida",
+            ArrowDown: "stock_min"
+          },
+          proveedor: {
+            ArrowLeft: "codigo2",
+            ArrowUp: "precio_dolares",
+            ArrowDown: "stock_max"
+          },
+          stock_min: {
+            ArrowLeft: "descripcion",
+            ArrowRight: "stock_max",
+            ArrowUp: "codigo2"
+          },
+          stock_max: {
+            ArrowLeft: "stock_min",
+            ArrowUp: "proveedor"
+          }
+        };
+
+        if (fieldKey && navMap[fieldKey]) {
+          // If U. Medida suggestions dropdown is currently open, don't trigger parent field navigation for ArrowUp/Down
+          if (fieldKey === "id_medida" && ["ArrowUp", "ArrowDown"].includes(e.key)) {
+            const isDropdownOpen = document.body.querySelector('.autocomplete-dropdown-portal');
+            if (isDropdownOpen) {
+              return; // let autocomplete handle it!
+            }
+          }
+
+          const directions = navMap[fieldKey];
+          const targetField = directions[e.key];
+          if (targetField) {
+            const isTextarea = e.target.tagName === 'TEXTAREA';
+            let shouldGo = false;
+            if (e.key === 'ArrowLeft' && isAtStart) shouldGo = true;
+            if (e.key === 'ArrowRight' && isAtEnd) shouldGo = true;
+            if (e.key === 'ArrowUp' && (!isTextarea || isAtStart)) shouldGo = true;
+            if (e.key === 'ArrowDown' && (!isTextarea || isAtEnd)) shouldGo = true;
+
+            if (shouldGo) {
+              e.preventDefault();
+              const formEl = inlineProductFormRef.current;
+              if (formEl) {
+                let input = null;
+                if (targetField === "id_medida") {
+                  input = formEl.querySelector('.u-medida-input');
+                } else {
+                  input = formEl.querySelector(`[data-inline-field="${targetField}"]`);
+                }
+                if (input) {
+                  input.focus();
+                  if (typeof input.select === 'function') {
+                    input.select();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+
+    return (
+      <tr 
+        ref={inlineProductFormRef}
+        className="bg-teal-50/30 border-y-2 border-teal-500/20 animate-fadeIn"
+        onKeyDown={handleFormKeyDown}
+      >
+        <td colSpan={colCount} className="p-3">
+          <div className="flex flex-col gap-3 font-sans">
+            {/* Cabecera Informativa */}
+            <div className="flex items-center justify-between border-b border-teal-100/50 pb-1.5 mb-1 text-[10px] font-black uppercase text-teal-800 tracking-wider">
+              <div className="flex items-center gap-1.5">
+                <Icon name="plus-circle" className="h-4 w-4 text-teal-600" />
+                <span>Registrar Producto: "{productCreateState.codigo}"</span>
+              </div>
+              <span className="text-teal-700 bg-teal-100/50 px-2 py-0.5 rounded border border-teal-200/50 font-bold">
+                Marca: {brandName || "---"} • [ENTER] Guardar • [ESC] Cancelar
+              </span>
+            </div>
+
+            {/* Dos Columnas Principales */}
+            <div className="flex flex-col md:flex-row gap-4">
+              
+              {/* Columna Izquierda: Campos de Texto Largo (60% del ancho) */}
+              <div className="w-full md:w-3/5 space-y-3 flex flex-col justify-between">
+                <div className="flex-1 flex flex-col min-h-[58px]">
+                  <label className="block text-[9.5px] font-black text-slate-650 uppercase mb-1">Descripción / Nombre *</label>
+                  <textarea
+                    ref={inlineProductNombreInputRef}
+                    data-inline-field="nombre"
+                    value={productCreateState.nombre}
+                    onChange={(e) => setProductCreateState(prev => ({ ...prev, nombre: e.target.value }))}
+                    placeholder="DESCRIPCIÓN DEL PRODUCTO"
+                    required
+                    rows={2}
+                    className="border border-slate-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg px-2.5 py-1.5 w-full text-[11px] uppercase outline-none text-slate-700 font-semibold transition-all bg-white resize-none flex-1"
+                  />
+                </div>
+                <div className="flex-1 flex flex-col min-h-[58px]">
+                  <label className="block text-[9.5px] font-black text-slate-650 uppercase mb-1">Detalles (Opcional)</label>
+                  <textarea
+                    data-inline-field="descripcion"
+                    value={productCreateState.descripcion}
+                    onChange={(e) => setProductCreateState(prev => ({ ...prev, descripcion: e.target.value }))}
+                    placeholder="DETALLES O ESPECIFICACIONES ADICIONALES DEL PRODUCTO"
+                    rows={2}
+                    className="border border-slate-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg px-2.5 py-1.5 w-full text-[11px] uppercase outline-none text-slate-700 font-semibold transition-all bg-white resize-none flex-1"
+                  />
+                </div>
+              </div>
+
+              {/* Columna Derecha: Campos de Control y Metadata (40% del ancho) */}
+              <div className="w-full md:w-2/5 flex flex-col gap-3">
+                {/* Fila 1 */}
+                <div className="grid grid-cols-2 gap-3 text-left">
+                  <div>
+                    <label className="block text-[9.5px] font-black text-slate-650 uppercase mb-1">U. Medida</label>
+                    <UnidadMedidaAutocomplete
+                      idMedida={productCreateState.id_medida}
+                      unidadesMedida={unidadesMedida}
+                      onSelect={(unit) => {
+                        setProductCreateState(prev => ({
+                          ...prev,
+                          id_medida: unit.id_medida
+                        }));
+                      }}
+                      onAddMedida={(newUnit) => {
+                        setUnidadesMedida(prev => [...prev, newUnit]);
+                        setProductCreateState(prev => ({
+                          ...prev,
+                          id_medida: newUnit.id_medida
+                        }));
+                      }}
+                      onKeyDown={handleFormKeyDown}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9.5px] font-black text-slate-650 uppercase mb-1">Precio Dólares ($) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      data-inline-field="precio_dolares"
+                      value={productCreateState.precio_dolares}
+                      onChange={(e) => setProductCreateState(prev => ({ ...prev, precio_dolares: e.target.value }))}
+                      className="border border-slate-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg px-2.5 py-1.5 w-full text-[11px] outline-none text-slate-700 font-semibold transition-all bg-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Fila 2 */}
+                <div className="grid grid-cols-2 gap-3 text-left">
+                  <div>
+                    <label className="block text-[9.5px] font-black text-slate-650 uppercase mb-1">Código Alternativo (Cód. 2)</label>
+                    <input
+                      type="text"
+                      data-inline-field="codigo2"
+                      value={productCreateState.codigo2}
+                      onChange={(e) => setProductCreateState(prev => ({ ...prev, codigo2: e.target.value }))}
+                      placeholder="OPCIONAL"
+                      className="border border-slate-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg px-2.5 py-1.5 w-full text-[11px] uppercase outline-none text-slate-700 font-semibold transition-all bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9.5px] font-black text-slate-650 uppercase mb-1">Proveedor</label>
+                    <input
+                      type="text"
+                      data-inline-field="proveedor"
+                      value={productCreateState.proveedor}
+                      onChange={(e) => setProductCreateState(prev => ({ ...prev, proveedor: e.target.value }))}
+                      placeholder="OPCIONAL"
+                      className="border border-slate-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg px-2.5 py-1.5 w-full text-[11px] uppercase outline-none text-slate-700 font-semibold transition-all bg-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Fila 3 */}
+                <div className="grid grid-cols-2 gap-3 text-left">
+                  <div>
+                    <label className="block text-[9.5px] font-black text-slate-650 uppercase mb-1">Stock Mínimo</label>
+                    <input
+                      type="number"
+                      data-inline-field="stock_min"
+                      value={productCreateState.stock_min}
+                      onChange={(e) => setProductCreateState(prev => ({ ...prev, stock_min: e.target.value }))}
+                      className="border border-slate-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg px-2.5 py-1.5 w-full text-[11px] outline-none text-slate-700 font-semibold transition-all bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9.5px] font-black text-slate-650 uppercase mb-1">Stock Máximo</label>
+                    <input
+                      type="number"
+                      data-inline-field="stock_max"
+                      value={productCreateState.stock_max}
+                      onChange={(e) => setProductCreateState(prev => ({ ...prev, stock_max: e.target.value }))}
+                      className="border border-slate-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg px-2.5 py-1.5 w-full text-[11px] outline-none text-slate-700 font-semibold transition-all bg-white"
+                    />
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionsType, setSuggestionsType] = useState(null); // 'add' or 'edit'
@@ -3145,6 +3726,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
     setGruposSuministros,
     fetchSuministros,
     proveedores,
+    setProveedores,
     handleCalcularTotalGrupo,
     handleAgregarGrupoSuministro: hookAgregarGrupoSuministro,
     handleAgregarItem: hookAgregarItem,
@@ -3604,6 +4186,52 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
 
   const isDirty = isHeaderDirty || isSuministrosDirty || isServiciosDirty || isCondicionesDirty || isDescuentoDirty;
 
+  // Auto-save Suministros
+  useEffect(() => {
+    if (!isSuministrosDirty || isReadOnly) return;
+    const timer = setTimeout(async () => {
+      try {
+        await saveSuministros();
+        fetchHistory();
+      } catch (err) {
+        console.error("Error al autoguardar suministros:", err);
+        toast.error("Error al autoguardar suministros");
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [isSuministrosDirty, saveSuministros, isReadOnly]);
+
+  // Auto-save Servicios
+  useEffect(() => {
+    if (!isServiciosDirty || isReadOnly) return;
+    const timer = setTimeout(async () => {
+      try {
+        await saveServicios();
+        fetchHistory();
+      } catch (err) {
+        console.error("Error al autoguardar servicios:", err);
+        toast.error("Error al autoguardar servicios");
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [isServiciosDirty, saveServicios, isReadOnly]);
+
+  // Auto-save Condiciones Generales
+  useEffect(() => {
+    if (!isCondicionesDirty || isReadOnly) return;
+    const timer = setTimeout(async () => {
+      try {
+        await api.post(`cotizaciones/condiciones-generales/${numReg}/`, { condiciones: generalConditions });
+        loadedConditionsRef.current = generalConditions;
+        fetchHistory();
+      } catch (err) {
+        console.error("Error al autoguardar condiciones:", err);
+        toast.error("Error al autoguardar condiciones generales");
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [isCondicionesDirty, generalConditions, numReg, isReadOnly]);
+
   const [savingHeader, setSavingHeader] = useState(false);
 
   const handleGuardarCabecera = async () => {
@@ -3924,6 +4552,9 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
 
       // 4. Descuento
       await fetchDescuento();
+
+      // 5. Trazabilidad
+      fetchHistory();
 
     } catch (err) {
       console.error("Error loading data:", err);
@@ -4367,6 +4998,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                           formatMoney={formatMoney}
                           formatMoneySymbol={formatMoneySymbol}
                           proveedores={proveedores}
+                          setProveedores={setProveedores}
                           tcamb={data?.tipo_cambio || 1}
                           handleRowChange={handleRowChange}
                           handleEditRowLookup={handleEditRowLookup}
@@ -4379,6 +5011,8 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                           unidadesMedida={unidadesMedida}
                           setUnidadesMedida={setUnidadesMedida}
                           activeEditField={activeEditField}
+                          handleTriggerCreateProduct={handleTriggerCreateProduct}
+                          renderInlineProductCreateForm={renderInlineProductCreateForm}
                         />
                       ))}
                     </SortableContext>
@@ -4412,33 +5046,34 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                       }));
 
                       return (
-                        <tr className="bg-indigo-50/20">
+                        <tr 
+                          className="bg-indigo-50/20"
+                          onKeyDown={e => handleRowKeyDown(e, () => handleQuickAddSubmit(grupo.codigo_grupo))}
+                        >
                           <td></td>
                           {/* Código / Marca */}
                           <td className="px-3 py-1.5">
                             <div className="flex flex-col gap-1 items-center justify-center text-center relative">
-                              <select
-                                className="w-full text-[10.5px] border border-gray-300 rounded px-1 py-0.5 uppercase font-bold text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
-                                value={currentForm.proveedor || ""}
-                                onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
-                                onChange={e => {
-                                  const code = e.target.value;
-                                  const brandId = parseInt(code, 10) || null;
+                              <MarcaAutocomplete
+                                idMarca={currentForm.id_marca}
+                                proveedores={proveedores}
+                                onSelect={(brand) => {
+                                  const code = String(brand.id_marca).padStart(2, '0');
                                   handleRowChange("proveedor", code, "add", grupo.codigo_grupo);
-                                  handleRowChange("id_marca", brandId, "add", grupo.codigo_grupo);
+                                  handleRowChange("id_marca", brand.id_marca, "add", grupo.codigo_grupo);
                                 }}
-                              >
-                                <option value="" className="text-center">-- Marca --</option>
-                                {brandOptions.map(p => (
-                                  <option key={p.id} value={p.id} className="text-center">{p.nombre}</option>
-                                ))}
-                              </select>
+                                onAddBrand={(newBrand) => {
+                                  setProveedores(prev => [...prev, newBrand]);
+                                }}
+                              />
                               <ProductoAutocomplete
+                                id={`quick-add-codigo-${grupo.codigo_grupo}`}
                                 value={currentForm.codigo_item || ""}
                                 idMarca={currentForm.id_marca}
                                 tcamb={data?.tipo_cambio || 1}
                                 tipoMoneda={data?.tipo_moneda || "S"}
-                                onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
+                                catalogoVersion={catalogoVersion}
+                                onTriggerCreate={(code) => handleTriggerCreateProduct(code, grupo.codigo_grupo, currentForm.id_marca)}
                                 onSelect={(prod) => {
                                   if (prod.isCustom) {
                                     handleRowChange("codigo_item", prod.codigo, "add", grupo.codigo_grupo);
@@ -4471,11 +5106,11 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                           <td className="px-3 py-1.5">
                             <div className="flex flex-col gap-1 items-center justify-center text-center">
                               <input
+                                id={`quick-add-descripcion-${grupo.codigo_grupo}`}
                                 type="text"
                                 className="w-full text-[11px] border border-gray-300 rounded px-1.5 py-0.5 font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
                                 value={currentForm.descripcion || ""}
                                 placeholder="Descripción..."
-                                onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                 onChange={e => handleRowChange("descripcion", e.target.value.toUpperCase(), "add", grupo.codigo_grupo)}
                               />
                               <input
@@ -4483,7 +5118,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                 className="w-full text-[9px] border border-gray-200 text-gray-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
                                 value={currentForm.observacion || ""}
                                 placeholder="Observación..."
-                                onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                 onChange={e => handleRowChange("observacion", e.target.value.toUpperCase(), "add", grupo.codigo_grupo)}
                               />
                             </div>
@@ -4496,7 +5130,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                               value={currentForm.cantidad === undefined || currentForm.cantidad === null ? "" : currentForm.cantidad}
                               onChange={e => handleRowChange("cantidad", e.target.value, "add", grupo.codigo_grupo)}
                               onFocus={(e) => e.target.select()}
-                              onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                             />
                           </td>
                           {/* Costo Unitario */}
@@ -4509,7 +5142,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                               value={currentForm.costo_precio === undefined || currentForm.costo_precio === null ? "" : currentForm.costo_precio}
                               onChange={e => handleRowChange("costo_precio", e.target.value, "add", grupo.codigo_grupo)}
                               onFocus={(e) => e.target.select()}
-                              onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                             />
                           </td>
                            {/* Envío */}
@@ -4543,7 +5175,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                   value={currentForm.porcentaje_utilidad === undefined || currentForm.porcentaje_utilidad === null ? "" : currentForm.porcentaje_utilidad}
                                   onChange={e => handleRowChange("porcentaje_utilidad", e.target.value, "add", grupo.codigo_grupo)}
                                   onFocus={(e) => e.target.select()}
-                                  onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                 />
                                 <span className="absolute right-1 text-[9px] text-gray-400">%</span>
                               </div>
@@ -4577,26 +5208,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                               >
                                 <div 
                                   className="p-3 space-y-3 text-xs text-left"
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Alt") {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      
-                                      const detailsButton = document.querySelector("button[title='Detalles Adicionales'][data-state='open']") || document.querySelector("button[title='Detalles Adicionales']");
-                                      if (detailsButton) {
-                                        detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-                                        detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-                                        detailsButton.click();
-                                      }
-                                      
-                                      if (lastFocusedInput) {
-                                        setTimeout(() => {
-                                          lastFocusedInput.focus();
-                                          if (lastFocusedInput.select) lastFocusedInput.select();
-                                        }, 50);
-                                      }
-                                    }
-                                  }}
+                                  onKeyDown={handleDetailsKeyDown}
                                 >
                                   {/* U. Medida */}
                                   <div className="flex flex-col gap-1">
@@ -4623,14 +5235,12 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                         className="w-2/3 border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold text-gray-700"
                                         value={currentForm.tiempo_entrega === undefined || currentForm.tiempo_entrega === null ? "" : currentForm.tiempo_entrega}
                                         onChange={e => handleRowChange("tiempo_entrega", e.target.value, "add", grupo.codigo_grupo)}
-                                        onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                         placeholder="0"
                                       />
                                       <select
                                         className="w-1/3 border border-gray-200 rounded px-1 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold text-gray-700 bg-white"
                                         value={currentForm.id_unidad_tiempo_entrega || 1}
                                         onChange={e => handleRowChange("id_unidad_tiempo_entrega", parseInt(e.target.value, 10), "add", grupo.codigo_grupo)}
-                                        onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                       >
                                         <option value={1}>Días</option>
                                         <option value={2}>Semanas</option>
@@ -4646,7 +5256,6 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                                       className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 text-gray-700"
                                       value={currentForm.observacion || ""}
                                       onChange={e => handleRowChange("observacion", e.target.value.toUpperCase(), "add", grupo.codigo_grupo)}
-                                      onKeyDown={e => handleAddRowKeyDown(e, grupo.codigo_grupo)}
                                       placeholder="Observación..."
                                     />
                                   </div>
@@ -4708,6 +5317,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                         </tr>
                       );
                     })()}
+                    {renderInlineProductCreateForm(grupo.codigo_grupo)}
                   </tbody>
                 </table>
               </div>
@@ -5935,6 +6545,9 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
     if (text.includes("ADJUNTÓ ARCHIVO") || text.includes("DOCUMENTO")) return "ADJUNTOS";
     if (text.includes("ESTADO") || text.includes("CAMBIO")) return "ESTADO";
     if (text.includes("REGISTRO:")) return "SEGUIMIENTO";
+    if (text.includes("SUMINISTROS:")) return "SUMINISTROS";
+    if (text.includes("SERVICIOS:")) return "SERVICIOS";
+    if (text.includes("CONDICIONES GENERALES:")) return "CONDICIONES";
     return "SISTEMA";
   };
 
@@ -7013,6 +7626,7 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                     onSave={(data) => handleAgregarGrupoSuministro(data)}
                     formatMoneySymbol={formatMoneySymbol}
                     proveedores={proveedores}
+                    setProveedores={setProveedores}
                     tipoCambio={data?.tipo_cambio || 1}
                     tipoMoneda={data?.tipo_moneda || "S"}
                     isVenta={isVenta}
@@ -7022,6 +7636,8 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                     setCatalogoVersion={setCatalogoVersion}
                     unidadesMedida={unidadesMedida}
                     setUnidadesMedida={setUnidadesMedida}
+                    handleTriggerCreateProduct={handleTriggerCreateProduct}
+                    renderInlineProductCreateForm={renderInlineProductCreateForm}
                   />
 
                   {/* Renderizado de Grupos de Suministros */}
@@ -8498,21 +9114,46 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                     SEGUIMIENTO: { color: 'amber', icon: 'message-square', label: 'Seguimiento Comercial' },
                     ADJUNTOS: { color: 'emerald', icon: 'paperclip', label: 'Gestión de Archivos' },
                     SISTEMA: { color: 'slate', icon: 'settings', label: 'Actividad del Sistema' },
-                    ESTADO: { color: 'rose', icon: 'refresh-cw', label: 'Cambio de Estado' }
+                    ESTADO: { color: 'rose', icon: 'refresh-cw', label: 'Cambio de Estado' },
+                    SUMINISTROS: { color: 'blue', icon: 'box', label: 'Suministros' },
+                    SERVICIOS: { color: 'purple', icon: 'tool', label: 'Servicios' },
+                    CONDICIONES: { color: 'slate', icon: 'file-text', label: 'Condiciones Generales' }
                   };
 
                   const config = typeConfig[type] || typeConfig.SISTEMA;
                   const colorClass = config.color;
 
+                  const colorMap = {
+                    indigo: { border: 'border-indigo-500', text: 'text-indigo-700', bg: 'bg-indigo-50/30 border border-indigo-100/50' },
+                    amber: { border: 'border-amber-500', text: 'text-amber-700', bg: 'bg-amber-50/30 border border-amber-100/50' },
+                    emerald: { border: 'border-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50/30 border border-emerald-100/50' },
+                    rose: { border: 'border-rose-500', text: 'text-rose-700', bg: 'bg-rose-50/30 border border-rose-100/50' },
+                    blue: { border: 'border-blue-500', text: 'text-blue-700', bg: 'bg-blue-50/30 border border-blue-100/50' },
+                    purple: { border: 'border-purple-500', text: 'text-purple-700', bg: 'bg-purple-50/30 border border-purple-100/50' },
+                    slate: { border: 'border-slate-500', text: 'text-slate-700', bg: 'bg-slate-50/30 border border-slate-100/50' }
+                  };
+
+                  const classes = colorMap[colorClass] || colorMap.slate;
+
+                  let cleanDetalle = n.detalle || "";
+                  if (type === "SUMINISTROS" && cleanDetalle.toUpperCase().startsWith("SUMINISTROS:")) {
+                    cleanDetalle = cleanDetalle.substring("Suministros:".length).trim();
+                  } else if (type === "SERVICIOS" && cleanDetalle.toUpperCase().startsWith("SERVICIOS:")) {
+                    cleanDetalle = cleanDetalle.substring("Servicios:".length).trim();
+                  } else if (type === "CONDICIONES" && cleanDetalle.toUpperCase().startsWith("CONDICIONES GENERALES:")) {
+                    cleanDetalle = cleanDetalle.substring("Condiciones Generales:".length).trim();
+                  }
+
                   return (
                     <div key={n.id_seguimiento || idx} className="relative pl-8 pb-6 group">
                       {/* Punto conector dinámico según color */}
-                      <div className={`absolute left-0 top-1.5 w-3 h-3 bg-white border-2 border-${colorClass}-500 rounded-full z-10 transition-all group-hover:scale-110`}></div>
+                      <div className={`absolute left-0 top-1.5 w-3 h-3 bg-white border-2 ${classes.border} rounded-full z-10 transition-all group-hover:scale-110`}></div>
 
                       <div className="flex flex-col">
                         <div className="flex items-center justify-between mb-1.5">
                           <div className="flex items-center space-x-2">
-                            <span className={`text-[10px] font-black text-${colorClass}-700 uppercase tracking-tight`}>
+                            {config.icon && <Icon name={config.icon} className={`h-3.5 w-3.5 ${classes.text}`} />}
+                            <span className={`text-[10px] font-black ${classes.text} uppercase tracking-tight`}>
                               {config.label}
                             </span>
                             <span className="h-1 w-1 bg-slate-200 rounded-full"></span>
@@ -8522,13 +9163,13 @@ const CotizacionDetalle = ({ esOportunidad = false }) => {
                         </div>
 
                         {/* Contenedor de contenido según tipo */}
-                        <div className={`rounded-xl p-2.5 transition-all ${type === 'CREACION' ? 'bg-indigo-50/30 border border-indigo-100/50' :
-                          'bg-transparent group-hover:bg-gray-50/50'
-                          }`}>
+                        <div className={`rounded-xl p-2.5 transition-all ${
+                          type === 'CREACION' ? classes.bg : 'bg-transparent group-hover:bg-gray-50/50'
+                        }`}>
                           <p className="text-[11px] text-slate-600 leading-relaxed font-bold">
                             {type === 'ADJUNTOS' && <Icon name="file-text" className="inline h-3 w-3 mr-1 text-emerald-500" />}
                             {type === 'ESTADO' && <Icon name="arrow-right" className="inline h-3 w-3 mr-1 text-rose-500" />}
-                            {n.detalle}
+                            {cleanDetalle}
                           </p>
                         </div>
                       </div>
@@ -9375,6 +10016,7 @@ const SortableItemRow = ({
   formatMoney,
   formatMoneySymbol,
   proveedores = [],
+  setProveedores,
   tcamb = 1,
   handleRowChange,
   handleEditRowLookup,
@@ -9386,7 +10028,9 @@ const SortableItemRow = ({
   catalogoVersion,
   unidadesMedida = [],
   setUnidadesMedida,
-  activeEditField
+  activeEditField,
+  handleTriggerCreateProduct,
+  renderInlineProductCreateForm
 }) => {
   const {
     attributes,
@@ -9484,6 +10128,16 @@ const SortableItemRow = ({
   }, [editingItemId, itemId, cancelEditItem]);
 
   useEffect(() => {
+    if (editingItemId === itemId) {
+      setTimeout(() => {
+        if (rowRef.current) {
+          rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 100);
+    }
+  }, [editingItemId, itemId]);
+
+  useEffect(() => {
     if (!showDeleteConfirm) return;
 
     const handleClickOutside = (e) => {
@@ -9568,6 +10222,18 @@ const SortableItemRow = ({
       saveEditItem();
       return;
     }
+    if (e.key === 'Alt') {
+      e.preventDefault();
+      e.stopPropagation();
+      lastFocusedInput = e.target;
+      const detailsButton = rowRef.current?.querySelector("button[title='Detalles Adicionales']");
+      if (detailsButton) {
+        detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+        detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        detailsButton.click();
+      }
+      return;
+    }
 
     // Arrow Navigation
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
@@ -9623,35 +10289,56 @@ const SortableItemRow = ({
     }
   };
 
+  const handleProductCreatedEditLocal = (newProd) => {
+    const normalizado = normalizarProductoDB(newProd, tipoMoneda, tcamb, Number(editForm.cantidad || 1));
+    setEditForm(prev => {
+      const updated = {
+        ...prev,
+        proveedor: normalizado.proveedor,
+        id_marca: newProd.id_marca,
+        codigo_item: normalizado.codigo,
+        descripcion: normalizado.descripcion,
+        tipo_unidad: normalizado.unidad,
+        costo_precio: normalizado.costoPrecio,
+        porcentaje_utilidad: prev.porcentaje_utilidad || 20
+      };
+      return recalculateRowValues(updated, 'porcentaje_utilidad');
+    });
+  };
+
+  const handleProductCancelEditLocal = (cancelledCode) => {
+    setEditForm(prev => ({
+      ...prev,
+      codigo_item: cancelledCode
+    }));
+  };
+
   if (editingItemId === itemId) {
     return (
-      <tr ref={setMergedRef} style={style} className="bg-indigo-50/50">
+      <>
+        <tr ref={setMergedRef} style={style} className="bg-indigo-50/50">
         <td className="px-2 text-center align-middle">
           <Icon name="grip-vertical" className="h-3.5 w-3.5 text-gray-200 mx-auto" />
         </td>
         {/* Código / Marca */}
         <td className="px-3 py-1">
           <div className="flex flex-col gap-1 items-center justify-center text-center relative">
-            <select
-              data-field="id_marca"
-              className="w-full text-[10.5px] border border-gray-300 rounded px-1 py-0.5 uppercase font-bold text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center"
-              value={editForm.id_marca ? String(editForm.id_marca).padStart(2, '0') : (editForm.proveedor || "")}
-              onKeyDown={handleKeyDown}
-              onChange={e => {
-                const code = e.target.value;
-                const brandId = parseInt(code, 10) || null;
+            <MarcaAutocomplete
+              idMarca={editForm.id_marca}
+              proveedores={proveedores}
+              onSelect={(brand) => {
+                const code = String(brand.id_marca).padStart(2, '0');
                 setEditForm(prev => ({
                   ...prev,
                   proveedor: code,
-                  id_marca: brandId
+                  id_marca: brand.id_marca
                 }));
               }}
-            >
-              <option value="" className="text-center">-- Marca --</option>
-              {proveedoresOptions.map(p => (
-                <option key={p.id} value={p.id} className="text-center">{p.nombre}</option>
-              ))}
-            </select>
+              onAddBrand={(newBrand) => {
+                setProveedores(prev => [...prev, newBrand]);
+              }}
+              onKeyDown={handleKeyDown}
+            />
             <div data-field="codigo_item" className="w-full">
               <ProductoAutocomplete
                 value={editForm.codigo_item || ""}
@@ -9660,6 +10347,7 @@ const SortableItemRow = ({
                 tipoMoneda={tipoMoneda}
                 catalogoVersion={catalogoVersion}
                 onKeyDown={handleKeyDown}
+                onTriggerCreate={(code) => handleTriggerCreateProduct(code, `edit-${item.id_suministro}`, editForm.id_marca)}
                 onSelect={(prod) => {
                   if (prod.isCustom) {
                     setEditForm(prev => ({ ...prev, codigo_item: prod.codigo }));
@@ -9806,26 +10494,7 @@ const SortableItemRow = ({
             >
               <div 
                 className="p-3 space-y-3 text-xs text-left"
-                onKeyDown={(e) => {
-                  if (e.key === "Alt") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    
-                    const detailsButton = document.querySelector("button[title='Detalles Adicionales'][data-state='open']") || document.querySelector("button[title='Detalles Adicionales']");
-                    if (detailsButton) {
-                      detailsButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-                      detailsButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-                      detailsButton.click();
-                    }
-                    
-                    if (lastFocusedInput) {
-                      setTimeout(() => {
-                        lastFocusedInput.focus();
-                        if (lastFocusedInput.select) lastFocusedInput.select();
-                      }, 50);
-                    }
-                  }
-                }}
+                onKeyDown={handleDetailsKeyDown}
               >
                 {/* U. Medida */}
                 <div className="flex flex-col gap-1">
@@ -9860,14 +10529,12 @@ const SortableItemRow = ({
                       value={editForm.tiempo_entrega === undefined || editForm.tiempo_entrega === null ? "" : editForm.tiempo_entrega}
                       onChange={e => handleRowChange("tiempo_entrega", e.target.value, "edit")}
                       onFocus={(e) => e.target.select()}
-                      onKeyDown={handleKeyDown}
                       placeholder="0"
                     />
                     <select
                       className="w-1/3 border border-gray-200 rounded px-1 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold text-gray-700 bg-white"
                       value={editForm.id_unidad_tiempo_entrega || 1}
                       onChange={e => handleRowChange("id_unidad_tiempo_entrega", parseInt(e.target.value, 10), "edit")}
-                      onKeyDown={handleKeyDown}
                     >
                       <option value={1}>Días</option>
                       <option value={2}>Semanas</option>
@@ -9884,7 +10551,6 @@ const SortableItemRow = ({
                     value={editForm.costo_envio === undefined || editForm.costo_envio === null ? "" : editForm.costo_envio}
                     disabled={tipoVenta === "T"}
                     onChange={(e) => handleDecimalChange(e, (val) => handleRowChange("costo_envio", val, "edit"))}
-                    onKeyDown={handleKeyDown}
                     placeholder="0.00"
                   />
                 </div>
@@ -9896,7 +10562,6 @@ const SortableItemRow = ({
                     className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 text-gray-700"
                     value={editForm.observacion || ""}
                     onChange={e => handleRowChange("observacion", e.target.value.toUpperCase(), "edit")}
-                    onKeyDown={handleKeyDown}
                     placeholder="Observación..."
                   />
                 </div>
@@ -9956,6 +10621,8 @@ const SortableItemRow = ({
           </div>
         </td>
       </tr>
+      {renderInlineProductCreateForm && renderInlineProductCreateForm(`edit-${item.id_suministro}`, handleProductCreatedEditLocal, handleProductCancelEditLocal)}
+      </>
     );
   }
 
