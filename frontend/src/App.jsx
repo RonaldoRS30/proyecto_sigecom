@@ -29,6 +29,7 @@ import GastosAnalisis from "./dashboard/Tablas/Gastos_Analisis/GastosAnalisis";
 // LOGISTICA
 import LogisticaDashboard from "./dashboard/logistica/LogisticaDashboard";
 import LogisticaDetallePage from "./dashboard/logistica/LogisticaDetallePage";
+import LogisticaTablas from "./dashboard/logistica/LogisticaTablas";
 
 import { KeyboardProvider } from "@/context/KeyboardContext.jsx";
 import MockModulePage from "@/dashboard/layout/MockModulePage";
@@ -106,6 +107,7 @@ export default function App() {
                   <Route path=":numReg" element={<LogisticaDetallePage operacion="S" />} />
                 </Route>
                 <Route path="kardex" element={<LogisticaDashboard defaultTab="kardex" />} />
+                <Route path="tablas" element={<LogisticaTablas />} />
               </Route>
 
               {/* Módulo Maestro / Tablas */}
