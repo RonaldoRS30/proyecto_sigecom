@@ -23,7 +23,7 @@ const NAV_ITEMS = [
   },
   { path: "/sigecom/proyectos", label: "Proyectos", icon: "Briefcase" },
   { path: "/sigecom/compras", label: "Compras", icon: "ShoppingCart" },
-  { path: "/sigecom/almacen", label: "Almacén", icon: "Package" },
+  { path: "/sigecom/almacen", label: "Almacéneeee", icon: "Package" },
   { path: "/sigecom/finanzas", label: "Finanzas", icon: "DollarSign" },
   { path: "/sigecom/maestro/catalogo", label: "Maestro", icon: "Database" },
   { path: "/sigecom/audit", label: "Auditoría", icon: "ShieldCheck" },
