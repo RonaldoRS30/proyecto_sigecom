@@ -297,6 +297,7 @@ def lista_tipo_marca(request):
         
         next_id = obtener_siguiente_id_marca()
         nueva_marca = TipoMarca.objects.create(id_marca=next_id, nombre=nombre, activo="1")
+        serializer = TipoMarcaSerializer(nueva_marca)
         return Response({"ok": True, "registro": serializer.data}, status=status.HTTP_201_CREATED)
 
 @api_view(["GET", "POST"])

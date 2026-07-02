@@ -12,7 +12,7 @@ const Icon = ({ name, className }) => {
 
 const NAV_ITEMS = [
   { path: "/sigecom/home", label: "Dashboard", icon: "LayoutDashboard" },
-  { path: "/sigecom/comercial", label: "Comercialaaaaa", icon: "FileText" },
+  { path: "/sigecom/comercial", label: "Comercial ", icon: "FileText" },
   { path: "/sigecom/logistica", label: "Logística", icon: "ClipboardList" },
   { path: "/sigecom/proyectos", label: "Proyectos", icon: "Briefcase" },
   { path: "/sigecom/compras", label: "Compras", icon: "ShoppingCart" },
